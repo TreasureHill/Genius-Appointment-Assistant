@@ -1,11 +1,11 @@
 import nodemailer, { type Transporter } from "nodemailer";
-import { getSetting, type SmtpSettings } from "./settings";
+import { smtpEnv } from "./env";
 
 let cachedTransport: { key: string; t: Transporter } | null = null;
 
-export async function getMailer(): Promise<{ transport: Transporter; from: string } | null> {
-  const cfg = await getSetting<SmtpSettings>("smtp");
-  if (!cfg?.host) return null;
+export function getMailer(): { transport: Transporter; from: string } | null {
+  const cfg = smtpEnv();
+  if (!cfg) return null;
   const key = JSON.stringify(cfg);
   if (!cachedTransport || cachedTransport.key !== key) {
     cachedTransport = {
@@ -18,7 +18,7 @@ export async function getMailer(): Promise<{ transport: Transporter; from: strin
       }),
     };
   }
-  return { transport: cachedTransport.t, from: cfg.from || cfg.user };
+  return { transport: cachedTransport.t, from: cfg.from };
 }
 
 export async function sendEmail(args: {
@@ -27,8 +27,8 @@ export async function sendEmail(args: {
   html: string;
   text?: string;
 }): Promise<{ id?: string }> {
-  const mailer = await getMailer();
-  if (!mailer) throw new Error("SMTP not configured");
+  const mailer = getMailer();
+  if (!mailer) throw new Error("SMTP not configured (set SMTP_* in .env)");
   const info = await mailer.transport.sendMail({
     from: mailer.from,
     to: args.to,

@@ -1,25 +1,5 @@
 import { prisma } from "./prisma";
 
-export type SmtpSettings = {
-  host: string;
-  port: number;
-  secure: boolean;
-  user: string;
-  pass: string;
-  from: string;
-};
-
-export type TwilioSettings = {
-  accountSid: string;
-  authToken: string;
-  fromNumber: string;
-};
-
-export type CalendlySettings = {
-  token: string;
-  orgUri: string;
-};
-
 export type PacingSettings = {
   minSec: number;
   maxSec: number;

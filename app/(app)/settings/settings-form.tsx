@@ -2,174 +2,140 @@
 
 import { useState } from "react";
 
-type Initial = {
-  smtp: Record<string, unknown> | null;
-  twilio: Record<string, unknown> | null;
-  calendly: Record<string, unknown> | null;
-  pacing: Record<string, unknown>;
-};
+type Pacing = { minSec: number; maxSec: number; dailyCapPerDomain: number };
+type Providers = { smtp: boolean; twilio: boolean; calendly: boolean };
 
-export function SettingsForm({ initial }: { initial: Initial }) {
+export function SettingsForm({
+  initial,
+}: {
+  initial: { pacing: Pacing; providers: Providers };
+}) {
   return (
     <div className="space-y-6">
-      <SmtpCard initial={(initial.smtp ?? {}) as Record<string, string | number | boolean>} />
-      <TwilioCard initial={(initial.twilio ?? {}) as Record<string, string>} />
-      <CalendlyCard initial={(initial.calendly ?? {}) as Record<string, string>} />
-      <PacingCard initial={initial.pacing as { minSec: number; maxSec: number; dailyCapPerDomain: number }} />
+      <ProvidersCard providers={initial.providers} />
+      <PacingCard initial={initial.pacing} />
     </div>
   );
 }
 
-async function saveKey(key: string, value: unknown) {
+function ProvidersCard({ providers }: { providers: Providers }) {
+  const Row = ({ label, on, vars }: { label: string; on: boolean; vars: string[] }) => (
+    <div className="flex items-start justify-between rounded-md border border-slate-200 p-3">
+      <div>
+        <div className="font-medium">{label}</div>
+        <div className="text-xs text-slate-500">
+          Configured via env: <code>{vars.join(", ")}</code>
+        </div>
+      </div>
+      <span className={`badge ${on ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
+        {on ? "Configured" : "Not set"}
+      </span>
+    </div>
+  );
+
+  const [testing, setTesting] = useState<null | "EMAIL" | "SMS">(null);
+  const [to, setTo] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function runTest(channel: "EMAIL" | "SMS") {
+    setTesting(channel);
+    setMsg(null);
+    const res = await fetch("/api/settings/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel, to }),
+    });
+    setTesting(null);
+    const data = await res.json();
+    if (res.ok) setMsg(`${channel} test sent.`);
+    else setMsg(data.error ?? "Test failed");
+  }
+
+  return (
+    <div className="card space-y-4">
+      <div>
+        <h2 className="font-medium">Providers</h2>
+        <p className="text-xs text-slate-500">
+          Credentials are read from <code>.env</code> at startup. Change them there and restart the app.
+        </p>
+      </div>
+
+      <div className="grid gap-3">
+        <Row label="SMTP (email)" on={providers.smtp} vars={["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"]} />
+        <Row label="Twilio (SMS)" on={providers.twilio} vars={["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER"]} />
+        <Row label="Calendly" on={providers.calendly} vars={["CALENDLY_TOKEN", "CALENDLY_ORG_URI"]} />
+      </div>
+
+      <div>
+        <label className="label">Send test</label>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="input max-w-sm"
+            placeholder="you@example.com or +15551234567"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+          />
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={!to || !providers.smtp || testing !== null}
+            onClick={() => runTest("EMAIL")}
+          >
+            {testing === "EMAIL" ? "Sending..." : "Test email"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={!to || !providers.twilio || testing !== null}
+            onClick={() => runTest("SMS")}
+          >
+            {testing === "SMS" ? "Sending..." : "Test SMS"}
+          </button>
+        </div>
+        {msg && <div className="mt-2 text-sm text-slate-600">{msg}</div>}
+      </div>
+    </div>
+  );
+}
+
+async function savePacing(value: Pacing) {
   const res = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key, value }),
+    body: JSON.stringify({ key: "pacing", value }),
   });
   if (!res.ok) throw new Error("Save failed");
 }
 
-async function sendTest(channel: "EMAIL" | "SMS", to: string) {
-  const res = await fetch("/api/settings/test", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ channel, to }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "Test failed");
-}
-
-function SmtpCard({ initial }: { initial: Record<string, string | number | boolean> }) {
-  const [s, setS] = useState({
-    host: String(initial.host ?? ""),
-    port: Number(initial.port ?? 587),
-    secure: Boolean(initial.secure ?? false),
-    user: String(initial.user ?? ""),
-    pass: String(initial.pass ?? ""),
-    from: String(initial.from ?? ""),
-  });
-  const [msg, setMsg] = useState<string | null>(null);
-  const [test, setTest] = useState("");
-
-  return (
-    <form className="card space-y-3" onSubmit={async (e) => {
-      e.preventDefault();
-      try { await saveKey("smtp", s); setMsg("Saved."); } catch { setMsg("Failed."); }
-    }}>
-      <h2 className="font-medium">SMTP</h2>
-      <div className="grid gap-3 md:grid-cols-3">
-        <div><label className="label">Host</label><input className="input" value={s.host} onChange={(e) => setS({ ...s, host: e.target.value })} /></div>
-        <div><label className="label">Port</label><input type="number" className="input" value={s.port} onChange={(e) => setS({ ...s, port: Number(e.target.value) })} /></div>
-        <div>
-          <label className="label">TLS</label>
-          <select className="input" value={s.secure ? "1" : "0"} onChange={(e) => setS({ ...s, secure: e.target.value === "1" })}>
-            <option value="0">STARTTLS / None</option>
-            <option value="1">Implicit TLS</option>
-          </select>
-        </div>
-        <div><label className="label">Username</label><input className="input" value={s.user} onChange={(e) => setS({ ...s, user: e.target.value })} /></div>
-        <div><label className="label">Password</label><input className="input" type="password" value={s.pass} onChange={(e) => setS({ ...s, pass: e.target.value })} /></div>
-        <div><label className="label">From</label><input className="input" value={s.from} onChange={(e) => setS({ ...s, from: e.target.value })} /></div>
-      </div>
-      <div className="flex flex-wrap items-end gap-3">
-        <button className="btn-primary">Save SMTP</button>
-        <div className="flex-1" />
-        <div>
-          <label className="label">Send test to</label>
-          <div className="flex gap-2">
-            <input className="input" placeholder="you@example.com" value={test} onChange={(e) => setTest(e.target.value)} />
-            <button type="button" className="btn-ghost" onClick={async () => {
-              try { await sendTest("EMAIL", test); setMsg("Test email sent."); }
-              catch (err) { setMsg((err as Error).message); }
-            }}>Send test</button>
-          </div>
-        </div>
-      </div>
-      {msg && <div className="text-sm text-slate-600">{msg}</div>}
-    </form>
-  );
-}
-
-function TwilioCard({ initial }: { initial: Record<string, string> }) {
-  const [s, setS] = useState({
-    accountSid: initial.accountSid ?? "",
-    authToken: initial.authToken ?? "",
-    fromNumber: initial.fromNumber ?? "",
-  });
-  const [msg, setMsg] = useState<string | null>(null);
-  const [test, setTest] = useState("");
-
-  return (
-    <form className="card space-y-3" onSubmit={async (e) => {
-      e.preventDefault();
-      try { await saveKey("twilio", s); setMsg("Saved."); } catch { setMsg("Failed."); }
-    }}>
-      <h2 className="font-medium">Twilio</h2>
-      <div className="grid gap-3 md:grid-cols-3">
-        <div><label className="label">Account SID</label><input className="input" value={s.accountSid} onChange={(e) => setS({ ...s, accountSid: e.target.value })} /></div>
-        <div><label className="label">Auth Token</label><input type="password" className="input" value={s.authToken} onChange={(e) => setS({ ...s, authToken: e.target.value })} /></div>
-        <div><label className="label">From number</label><input className="input" value={s.fromNumber} onChange={(e) => setS({ ...s, fromNumber: e.target.value })} /></div>
-      </div>
-      <div className="flex flex-wrap items-end gap-3">
-        <button className="btn-primary">Save Twilio</button>
-        <div className="flex-1" />
-        <div>
-          <label className="label">Send test to</label>
-          <div className="flex gap-2">
-            <input className="input" placeholder="+15551234567" value={test} onChange={(e) => setTest(e.target.value)} />
-            <button type="button" className="btn-ghost" onClick={async () => {
-              try { await sendTest("SMS", test); setMsg("Test SMS sent."); }
-              catch (err) { setMsg((err as Error).message); }
-            }}>Send test</button>
-          </div>
-        </div>
-      </div>
-      {msg && <div className="text-sm text-slate-600">{msg}</div>}
-    </form>
-  );
-}
-
-function CalendlyCard({ initial }: { initial: Record<string, string> }) {
-  const [s, setS] = useState({
-    token: initial.token ?? "",
-    orgUri: initial.orgUri ?? "",
-  });
-  const [msg, setMsg] = useState<string | null>(null);
-
-  return (
-    <form className="card space-y-3" onSubmit={async (e) => {
-      e.preventDefault();
-      try { await saveKey("calendly", s); setMsg("Saved."); } catch { setMsg("Failed."); }
-    }}>
-      <h2 className="font-medium">Calendly</h2>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div><label className="label">Personal access token</label><input type="password" className="input" value={s.token} onChange={(e) => setS({ ...s, token: e.target.value })} /></div>
-        <div><label className="label">Organisation URI</label><input className="input" value={s.orgUri} onChange={(e) => setS({ ...s, orgUri: e.target.value })} placeholder="https://api.calendly.com/organizations/..." /></div>
-      </div>
-      <p className="text-xs text-slate-500">
-        Add a webhook in Calendly pointing to <code>/api/webhooks/calendly</code> for real-time updates.
-        The reconciler also runs every 15 minutes as a safety net.
-      </p>
-      <button className="btn-primary">Save Calendly</button>
-      {msg && <div className="text-sm text-slate-600">{msg}</div>}
-    </form>
-  );
-}
-
-function PacingCard({ initial }: { initial: { minSec: number; maxSec: number; dailyCapPerDomain: number } }) {
-  const [s, setS] = useState(initial);
+function PacingCard({ initial }: { initial: Pacing }) {
+  const [s, setS] = useState<Pacing>(initial);
   const [msg, setMsg] = useState<string | null>(null);
   return (
-    <form className="card space-y-3" onSubmit={async (e) => {
-      e.preventDefault();
-      try { await saveKey("pacing", s); setMsg("Saved."); } catch { setMsg("Failed."); }
-    }}>
+    <form
+      className="card space-y-3"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        try { await savePacing(s); setMsg("Saved."); } catch { setMsg("Failed."); }
+      }}
+    >
       <h2 className="font-medium">Send pacing</h2>
       <p className="text-xs text-slate-500">Random gap between enqueues. Helps email reach the inbox.</p>
       <div className="grid gap-3 md:grid-cols-3">
-        <div><label className="label">Min gap (seconds)</label><input type="number" min={0} className="input" value={s.minSec} onChange={(e) => setS({ ...s, minSec: Number(e.target.value) })} /></div>
-        <div><label className="label">Max gap (seconds)</label><input type="number" min={0} className="input" value={s.maxSec} onChange={(e) => setS({ ...s, maxSec: Number(e.target.value) })} /></div>
-        <div><label className="label">Daily cap / domain</label><input type="number" min={0} className="input" value={s.dailyCapPerDomain} onChange={(e) => setS({ ...s, dailyCapPerDomain: Number(e.target.value) })} /></div>
+        <div>
+          <label className="label">Min gap (seconds)</label>
+          <input type="number" min={0} className="input" value={s.minSec}
+                 onChange={(e) => setS({ ...s, minSec: Number(e.target.value) })} />
+        </div>
+        <div>
+          <label className="label">Max gap (seconds)</label>
+          <input type="number" min={0} className="input" value={s.maxSec}
+                 onChange={(e) => setS({ ...s, maxSec: Number(e.target.value) })} />
+        </div>
+        <div>
+          <label className="label">Daily cap / domain</label>
+          <input type="number" min={0} className="input" value={s.dailyCapPerDomain}
+                 onChange={(e) => setS({ ...s, dailyCapPerDomain: Number(e.target.value) })} />
+        </div>
       </div>
       <button className="btn-primary">Save pacing</button>
       {msg && <div className="text-sm text-slate-600">{msg}</div>}
