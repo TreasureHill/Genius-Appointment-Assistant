@@ -30,9 +30,13 @@ and Nodemailer.
 
 ```bash
 cp .env.example .env
-# edit .env: set NEXTAUTH_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
+# edit .env:
+#   - NEXTAUTH_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
+#   - SMTP_HOST / SMTP_USER / SMTP_PASS / SMTP_FROM (email)
+#   - TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER (SMS)
+#   - CALENDLY_TOKEN / CALENDLY_ORG_URI (Calendly auto-match)
 
-npm install
+npm install --legacy-peer-deps
 npx prisma db push
 npm run db:seed
 
@@ -40,8 +44,11 @@ npm run dev
 # open http://localhost:3000 and sign in
 ```
 
-Go to **Settings** to enter SMTP, Twilio and Calendly credentials. Credentials
-are stored in the database so they can be rotated without redeploying.
+All provider credentials live in `.env`. The Settings page shows which
+providers are configured and lets you send test messages, but it does not
+accept credentials — edit `.env` and restart the app to rotate them. Pacing
+(min/max gap between sends, daily cap per domain) stays in the DB because
+it's operational tuning, not a secret.
 
 ## Docker
 
@@ -83,13 +90,14 @@ Three in-process crons run inside the Next.js server (started from
 
 ## Calendly
 
-1. Generate a personal access token and find your organisation URI.
-2. Enter them in **Settings → Calendly**.
-3. Add a webhook in Calendly pointing to
+1. Generate a personal access token and find your organisation URI. Put them
+   in `.env` as `CALENDLY_TOKEN` and `CALENDLY_ORG_URI`, then restart.
+2. Add a webhook in Calendly pointing to
    `https://<your host>/api/webhooks/calendly` for `invitee.created` and
    `invitee.canceled` events.
-4. When an invitee email matches a buyer, the lot is flipped to `SCHEDULED`.
-   If one email has more than one active event, a warning badge appears.
+3. When an invitee email matches a buyer, the lot is flipped to `SCHEDULED`.
+   If one email has more than one active event, a warning badge appears on
+   the dashboard and lot detail.
 
 ## Twilio delivery status
 

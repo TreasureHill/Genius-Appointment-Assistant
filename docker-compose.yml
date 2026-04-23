@@ -3,12 +3,10 @@ services:
     build: .
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
       DATABASE_URL: "file:./data/app.db"
-      NEXTAUTH_URL: "http://localhost:3000"
-      NEXTAUTH_SECRET: "${NEXTAUTH_SECRET:-change-me-in-env}"
-      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@example.com}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-change-me}"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

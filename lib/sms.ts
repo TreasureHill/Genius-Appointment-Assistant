@@ -1,13 +1,13 @@
 import Twilio from "twilio";
-import { getSetting, type TwilioSettings } from "./settings";
+import { twilioEnv } from "./env";
 
 export { smsSegments } from "./sms-segments";
 
 let cachedClient: { key: string; client: Twilio.Twilio; from: string } | null = null;
 
-async function getClient() {
-  const cfg = await getSetting<TwilioSettings>("twilio");
-  if (!cfg?.accountSid) return null;
+function getClient() {
+  const cfg = twilioEnv();
+  if (!cfg) return null;
   const key = JSON.stringify(cfg);
   if (!cachedClient || cachedClient.key !== key) {
     cachedClient = {
@@ -20,8 +20,8 @@ async function getClient() {
 }
 
 export async function sendSms(args: { to: string; body: string }): Promise<{ id?: string }> {
-  const c = await getClient();
-  if (!c) throw new Error("Twilio not configured");
+  const c = getClient();
+  if (!c) throw new Error("Twilio not configured (set TWILIO_* in .env)");
   const msg = await c.client.messages.create({
     from: c.from,
     to: args.to,
@@ -29,4 +29,3 @@ export async function sendSms(args: { to: string; body: string }): Promise<{ id?
   });
   return { id: msg.sid };
 }
-
