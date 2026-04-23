@@ -1,9 +1,9 @@
-import { prisma } from "@/lib/prisma";
-import { claimDueItems } from "@/lib/outbox";
-import { sendEmail } from "@/lib/mailer";
-import { sendSms } from "@/lib/sms";
-import { domainOf } from "@/lib/pacing";
-import { getPacing } from "@/lib/settings";
+import { prisma } from "../lib/prisma";
+import { claimDueItems } from "../lib/outbox";
+import { sendEmail } from "../lib/mailer";
+import { sendSms } from "../lib/sms";
+import { domainOf } from "../lib/pacing";
+import { getPacing } from "../lib/settings";
 
 const MAX_ATTEMPTS = 3;
 

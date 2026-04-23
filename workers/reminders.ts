@@ -1,5 +1,5 @@
-import { prisma } from "@/lib/prisma";
-import { enqueueForBuyer } from "@/lib/outbox";
+import { prisma } from "../lib/prisma";
+import { enqueueForBuyer } from "../lib/outbox";
 
 /**
  * Enqueue the next reminder for every lot that is due. Increment reminderCount

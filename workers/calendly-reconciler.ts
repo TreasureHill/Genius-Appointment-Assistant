@@ -1,4 +1,4 @@
-import { listRecentEvents } from "@/lib/calendly";
+import { listRecentEvents } from "../lib/calendly";
 
 export async function runCalendlyReconcile() {
   try {

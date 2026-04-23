@@ -1,7 +1,6 @@
 node_modules/
-.next/
-out/
 dist/
+client/dist/
 .env
 .env.local
 .env.production
@@ -14,7 +13,4 @@ dist/
 .vscode/
 .idea/
 coverage/
-prisma/migrations/dev.db*
 tsconfig.tsbuildinfo
-next-env.d.ts
-
