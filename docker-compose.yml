@@ -1,14 +1,29 @@
 services:
   app:
     build: .
-    ports:
-      - "3000:3000"
+    env_file:
+      - .env
     environment:
       DATABASE_URL: "file:./data/app.db"
-      NEXTAUTH_URL: "http://localhost:3000"
-      NEXTAUTH_SECRET: "${NEXTAUTH_SECRET:-change-me-in-env}"
-      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@example.com}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-change-me}"
     volumes:
       - ./data:/app/data
+    expose:
+      - "3000"
     restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
