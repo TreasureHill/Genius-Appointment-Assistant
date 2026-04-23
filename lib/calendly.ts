@@ -1,5 +1,5 @@
 import { prisma } from "./prisma";
-import { getSetting, type CalendlySettings } from "./settings";
+import { calendlyEnv } from "./env";
 
 type CalendlyEventApi = {
   uri: string;
@@ -20,8 +20,8 @@ async function calendlyFetch<T>(path: string, token: string): Promise<T> {
 }
 
 export async function listRecentEvents(days = 30) {
-  const cfg = await getSetting<CalendlySettings>("calendly");
-  if (!cfg?.token || !cfg.orgUri) return null;
+  const cfg = calendlyEnv();
+  if (!cfg) return null;
   const minTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const qs = new URLSearchParams({
     organization: cfg.orgUri,
