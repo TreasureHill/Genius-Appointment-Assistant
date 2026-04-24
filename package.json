@@ -1,0 +1,23 @@
+{
+  "name": "genius-appointment-assistant",
+  "private": true,
+  "version": "0.1.0",
+  "description": "MERN webapp for homeowner appointment booking via paced email + SMS",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,magenta \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w client",
+    "start": "npm start -w server",
+    "seed": "npm run seed -w server",
+    "lint": "echo \"(no linter configured)\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
