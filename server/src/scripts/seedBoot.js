@@ -21,8 +21,8 @@ async function seedStarterTemplates() {
       bodyHtml: `<p>Hi {{buyer.firstName}},</p>
 <p>This is a friendly reminder to book your appointment for <strong>Lot {{lot.number}}</strong>
 at {{lot.address}}. You can pick a time here:
-{{#if rep.calendlyUrl}}<a href="{{rep.calendlyUrl}}">{{rep.calendlyUrl}}</a>{{else}}please reply to this email{{/if}}.</p>
-<p>Thanks,<br/>{{rep.name}}</p>`,
+{{#if owner.calendlyUrl}}<a href="{{owner.calendlyUrl}}">{{owner.calendlyUrl}}</a>{{else}}please reply to this email{{/if}}.</p>
+<p>Thanks,<br/>{{owner.name}}</p>`,
       bodyText: 'Hi {{buyer.firstName}}, reminder to book your appointment for Lot {{lot.number}} at {{lot.address}}.',
       isDefaultReminder: true,
     },
@@ -30,7 +30,7 @@ at {{lot.address}}. You can pick a time here:
       name: 'Default reminder (sms)',
       type: 'sms',
       subject: '',
-      bodyText: 'Hi {{buyer.firstName}}, this is {{rep.name}} — reminder to schedule your appointment for Lot {{lot.number}}. {{rep.calendlyUrl}}',
+      bodyText: 'Hi {{buyer.firstName}}, this is {{owner.name}} — reminder to schedule your appointment for Lot {{lot.number}}. {{owner.calendlyUrl}}',
       bodyHtml: '',
       isDefaultReminder: true,
     },

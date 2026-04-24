@@ -88,7 +88,6 @@ router.get('/', async (req, res) => {
     Setting.getSingleton(),
     CalendlyUnmatch.countDocuments({ status: 'unmatched' }),
     CalendlyUnmatch.find({ status: 'unmatched' })
-      .populate('rep', 'name')
       .sort({ lastSeenAt: -1 })
       .limit(10)
       .lean(),

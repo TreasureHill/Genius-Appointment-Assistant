@@ -1,6 +1,82 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 
+function OwnerCard({ owner, onSaved }) {
+  const [form, setForm] = useState({
+    name: owner.name || '',
+    email: owner.email || '',
+    phone: owner.phone || '',
+    calendlyUri: owner.calendlyUri || '',
+    calendlyUrl: owner.calendlyUrl || '',
+  });
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    setMsg('');
+    try {
+      await api.patch('/api/settings/owner', form);
+      setMsg('Saved.');
+      onSaved && onSaved();
+    } catch (ex) {
+      setMsg('Error: ' + ex.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2 style={{ marginTop: 0 }}>Owner</h2>
+      <p className="muted">
+        This system is for a single person. These details appear in email / SMS templates as{' '}
+        <span className="kbd">{'{{owner.name}}'}</span>,{' '}
+        <span className="kbd">{'{{owner.calendlyUrl}}'}</span>, etc., and the Calendly sync uses
+        the user URI below.
+      </p>
+      <div className="row">
+        <div>
+          <label>Name</label>
+          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        </div>
+        <div>
+          <label>Email</label>
+          <input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </div>
+        <div>
+          <label>Phone</label>
+          <input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+        </div>
+      </div>
+      <div className="row">
+        <div style={{ flex: 2 }}>
+          <label>Calendly user URI (for sync)</label>
+          <input
+            value={form.calendlyUri}
+            onChange={(e) => setForm({ ...form, calendlyUri: e.target.value })}
+            placeholder="https://api.calendly.com/users/…"
+          />
+        </div>
+        <div style={{ flex: 2 }}>
+          <label>Calendly scheduling URL (for templates)</label>
+          <input
+            value={form.calendlyUrl}
+            onChange={(e) => setForm({ ...form, calendlyUrl: e.target.value })}
+            placeholder="https://calendly.com/your-handle"
+          />
+        </div>
+      </div>
+      <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center' }}>
+        <button onClick={save} disabled={busy}>
+          {busy ? 'Saving…' : 'Save owner info'}
+        </button>
+        {msg && <span className={msg.startsWith('Error') ? 'error' : 'success'}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
 function Health({ h }) {
   if (!h) return <span className="muted">—</span>;
   return (
@@ -90,6 +166,8 @@ export default function Settings() {
 
       {msg && <div className="card">{msg}</div>}
 
+      <OwnerCard owner={s.owner || {}} onSaved={load} />
+
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Sender</h2>
         <p className="muted">
@@ -153,7 +231,17 @@ export default function Settings() {
         <h2 style={{ marginTop: 0 }}>Calendly</h2>
         <div className="muted" style={{ marginBottom: 8 }}>
           {s.calendly.configured ? 'Token set in .env' : 'Token not configured'} · Last sync:{' '}
-          {s.calendly.lastSync ? new Date(s.calendly.lastSync).toLocaleString() : '—'}
+          {s.calendly.lastSync ? new Date(s.calendly.lastSync).toLocaleString() : '—'} ·{' '}
+          {s.calendly.health?.message || ''}
+        </div>
+        <div
+          className="muted"
+          style={{ fontSize: 12, marginBottom: 8, border: '1px dashed var(--border)', padding: 8, borderRadius: 6 }}
+        >
+          <strong>Note:</strong> Sync pulls <em>Scheduled Events</em> (actual bookings someone has
+          made on your Calendly link), not <em>Event Types</em> (the meeting-link templates). If
+          you only created a new Event Type, nothing will appear here until someone books a time
+          through it. Time window scanned: 30 days ago → 1 year ahead.
         </div>
         <div>
           Last check: <Health h={s.calendly.health} />

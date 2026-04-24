@@ -1,6 +1,5 @@
 const axios = require('axios');
 const env = require('../config/env');
-const Rep = require('../models/Rep');
 const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
 const MessageLog = require('../models/MessageLog');
@@ -25,25 +24,30 @@ async function verifyCalendly() {
   if (!c) return { ok: false, message: 'Calendly token not configured' };
   try {
     const { data } = await c.get('/users/me');
-    return { ok: true, message: `Connected as ${data.resource?.name || 'unknown'}` };
+    return {
+      ok: true,
+      message: `Connected as ${data.resource?.name || 'unknown'}`,
+      user: data.resource,
+    };
   } catch (err) {
     return { ok: false, message: err.response?.data?.message || err.message };
   }
 }
 
-function normalizeUserUri(raw) {
-  if (!raw) return '';
-  if (raw.startsWith('https://api.calendly.com/users/')) return raw;
-  // If they gave a calendly.com/<slug>, we can't turn it into an API user URI
-  // without a lookup; user should paste the API URI from /users/me.
-  return raw;
-}
-
+// Pull every scheduled event for the given user URI. Explicit time bounds
+// because Calendly's default window can hide events; 30 days ago through
+// 365 days ahead covers recent and upcoming.
 async function listActiveEvents(userUri) {
   const c = client();
   if (!c) return [];
+  const minStart = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const maxStart = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
   const out = [];
-  let url = `/scheduled_events?user=${encodeURIComponent(userUri)}&status=active&count=100`;
+  let url =
+    `/scheduled_events?user=${encodeURIComponent(userUri)}` +
+    `&status=active&count=100` +
+    `&min_start_time=${encodeURIComponent(minStart)}` +
+    `&max_start_time=${encodeURIComponent(maxStart)}`;
   while (url) {
     const { data } = await c.get(url);
     out.push(...(data.collection || []));
@@ -60,48 +64,65 @@ async function listInvitees(eventUri) {
   return data.collection || [];
 }
 
-// Poll Calendly for every rep with calendlyUser set, match invitees to lot
-// buyers by email, flip matched lots to scheduled. If an email appears in more
-// than one active event across all reps, mark calendlyWarning.
+// Sync the single owner's Calendly events: pull scheduled_events, match
+// invitees to lot buyers by email, flip matches to 'scheduled'. Anything
+// unmatched goes into CalendlyUnmatch for manual mapping.
 async function syncAll() {
   const c = client();
-  if (!c) return { ok: false, message: 'Calendly not configured' };
+  if (!c) return { ok: false, message: 'Calendly not configured (missing CALENDLY_TOKEN)' };
 
-  const reps = await Rep.find({ active: true, calendlyUser: { $ne: '' } });
-  const emailOccurrences = new Map(); // email -> [{repId, eventUri, eventName, startTime}]
-  const matched = [];
+  const setting = await Setting.getSingleton();
+  const userUri = setting.owner?.calendlyUri;
+  if (!userUri) {
+    return {
+      ok: false,
+      message:
+        'Owner Calendly URI not set. Open Settings → Owner and paste your Calendly user URI.',
+    };
+  }
 
-  for (const rep of reps) {
+  let events = [];
+  try {
+    events = await listActiveEvents(userUri);
+  } catch (err) {
+    setting.calendlyHealth = {
+      ok: false,
+      checkedAt: new Date(),
+      message: err.response?.data?.message || err.message,
+    };
+    await setting.save();
+    return { ok: false, message: err.response?.data?.message || err.message };
+  }
+
+  // Collect invitees: email → [{event info}]
+  const emailOccurrences = new Map();
+  for (const ev of events) {
+    let invitees = [];
     try {
-      const userUri = normalizeUserUri(rep.calendlyUser);
-      const events = await listActiveEvents(userUri);
-      for (const ev of events) {
-        const invitees = await listInvitees(ev.uri);
-        for (const inv of invitees) {
-          const email = (inv.email || '').toLowerCase();
-          if (!email) continue;
-          const entry = {
-            repId: rep._id,
-            repName: rep.name,
-            eventUri: ev.uri,
-            eventName: ev.name,
-            startTime: ev.start_time,
-            inviteeName: inv.name || '',
-            inviteeStatus: inv.status,
-          };
-          const arr = emailOccurrences.get(email) || [];
-          arr.push(entry);
-          emailOccurrences.set(email, arr);
-        }
-      }
+      invitees = await listInvitees(ev.uri);
     } catch (err) {
-      console.warn(`[calendly] rep ${rep.name} failed:`, err.message);
+      console.warn('[calendly] invitees fetch failed', ev.uri, err.message);
+    }
+    for (const inv of invitees) {
+      const email = (inv.email || '').toLowerCase();
+      if (!email) continue;
+      const entry = {
+        eventUri: ev.uri,
+        eventName: ev.name,
+        startTime: ev.start_time,
+        inviteeName: inv.name || '',
+        inviteeStatus: inv.status,
+      };
+      const arr = emailOccurrences.get(email) || [];
+      arr.push(entry);
+      emailOccurrences.set(email, arr);
     }
   }
 
-  // Match emails to lots
   const emails = Array.from(emailOccurrences.keys());
   const matchedEmails = new Set();
+  const matched = [];
+
   if (emails.length) {
     const lots = await Lot.find({ 'buyers.email': { $in: emails } });
     for (const lot of lots) {
@@ -116,23 +137,16 @@ async function syncAll() {
       const multi = hits.some((h) => h.occurrences.length > 1);
       const firstHit = hits[0].occurrences[0];
 
-      const wasUnscheduled = !['scheduled', 'booked'].includes(lot.status);
-      if (wasUnscheduled) {
-        lot.status = 'scheduled';
-      }
+      if (!['scheduled', 'booked'].includes(lot.status)) lot.status = 'scheduled';
       lot.calendlyEventUri = firstHit.eventUri || lot.calendlyEventUri;
       lot.calendlyWarning = multi
         ? `Invitee appears in multiple active Calendly events (${hits[0].occurrences.length}). Check for duplicates.`
         : '';
-
-      if (firstHit.repId) lot.assignedRep = lot.assignedRep || firstHit.repId;
-
       await lot.save();
 
       await MessageLog.create({
         project: lot.project,
         lot: lot._id,
-        rep: firstHit.repId || null,
         type: 'calendly',
         direction: 'in',
         to: hits[0].email,
@@ -148,10 +162,7 @@ async function syncAll() {
     }
   }
 
-  // Anything we saw that didn't match: upsert into CalendlyUnmatch so the UI
-  // can surface them and let the user manually map to a lot. If the record
-  // already exists we bump lastSeenAt but don't disturb a user decision
-  // ('mapped' / 'ignored').
+  // Persist unmatched invitees for manual mapping in the UI
   let unmatchedCount = 0;
   for (const [email, occurrences] of emailOccurrences) {
     if (matchedEmails.has(email)) continue;
@@ -167,8 +178,6 @@ async function syncAll() {
             inviteeEmail: email,
             inviteeName: occ.inviteeName || '',
             inviteeStatus: occ.inviteeStatus || '',
-            rep: occ.repId || null,
-            repName: occ.repName || '',
             status: 'unmatched',
           },
         },
@@ -178,12 +187,21 @@ async function syncAll() {
     }
   }
 
-  const setting = await Setting.getSingleton();
   setting.lastCalendlySync = new Date();
-  setting.calendlyHealth = { ok: true, checkedAt: new Date(), message: 'Sync ran' };
+  setting.calendlyHealth = {
+    ok: true,
+    checkedAt: new Date(),
+    message: `Sync ran: ${events.length} events, ${emails.length} invitees`,
+  };
   await setting.save();
 
-  return { ok: true, reps: reps.length, emailsSeen: emails.length, matched, unmatched: unmatchedCount };
+  return {
+    ok: true,
+    events: events.length,
+    emailsSeen: emails.length,
+    matched,
+    unmatched: unmatchedCount,
+  };
 }
 
 // Handle a single webhook payload from Calendly (invitee.created).
@@ -212,7 +230,6 @@ async function handleWebhook(payload) {
     });
   }
 
-  // Record unmatched invitees so they show up in the UI for manual mapping
   if (lots.length === 0 && eventUri) {
     await CalendlyUnmatch.updateOne(
       { eventUri, inviteeEmail: email },

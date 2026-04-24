@@ -13,28 +13,58 @@ const HEADERS = [
   'Third Buyer Name',
   'Third Buyer Email',
   'Third Buyer Phone',
-  'Assigned Rep',
   'Status',
 ];
 
 function buildBlankTemplate() {
-  const example = [
-    'Riverside Phase 1',
-    '101',
-    '101 River Rd',
-    'Jane Owner',
-    'jane@example.com',
-    '+15555550101',
-    'John Owner',
-    'john@example.com',
-    '+15555550102',
-    '',
-    '',
-    '',
-    'Alex Rep',
-    'pending',
+  const examples = [
+    [
+      'Riverside Phase 1',
+      '101',
+      '101 River Rd',
+      'Jane Owner',
+      'jane@example.com',
+      '+15555550101',
+      'John Owner',
+      'john@example.com',
+      '+15555550102',
+      '',
+      '',
+      '',
+      'pending',
+    ],
+    [
+      'Riverside Phase 1',
+      '102',
+      '102 River Rd',
+      'Jim Owner',
+      'jim@example.com',
+      '+15555550103',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'pending',
+    ],
+    [
+      'Hilltop Phase 2',
+      '1',
+      '1 Hilltop Ln',
+      'Pat Owner',
+      'pat@example.com',
+      '+15555550104',
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'pending',
+    ],
   ];
-  const rows = [HEADERS, example];
+  const rows = [HEADERS, ...examples];
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = HEADERS.map(() => ({ wch: 22 }));
   const wb = XLSX.utils.book_new();
@@ -64,7 +94,6 @@ function buildExport(lots) {
       third.name || '',
       third.email || '',
       third.phone || '',
-      lot.assignedRep?.name || '',
       lot.status || '',
     ]);
   }

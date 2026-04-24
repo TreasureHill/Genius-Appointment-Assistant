@@ -5,20 +5,17 @@ import { api } from '../api';
 export default function History() {
   const [list, setList] = useState([]);
   const [projects, setProjects] = useState([]);
-  const [reps, setReps] = useState([]);
-  const [filter, setFilter] = useState({ project: '', rep: '', type: '', direction: '', status: '' });
+  const [filter, setFilter] = useState({ project: '', type: '', direction: '', status: '' });
 
   async function load() {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(filter)) if (v) qs.append(k, v);
-    const [l, p, r] = await Promise.all([
+    const [l, p] = await Promise.all([
       api.get(`/api/messages/history?${qs.toString()}`),
       api.get('/api/projects'),
-      api.get('/api/reps'),
     ]);
     setList(l);
     setProjects(p);
-    setReps(r);
   }
 
   useEffect(() => {
@@ -35,14 +32,6 @@ export default function History() {
           {projects.map((p) => (
             <option key={p._id} value={p._id}>
               {p.name}
-            </option>
-          ))}
-        </select>
-        <select value={filter.rep} onChange={(e) => setFilter({ ...filter, rep: e.target.value })}>
-          <option value="">All reps</option>
-          {reps.map((r) => (
-            <option key={r._id} value={r._id}>
-              {r.name}
             </option>
           ))}
         </select>

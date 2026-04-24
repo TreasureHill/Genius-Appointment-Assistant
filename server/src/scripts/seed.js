@@ -3,19 +3,12 @@ require('../config/env');
 const { connect } = require('../config/db');
 const Project = require('../models/Project');
 const Lot = require('../models/Lot');
-const Rep = require('../models/Rep');
 const { seedAdmin, seedStarterTemplates } = require('./seedBoot');
 
 async function main() {
   await connect();
   await seedAdmin();
   await seedStarterTemplates();
-
-  const rep = await Rep.findOneAndUpdate(
-    { name: 'Alex Rep' },
-    { $setOnInsert: { name: 'Alex Rep', email: 'alex@example.com', phone: '+15555550100' } },
-    { upsert: true, new: true }
-  );
 
   const project = await Project.findOneAndUpdate(
     { name: 'Riverside Phase 1' },
@@ -42,7 +35,6 @@ async function main() {
           { role: 'buyer', name: 'Jane Owner', email: 'jane@example.com', phone: '+15555550101' },
           { role: 'coBuyer', name: 'John Owner', email: 'john@example.com', phone: '+15555550102' },
         ],
-        assignedRep: rep._id,
       },
     },
     { upsert: true }

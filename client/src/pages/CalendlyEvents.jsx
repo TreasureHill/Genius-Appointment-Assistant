@@ -51,7 +51,6 @@ function MapRow({ entry, projects, onDone }) {
       <td className="nowrap">
         {entry.eventStartTime ? new Date(entry.eventStartTime).toLocaleString() : '—'}
       </td>
-      <td>{entry.repName || entry.rep?.name || ''}</td>
       <td>
         <div><strong>{entry.inviteeName || '—'}</strong></div>
         <div className="muted" style={{ fontSize: 12 }}>{entry.inviteeEmail}</div>
@@ -101,7 +100,6 @@ function ResolvedRow({ entry, onUnresolve, onDelete }) {
       <td className="nowrap">
         {entry.eventStartTime ? new Date(entry.eventStartTime).toLocaleString() : '—'}
       </td>
-      <td>{entry.repName}</td>
       <td>
         <div><strong>{entry.inviteeName || '—'}</strong></div>
         <div className="muted" style={{ fontSize: 12 }}>{entry.inviteeEmail}</div>
@@ -158,7 +156,7 @@ export default function CalendlyEvents() {
       const r = await api.post('/api/settings/calendly/sync', {});
       if (r.ok) {
         setSyncMsg(
-          `Synced: ${r.reps} reps, ${r.emailsSeen} invitees, ${r.matched.length} auto-matched, ${r.unmatched || 0} unmatched`
+          `Synced: ${r.events} events, ${r.emailsSeen} invitees, ${r.matched.length} auto-matched, ${r.unmatched || 0} unmatched`
         );
       } else {
         setSyncMsg('Sync failed: ' + (r.message || 'unknown error'));
@@ -221,7 +219,6 @@ export default function CalendlyEvents() {
           <thead>
             <tr>
               <th>Event time</th>
-              <th>Rep</th>
               <th>Invitee</th>
               <th>Event</th>
               <th>{tab === 'unmatched' ? 'Map to lot' : 'Mapped to'}</th>
@@ -231,7 +228,7 @@ export default function CalendlyEvents() {
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                <td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                   {tab === 'unmatched'
                     ? 'Nothing unmatched right now. Click "Sync Calendly now" to refresh.'
                     : `No ${tab} entries.`}
