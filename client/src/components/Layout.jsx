@@ -8,6 +8,7 @@ const links = [
   { to: '/templates', label: 'Templates' },
   { to: '/import', label: 'Import / Export' },
   { to: '/history', label: 'History' },
+  { to: '/calendly', label: 'Calendly events' },
   { to: '/settings', label: 'Settings' },
 ];
 

@@ -83,6 +83,48 @@ export default function Dashboard() {
         <Tile label="Failed (7d)" value={m7.email.out + m7.sms.out > 0 ? d.outboxByStatus.failed || 0 : 0} />
       </div>
 
+      {d.unmatchedCalendly && d.unmatchedCalendly.count > 0 && (
+        <>
+          <h2>
+            Unmatched Calendly events ({d.unmatchedCalendly.count}){' '}
+            <Link to="/calendly" style={{ fontSize: 13 }}>
+              manage →
+            </Link>
+          </h2>
+          <div className="card" style={{ padding: 0 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Event time</th>
+                  <th>Rep</th>
+                  <th>Invitee</th>
+                  <th>Event</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.unmatchedCalendly.recent.map((e) => (
+                  <tr key={e._id}>
+                    <td className="nowrap">
+                      {e.eventStartTime ? new Date(e.eventStartTime).toLocaleString() : '—'}
+                    </td>
+                    <td>{e.repName || e.rep?.name || ''}</td>
+                    <td>
+                      <div>
+                        <strong>{e.inviteeName || '—'}</strong>
+                      </div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {e.inviteeEmail}
+                      </div>
+                    </td>
+                    <td>{e.eventName}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
       {d.warnings && d.warnings.length > 0 && (
         <>
           <h2>Warnings</h2>

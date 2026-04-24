@@ -4,6 +4,7 @@ const Project = require('../models/Project');
 const MessageLog = require('../models/MessageLog');
 const Outbox = require('../models/Outbox');
 const Setting = require('../models/Setting');
+const CalendlyUnmatch = require('../models/CalendlyUnmatch');
 
 const router = express.Router();
 
@@ -20,6 +21,8 @@ router.get('/', async (req, res) => {
     warnings,
     perProject,
     setting,
+    unmatchedCalendly,
+    unmatchedCalendlyList,
   ] = await Promise.all([
     Lot.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
     Outbox.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
@@ -83,6 +86,12 @@ router.get('/', async (req, res) => {
       { $sort: { name: 1 } },
     ]),
     Setting.getSingleton(),
+    CalendlyUnmatch.countDocuments({ status: 'unmatched' }),
+    CalendlyUnmatch.find({ status: 'unmatched' })
+      .populate('rep', 'name')
+      .sort({ lastSeenAt: -1 })
+      .limit(10)
+      .lean(),
   ]);
 
   const shape = (rows) => {
@@ -112,6 +121,7 @@ router.get('/', async (req, res) => {
     recent,
     warnings,
     perProject,
+    unmatchedCalendly: { count: unmatchedCalendly, recent: unmatchedCalendlyList },
     health: {
       smtp: setting.smtpHealth,
       twilio: setting.twilioHealth,

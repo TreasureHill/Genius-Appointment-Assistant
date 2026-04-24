@@ -4,6 +4,7 @@ const Rep = require('../models/Rep');
 const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
 const MessageLog = require('../models/MessageLog');
+const CalendlyUnmatch = require('../models/CalendlyUnmatch');
 
 const API_BASE = 'https://api.calendly.com';
 
@@ -85,6 +86,7 @@ async function syncAll() {
             eventUri: ev.uri,
             eventName: ev.name,
             startTime: ev.start_time,
+            inviteeName: inv.name || '',
             inviteeStatus: inv.status,
           };
           const arr = emailOccurrences.get(email) || [];
@@ -99,6 +101,7 @@ async function syncAll() {
 
   // Match emails to lots
   const emails = Array.from(emailOccurrences.keys());
+  const matchedEmails = new Set();
   if (emails.length) {
     const lots = await Lot.find({ 'buyers.email': { $in: emails } });
     for (const lot of lots) {
@@ -140,7 +143,38 @@ async function syncAll() {
         sentAt: new Date(),
       });
 
+      for (const h of hits) matchedEmails.add(h.email.toLowerCase());
       matched.push({ lotId: String(lot._id), email: hits[0].email, multi });
+    }
+  }
+
+  // Anything we saw that didn't match: upsert into CalendlyUnmatch so the UI
+  // can surface them and let the user manually map to a lot. If the record
+  // already exists we bump lastSeenAt but don't disturb a user decision
+  // ('mapped' / 'ignored').
+  let unmatchedCount = 0;
+  for (const [email, occurrences] of emailOccurrences) {
+    if (matchedEmails.has(email)) continue;
+    for (const occ of occurrences) {
+      await CalendlyUnmatch.updateOne(
+        { eventUri: occ.eventUri, inviteeEmail: email },
+        {
+          $set: { lastSeenAt: new Date() },
+          $setOnInsert: {
+            eventUri: occ.eventUri,
+            eventName: occ.eventName || '',
+            eventStartTime: occ.startTime ? new Date(occ.startTime) : null,
+            inviteeEmail: email,
+            inviteeName: occ.inviteeName || '',
+            inviteeStatus: occ.inviteeStatus || '',
+            rep: occ.repId || null,
+            repName: occ.repName || '',
+            status: 'unmatched',
+          },
+        },
+        { upsert: true }
+      );
+      unmatchedCount += 1;
     }
   }
 
@@ -149,7 +183,7 @@ async function syncAll() {
   setting.calendlyHealth = { ok: true, checkedAt: new Date(), message: 'Sync ran' };
   await setting.save();
 
-  return { ok: true, reps: reps.length, emailsSeen: emails.length, matched };
+  return { ok: true, reps: reps.length, emailsSeen: emails.length, matched, unmatched: unmatchedCount };
 }
 
 // Handle a single webhook payload from Calendly (invitee.created).
@@ -177,6 +211,29 @@ async function handleWebhook(payload) {
       sentAt: new Date(),
     });
   }
+
+  // Record unmatched invitees so they show up in the UI for manual mapping
+  if (lots.length === 0 && eventUri) {
+    await CalendlyUnmatch.updateOne(
+      { eventUri, inviteeEmail: email },
+      {
+        $set: { lastSeenAt: new Date() },
+        $setOnInsert: {
+          eventUri,
+          eventName: payload?.payload?.scheduled_event?.name || '',
+          eventStartTime: payload?.payload?.scheduled_event?.start_time
+            ? new Date(payload.payload.scheduled_event.start_time)
+            : null,
+          inviteeEmail: email,
+          inviteeName: invitee.name || '',
+          inviteeStatus: invitee.status || '',
+          status: 'unmatched',
+        },
+      },
+      { upsert: true }
+    );
+  }
+
   return { matched: lots.length };
 }
 
