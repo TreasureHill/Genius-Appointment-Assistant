@@ -3,11 +3,13 @@ import { useAuth } from '../auth.jsx';
 
 const links = [
   { to: '/', label: 'Dashboard', end: true },
+  { to: '/board', label: 'Board' },
   { to: '/projects', label: 'Projects' },
   { to: '/reps', label: 'Reps' },
   { to: '/templates', label: 'Templates' },
   { to: '/import', label: 'Import / Export' },
   { to: '/history', label: 'History' },
+  { to: '/calendly', label: 'Calendly events' },
   { to: '/settings', label: 'Settings' },
 ];
 

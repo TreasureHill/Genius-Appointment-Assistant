@@ -1,0 +1,110 @@
+const express = require('express');
+const CalendlyUnmatch = require('../models/CalendlyUnmatch');
+const Lot = require('../models/Lot');
+const MessageLog = require('../models/MessageLog');
+
+const router = express.Router();
+
+router.get('/unmatched', async (req, res) => {
+  const { status = 'unmatched', q, limit = 200 } = req.query;
+  const filter = {};
+  if (status !== 'all') filter.status = status;
+  if (q) {
+    const r = new RegExp(escapeRegex(q), 'i');
+    filter.$or = [{ inviteeEmail: r }, { inviteeName: r }, { eventName: r }];
+  }
+  const rows = await CalendlyUnmatch.find(filter)
+    .populate('rep', 'name')
+    .populate({ path: 'mappedLot', populate: { path: 'project', select: 'name' }, select: 'lotNumber' })
+    .sort({ lastSeenAt: -1 })
+    .limit(Math.min(Number(limit) || 200, 1000))
+    .lean();
+  res.json(rows);
+});
+
+router.post('/unmatched/:id/map', async (req, res) => {
+  const { lotId, addAsBuyer = true } = req.body || {};
+  if (!lotId) return res.status(400).json({ error: 'lotId_required' });
+
+  const entry = await CalendlyUnmatch.findById(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'not_found' });
+
+  const lot = await Lot.findById(lotId).populate('project', 'name');
+  if (!lot) return res.status(404).json({ error: 'lot_not_found' });
+
+  const emailLower = entry.inviteeEmail.toLowerCase();
+  const alreadyBuyer = (lot.buyers || []).some((b) => (b.email || '').toLowerCase() === emailLower);
+
+  // Optionally add the invitee as a buyer so future Calendly events auto-match
+  if (addAsBuyer && !alreadyBuyer) {
+    const usedRoles = new Set((lot.buyers || []).map((b) => b.role));
+    const nextRole = ['buyer', 'coBuyer', 'thirdBuyer'].find((r) => !usedRoles.has(r));
+    if (nextRole) {
+      lot.buyers.push({
+        role: nextRole,
+        name: entry.inviteeName || '',
+        email: entry.inviteeEmail,
+        phone: '',
+        optedOut: false,
+      });
+    }
+  }
+
+  if (!['scheduled', 'booked'].includes(lot.status)) lot.status = 'scheduled';
+  lot.calendlyEventUri = entry.eventUri || lot.calendlyEventUri;
+  if (entry.rep && !lot.assignedRep) lot.assignedRep = entry.rep;
+  await lot.save();
+
+  entry.status = 'mapped';
+  entry.mappedLot = lot._id;
+  entry.mappedAt = new Date();
+  await entry.save();
+
+  await MessageLog.create({
+    project: lot.project._id,
+    lot: lot._id,
+    rep: entry.rep || null,
+    type: 'calendly',
+    direction: 'in',
+    to: entry.inviteeEmail,
+    subject: entry.eventName || 'Calendly event (manual map)',
+    body: `Manually mapped invitee ${entry.inviteeEmail} in event ${entry.eventUri} to lot ${lot.lotNumber}`,
+    status: 'received',
+    providerId: entry.eventUri,
+    sentAt: new Date(),
+  });
+
+  res.json({ ok: true, entry, lot });
+});
+
+router.post('/unmatched/:id/ignore', async (req, res) => {
+  const entry = await CalendlyUnmatch.findByIdAndUpdate(
+    req.params.id,
+    { $set: { status: 'ignored' } },
+    { new: true }
+  );
+  if (!entry) return res.status(404).json({ error: 'not_found' });
+  res.json(entry);
+});
+
+router.post('/unmatched/:id/unresolve', async (req, res) => {
+  const entry = await CalendlyUnmatch.findByIdAndUpdate(
+    req.params.id,
+    { $set: { status: 'unmatched', mappedLot: null, mappedAt: null } },
+    { new: true }
+  );
+  if (!entry) return res.status(404).json({ error: 'not_found' });
+  res.json(entry);
+});
+
+router.delete('/unmatched/:id', async (req, res) => {
+  const entry = await CalendlyUnmatch.findByIdAndDelete(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
+});
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+module.exports = router;
