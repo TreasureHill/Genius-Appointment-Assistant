@@ -9,8 +9,17 @@ const router = express.Router();
 
 router.get('/', async (req, res) => {
   const s = await Setting.getSingleton();
+  const sched = (s.schedule && s.schedule.toObject ? s.schedule.toObject() : s.schedule) || {};
   res.json({
     owner: s.owner || {},
+    schedule: {
+      reminderIntervalDays: sched.reminderIntervalDays ?? env.defaults.reminderDays,
+      maxReminders: sched.maxReminders ?? env.defaults.maxReminders,
+      pacing: sched.pacing || { minSec: env.defaults.pacingMin, maxSec: env.defaults.pacingMax },
+      quietHours: sched.quietHours || { enabled: false, start: '21:00', end: '08:00' },
+      defaultEmailTemplate: sched.defaultEmailTemplate || null,
+      defaultSmsTemplate: sched.defaultSmsTemplate || null,
+    },
     smtp: { configured: env.smtp.configured, from: env.smtp.from, host: env.smtp.host, health: s.smtpHealth },
     twilio: { configured: env.twilio.configured, from: env.twilio.from, health: s.twilioHealth },
     calendly: { configured: env.calendly.configured, health: s.calendlyHealth, lastSync: s.lastCalendlySync },
@@ -30,6 +39,30 @@ router.patch('/owner', async (req, res) => {
   if (calendlyUrl != null) s.owner.calendlyUrl = calendlyUrl;
   await s.save();
   res.json(s.owner);
+});
+
+router.patch('/schedule', async (req, res) => {
+  const { reminderIntervalDays, maxReminders, pacing, quietHours, defaultEmailTemplate, defaultSmsTemplate } =
+    req.body || {};
+  const s = await Setting.getSingleton();
+  s.schedule = s.schedule || {};
+  if (reminderIntervalDays != null) s.schedule.reminderIntervalDays = Number(reminderIntervalDays);
+  if (maxReminders != null) s.schedule.maxReminders = Number(maxReminders);
+  if (pacing) {
+    s.schedule.pacing = s.schedule.pacing || {};
+    if (pacing.minSec != null) s.schedule.pacing.minSec = Number(pacing.minSec);
+    if (pacing.maxSec != null) s.schedule.pacing.maxSec = Number(pacing.maxSec);
+  }
+  if (quietHours) {
+    s.schedule.quietHours = s.schedule.quietHours || {};
+    if (quietHours.enabled != null) s.schedule.quietHours.enabled = Boolean(quietHours.enabled);
+    if (quietHours.start != null) s.schedule.quietHours.start = quietHours.start;
+    if (quietHours.end != null) s.schedule.quietHours.end = quietHours.end;
+  }
+  if (defaultEmailTemplate !== undefined) s.schedule.defaultEmailTemplate = defaultEmailTemplate || null;
+  if (defaultSmsTemplate !== undefined) s.schedule.defaultSmsTemplate = defaultSmsTemplate || null;
+  await s.save();
+  res.json(s.schedule);
 });
 
 router.post('/pause', async (req, res) => {

@@ -59,9 +59,8 @@ export default function Projects() {
               <th>Name</th>
               <th>Lots</th>
               <th>Pending</th>
+              <th>Contacted</th>
               <th>Scheduled</th>
-              <th>Booked</th>
-              <th>Reminders</th>
             </tr>
           </thead>
           <tbody>
@@ -72,16 +71,13 @@ export default function Projects() {
                 </td>
                 <td>{p.stats.total}</td>
                 <td>{p.stats.byStatus.pending || 0}</td>
+                <td>{p.stats.byStatus.contacted || 0}</td>
                 <td>{p.stats.byStatus.scheduled || 0}</td>
-                <td>{p.stats.byStatus.booked || 0}</td>
-                <td className="muted nowrap">
-                  every {p.reminderIntervalDays}d · max {p.maxReminders}
-                </td>
               </tr>
             ))}
             {projects.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                <td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                   No projects yet. Create one above, or go to{' '}
                   <Link to="/import">Import / Export</Link> to upload a sheet.
                 </td>

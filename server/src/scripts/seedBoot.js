@@ -1,7 +1,19 @@
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Template = require('../models/Template');
+const Lot = require('../models/Lot');
 const env = require('../config/env');
+
+async function migrateBookedToScheduled() {
+  // 'booked' was an early redundant status; it now collapses into 'scheduled'.
+  const result = await Lot.collection.updateMany(
+    { status: 'booked' },
+    { $set: { status: 'scheduled' } }
+  );
+  if (result.modifiedCount > 0) {
+    console.log(`[migration] flipped ${result.modifiedCount} 'booked' lots to 'scheduled'`);
+  }
+}
 
 async function seedAdmin() {
   const count = await User.countDocuments();
@@ -38,4 +50,4 @@ at {{lot.address}}. You can pick a time here:
   console.log('[seed] inserted starter templates');
 }
 
-module.exports = { seedAdmin, seedStarterTemplates };
+module.exports = { seedAdmin, seedStarterTemplates, migrateBookedToScheduled };

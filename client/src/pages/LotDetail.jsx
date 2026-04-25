@@ -8,7 +8,7 @@ const ROLES = [
   { key: 'coBuyer', label: 'Co-buyer' },
   { key: 'thirdBuyer', label: 'Third buyer' },
 ];
-const STATUSES = ['pending', 'contacted', 'scheduled', 'booked', 'opted_out'];
+const STATUSES = ['pending', 'contacted', 'scheduled', 'opted_out'];
 
 function emptyBuyer(role) {
   return { role, name: '', email: '', phone: '', optedOut: false };
@@ -157,8 +157,8 @@ export default function LotDetail() {
           <button onClick={save} disabled={saving}>
             {saving ? 'Saving…' : 'Save changes'}
           </button>
-          <button className="secondary" onClick={() => quickStatus('booked')}>
-            Mark booked (stops reminders)
+          <button className="secondary" onClick={() => quickStatus('scheduled')}>
+            Mark scheduled (stops reminders)
           </button>
           <button className="secondary" onClick={() => quickStatus('opted_out')}>
             Mark opted out
