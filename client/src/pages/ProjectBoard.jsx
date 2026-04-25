@@ -58,22 +58,21 @@ export default function ProjectBoard() {
   const [projectId, setProjectId] = useState(initialProject);
   const [project, setProject] = useState(null);
   const [lots, setLots] = useState([]);
-  const [reps, setReps] = useState([]);
-  const [filter, setFilter] = useState({ status: '', rep: '', q: '' });
+  const [templates, setTemplates] = useState([]);
+  const [filter, setFilter] = useState({ status: '', q: '' });
+  const [selected, setSelected] = useState(new Set());
+  const [templateId, setTemplateId] = useState('');
   const [busyLotId, setBusyLotId] = useState(null);
+  const [sendMsg, setSendMsg] = useState('');
 
-  // Load projects + reps once
   useEffect(() => {
     api.get('/api/projects').then((list) => {
       setProjects(list);
-      if (!projectId && list.length) {
-        setProjectId(list[0]._id);
-      }
+      if (!projectId && list.length) setProjectId(list[0]._id);
     });
-    api.get('/api/reps').then(setReps);
+    api.get('/api/templates').then(setTemplates);
   }, []);
 
-  // Load project + lots whenever project changes
   useEffect(() => {
     if (!projectId) return;
     localStorage.setItem('board:project', projectId);
@@ -84,6 +83,7 @@ export default function ProjectBoard() {
     ]).then(([p, l]) => {
       setProject(p);
       setLots(l);
+      setSelected(new Set());
     });
   }, [projectId]);
 
@@ -96,10 +96,6 @@ export default function ProjectBoard() {
   const filtered = useMemo(() => {
     return lots.filter((l) => {
       if (filter.status && l.status !== filter.status) return false;
-      if (filter.rep) {
-        const rep = l.assignedRep?._id || l.assignedRep;
-        if (filter.rep === 'none' ? !!rep : String(rep) !== filter.rep) return false;
-      }
       if (filter.q) {
         const q = filter.q.toLowerCase();
         const hay = [
@@ -125,20 +121,47 @@ export default function ProjectBoard() {
     }
   }
 
-  async function changeRep(lot, repId) {
-    setBusyLotId(lot._id);
-    try {
-      const updated = await api.patch(`/api/lots/${lot._id}`, { assignedRep: repId || null });
-      setLots((prev) =>
-        prev.map((l) => (l._id === lot._id ? { ...l, assignedRep: updated.assignedRep } : l))
-      );
-    } finally {
-      setBusyLotId(null);
+  function toggle(lotId) {
+    const next = new Set(selected);
+    if (next.has(lotId)) next.delete(lotId);
+    else next.add(lotId);
+    setSelected(next);
+  }
+
+  function toggleAll() {
+    if (selected.size === filtered.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(filtered.map((l) => l._id)));
     }
   }
 
-  function buyerOf(lot, role) {
-    return (lot.buyers || []).find((b) => b.role === role);
+  async function sendSelected() {
+    setSendMsg('');
+    if (!templateId || selected.size === 0) return;
+    try {
+      const result = await api.post('/api/messages/send', {
+        lotIds: Array.from(selected),
+        templateId,
+      });
+      setSendMsg(
+        `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} across ${
+          selected.size
+        } lot${selected.size === 1 ? '' : 's'}. ${
+          result.skipped.length
+            ? `Skipped ${result.skipped.length} — see reasons in the outbox.`
+            : ''
+        } Reminders will start ${project.reminderIntervalDays}d after each send, up to ${project.maxReminders}× per lot.`
+      );
+      setSelected(new Set());
+      // Refresh lots to reflect contacted status after send
+      setTimeout(async () => {
+        const fresh = await api.get(`/api/lots?project=${projectId}&limit=1000`);
+        setLots(fresh);
+      }, 800);
+    } catch (ex) {
+      setSendMsg('Error: ' + ex.message);
+    }
   }
 
   if (projects.length === 0) {
@@ -146,12 +169,13 @@ export default function ProjectBoard() {
       <div>
         <h1>Board</h1>
         <div className="muted">
-          No projects yet. Create one on the <Link to="/projects">Projects</Link> page or{' '}
-          <Link to="/import">import a sheet</Link>.
+          No projects yet. <Link to="/import">Import a sheet</Link> to create lots under a project.
         </div>
       </div>
     );
   }
+
+  const allSelected = filtered.length > 0 && selected.size === filtered.length;
 
   return (
     <div>
@@ -205,32 +229,42 @@ export default function ProjectBoard() {
           placeholder="Search lot #, address, buyer name / email / phone…"
           value={filter.q}
           onChange={(e) => setFilter({ ...filter, q: e.target.value })}
-          style={{ flex: 1, minWidth: 260 }}
+          style={{ flex: 1, minWidth: 240 }}
         />
-        <select value={filter.rep} onChange={(e) => setFilter({ ...filter, rep: e.target.value })}>
-          <option value="">All reps</option>
-          <option value="none">Unassigned</option>
-          {reps.map((r) => (
-            <option key={r._id} value={r._id}>
-              {r.name}
+        <div className="muted" style={{ fontSize: 12 }}>
+          Showing {filtered.length} of {lots.length} · {selected.size} selected
+        </div>
+        <div style={{ flex: 1 }} />
+        <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+          <option value="">Pick template…</option>
+          {templates.map((t) => (
+            <option key={t._id} value={t._id}>
+              [{t.type}] {t.name}
             </option>
           ))}
         </select>
-        <div className="muted" style={{ fontSize: 12 }}>
-          Showing {filtered.length} of {lots.length}
-        </div>
+        <button onClick={sendSelected} disabled={!templateId || selected.size === 0}>
+          Send to {selected.size} selected
+        </button>
       </div>
+      {sendMsg && (
+        <div className={sendMsg.startsWith('Error') ? 'error' : 'card'} style={{ marginBottom: 10 }}>
+          {sendMsg}
+        </div>
+      )}
 
       <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
         <table>
           <thead>
             <tr>
+              <th style={{ width: 32 }}>
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+              </th>
               <th style={{ minWidth: 70 }}>Lot #</th>
               <th style={{ minWidth: 140 }}>Address</th>
               <th style={{ minWidth: 200 }}>{ROLE_LABELS.buyer}</th>
               <th style={{ minWidth: 200 }}>{ROLE_LABELS.coBuyer}</th>
               <th style={{ minWidth: 200 }}>{ROLE_LABELS.thirdBuyer}</th>
-              <th style={{ minWidth: 140 }}>Rep</th>
               <th style={{ minWidth: 140 }}>Status</th>
               <th style={{ minWidth: 100 }}>Reminders</th>
               <th style={{ minWidth: 120 }}>Last contact</th>
@@ -243,33 +277,26 @@ export default function ProjectBoard() {
               return (
                 <tr key={lot._id}>
                   <td>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(lot._id)}
+                      onChange={() => toggle(lot._id)}
+                    />
+                  </td>
+                  <td>
                     <Link to={`/lots/${lot._id}`}>
                       <strong>{lot.lotNumber}</strong>
                     </Link>
                   </td>
                   <td>{lot.address || <span className="muted">—</span>}</td>
                   <td>
-                    <BuyerCell buyer={buyerOf(lot, 'buyer')} />
+                    <BuyerCell buyer={(lot.buyers || []).find((b) => b.role === 'buyer')} />
                   </td>
                   <td>
-                    <BuyerCell buyer={buyerOf(lot, 'coBuyer')} />
+                    <BuyerCell buyer={(lot.buyers || []).find((b) => b.role === 'coBuyer')} />
                   </td>
                   <td>
-                    <BuyerCell buyer={buyerOf(lot, 'thirdBuyer')} />
-                  </td>
-                  <td>
-                    <select
-                      value={lot.assignedRep?._id || lot.assignedRep || ''}
-                      onChange={(e) => changeRep(lot, e.target.value)}
-                      disabled={disabled}
-                    >
-                      <option value="">— unassigned —</option>
-                      {reps.map((r) => (
-                        <option key={r._id} value={r._id}>
-                          {r.name}
-                        </option>
-                      ))}
-                    </select>
+                    <BuyerCell buyer={(lot.buyers || []).find((b) => b.role === 'thirdBuyer')} />
                   </td>
                   <td>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -308,13 +335,23 @@ export default function ProjectBoard() {
               <tr>
                 <td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 24 }}>
                   {lots.length === 0
-                    ? 'This project has no lots yet. Import a sheet or add one from the project page.'
+                    ? 'This project has no lots yet. Import a sheet to add some.'
                     : 'No lots match your filters.'}
                 </td>
               </tr>
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+        <strong>How sending works:</strong> Select lots above, pick a template, click <em>Send</em>.
+        Each selected lot's buyers are queued with the project's pacing jitter. Once sent, the lot
+        flips to <span className="badge contacted">contacted</span> and automatic reminders begin
+        after the configured interval — until the lot is marked{' '}
+        <span className="badge scheduled">scheduled</span> (manually, by Calendly match, or manual
+        mapping) / <span className="badge booked">booked</span> /{' '}
+        <span className="badge opted_out">opted out</span>, or the max reminder count is reached.
       </div>
     </div>
   );

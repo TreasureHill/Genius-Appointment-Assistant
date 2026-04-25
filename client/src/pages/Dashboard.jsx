@@ -96,7 +96,6 @@ export default function Dashboard() {
               <thead>
                 <tr>
                   <th>Event time</th>
-                  <th>Rep</th>
                   <th>Invitee</th>
                   <th>Event</th>
                 </tr>
@@ -107,7 +106,6 @@ export default function Dashboard() {
                     <td className="nowrap">
                       {e.eventStartTime ? new Date(e.eventStartTime).toLocaleString() : '—'}
                     </td>
-                    <td>{e.repName || e.rep?.name || ''}</td>
                     <td>
                       <div>
                         <strong>{e.inviteeName || '—'}</strong>

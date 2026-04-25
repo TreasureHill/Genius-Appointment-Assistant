@@ -6,18 +6,16 @@ const { enqueueBroadcast } = require('../services/enqueue');
 const router = express.Router();
 
 router.get('/history', async (req, res) => {
-  const { project, lot, rep, type, direction, status, limit = 200 } = req.query;
+  const { project, lot, type, direction, status, limit = 200 } = req.query;
   const filter = {};
   if (project) filter.project = project;
   if (lot) filter.lot = lot;
-  if (rep) filter.rep = rep;
   if (type) filter.type = type;
   if (direction) filter.direction = direction;
   if (status) filter.status = status;
   const logs = await MessageLog.find(filter)
     .populate('project', 'name')
     .populate('lot', 'lotNumber address')
-    .populate('rep', 'name')
     .sort({ createdAt: -1 })
     .limit(Math.min(Number(limit) || 200, 1000))
     .lean();

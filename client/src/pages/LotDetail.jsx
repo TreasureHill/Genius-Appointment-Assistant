@@ -17,21 +17,14 @@ function emptyBuyer(role) {
 export default function LotDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
-  const [reps, setReps] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
   async function load() {
-    const [d, r, t] = await Promise.all([
-      api.get(`/api/lots/${id}`),
-      api.get('/api/reps'),
-      api.get('/api/templates'),
-    ]);
-    // Fill missing roles so UI shows all 3 slots
+    const [d, t] = await Promise.all([api.get(`/api/lots/${id}`), api.get('/api/templates')]);
     const buyers = ROLES.map(({ key }) => d.lot.buyers.find((b) => b.role === key) || emptyBuyer(key));
     setData({ ...d, lot: { ...d.lot, buyers } });
-    setReps(r);
     setTemplates(t);
   }
 
@@ -59,7 +52,6 @@ export default function LotDetail() {
         lotNumber: data.lot.lotNumber,
         address: data.lot.address,
         buyers,
-        assignedRep: data.lot.assignedRep?._id || data.lot.assignedRep || null,
         status: data.lot.status,
         notes: data.lot.notes || '',
       };
@@ -113,20 +105,6 @@ export default function LotDetail() {
           <div style={{ flex: 2 }}>
             <label>Address</label>
             <input value={lot.address || ''} onChange={(e) => setLot({ address: e.target.value })} />
-          </div>
-          <div>
-            <label>Assigned rep</label>
-            <select
-              value={lot.assignedRep?._id || lot.assignedRep || ''}
-              onChange={(e) => setLot({ assignedRep: e.target.value || null })}
-            >
-              <option value="">— unassigned —</option>
-              {reps.map((r) => (
-                <option key={r._id} value={r._id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
           </div>
           <div>
             <label>Status</label>

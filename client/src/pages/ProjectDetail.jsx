@@ -1,65 +1,40 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api';
-import StatusBadge from '../components/StatusBadge.jsx';
 
 export default function ProjectDetail() {
   const { id } = useParams();
+  const nav = useNavigate();
   const [project, setProject] = useState(null);
-  const [lots, setLots] = useState([]);
-  const [reps, setReps] = useState([]);
   const [templates, setTemplates] = useState([]);
-  const [filter, setFilter] = useState({ rep: '', status: '', q: '' });
-  const [selected, setSelected] = useState(new Set());
-  const [templateId, setTemplateId] = useState('');
+  const [lotCount, setLotCount] = useState(0);
   const [saved, setSaved] = useState('');
   const [err, setErr] = useState('');
 
   async function load() {
-    const [p, l, r, t] = await Promise.all([
+    const [p, t, lots] = await Promise.all([
       api.get(`/api/projects/${id}`),
-      api.get(`/api/lots?project=${id}`),
-      api.get('/api/reps'),
       api.get('/api/templates'),
+      api.get(`/api/lots?project=${id}&limit=1`),
     ]);
     setProject(p);
-    setLots(l);
-    setReps(r);
     setTemplates(t);
+    setLotCount(lots.length);
   }
+
   useEffect(() => {
     load();
   }, [id]);
 
-  const filtered = useMemo(() => {
-    return lots.filter((l) => {
-      if (filter.rep) {
-        const rep = l.assignedRep?._id || l.assignedRep;
-        if (filter.rep === 'none' ? !!rep : String(rep) !== filter.rep) return false;
-      }
-      if (filter.status && l.status !== filter.status) return false;
-      if (filter.q) {
-        const q = filter.q.toLowerCase();
-        const hay = [
-          l.lotNumber,
-          l.address,
-          ...(l.buyers || []).flatMap((b) => [b.name, b.email, b.phone]),
-        ]
-          .join(' ')
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [lots, filter]);
-
-  async function saveProject(e) {
+  async function save(e) {
     e.preventDefault();
     setSaved('');
     setErr('');
     try {
       const fd = new FormData(e.target);
       const patch = {
+        name: fd.get('name'),
+        description: fd.get('description'),
         reminderIntervalDays: Number(fd.get('reminderIntervalDays')),
         maxReminders: Number(fd.get('maxReminders')),
         pacing: {
@@ -82,26 +57,14 @@ export default function ProjectDetail() {
     }
   }
 
-  function toggle(lotId) {
-    const next = new Set(selected);
-    if (next.has(lotId)) next.delete(lotId);
-    else next.add(lotId);
-    setSelected(next);
-  }
-
-  async function sendSelected() {
-    if (!templateId || selected.size === 0) return;
-    try {
-      const result = await api.post('/api/messages/send', {
-        lotIds: Array.from(selected),
-        templateId,
-      });
-      alert(`Queued ${result.queued.length} messages, skipped ${result.skipped.length}.`);
-      setSelected(new Set());
-      load();
-    } catch (ex) {
-      alert(ex.message);
+  async function remove() {
+    if (lotCount > 0) {
+      alert('This project has lots. Delete or move them first.');
+      return;
     }
+    if (!confirm('Delete this project? It has no lots, so this is safe.')) return;
+    await api.del(`/api/projects/${id}`);
+    nav('/projects');
   }
 
   async function downloadExport() {
@@ -123,16 +86,34 @@ export default function ProjectDetail() {
         {project.name}{' '}
         <Link to="/projects" className="muted" style={{ fontSize: 13 }}>
           ← all projects
+        </Link>{' '}
+        <Link to={`/board?project=${project._id}`} style={{ fontSize: 13 }}>
+          open on board →
         </Link>
       </h1>
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Settings</h2>
-        <form onSubmit={saveProject}>
+        <form onSubmit={save}>
+          <div className="row">
+            <div style={{ flex: 2 }}>
+              <label>Project name</label>
+              <input name="name" defaultValue={project.name} required />
+            </div>
+            <div style={{ flex: 3 }}>
+              <label>Description</label>
+              <input name="description" defaultValue={project.description || ''} />
+            </div>
+          </div>
           <div className="row">
             <div>
               <label>Reminder interval (days)</label>
-              <input name="reminderIntervalDays" type="number" min="0" defaultValue={project.reminderIntervalDays} />
+              <input
+                name="reminderIntervalDays"
+                type="number"
+                min="0"
+                defaultValue={project.reminderIntervalDays}
+              />
             </div>
             <div>
               <label>Max reminders</label>
@@ -149,7 +130,7 @@ export default function ProjectDetail() {
           </div>
           <div className="row">
             <div>
-              <label>Default email template</label>
+              <label>Default email template (for reminders)</label>
               <select name="defaultEmail" defaultValue={project.defaultEmailTemplate?._id || ''}>
                 <option value="">— none —</option>
                 {templates.filter((t) => t.type === 'email').map((t) => (
@@ -160,7 +141,7 @@ export default function ProjectDetail() {
               </select>
             </div>
             <div>
-              <label>Default SMS template</label>
+              <label>Default SMS template (for reminders)</label>
               <select name="defaultSms" defaultValue={project.defaultSmsTemplate?._id || ''}>
                 <option value="">— none —</option>
                 {templates.filter((t) => t.type === 'sms').map((t) => (
@@ -172,7 +153,11 @@ export default function ProjectDetail() {
             </div>
             <div>
               <label>
-                <input type="checkbox" name="quietEnabled" defaultChecked={project.quietHours?.enabled} />{' '}
+                <input
+                  type="checkbox"
+                  name="quietEnabled"
+                  defaultChecked={project.quietHours?.enabled}
+                />{' '}
                 Quiet hours
               </label>
               <div className="row">
@@ -181,124 +166,26 @@ export default function ProjectDetail() {
               </div>
             </div>
           </div>
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
             <button type="submit">Save settings</button>
-            {saved && <span className="success" style={{ marginLeft: 10 }}>{saved}</span>}
-            {err && <span className="error" style={{ marginLeft: 10 }}>{err}</span>}
+            <button type="button" className="secondary" onClick={downloadExport}>
+              Download lots (.xlsx)
+            </button>
+            <div style={{ flex: 1 }} />
+            <button type="button" className="danger" onClick={remove}>
+              Delete project
+            </button>
           </div>
+          {saved && <div className="success">{saved}</div>}
+          {err && <div className="error">{err}</div>}
         </form>
       </div>
 
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Tools</h2>
-        <div className="row" style={{ alignItems: 'end' }}>
-          <div>
-            <button onClick={downloadExport} className="secondary">
-              Download project lots (.xlsx)
-            </button>
-          </div>
-          <div>
-            <Link to="/import">
-              <button className="secondary">Import / add contacts</button>
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      <h2>Lots</h2>
-      <div className="toolbar">
-        <input
-          placeholder="Search lots / buyers"
-          value={filter.q}
-          onChange={(e) => setFilter({ ...filter, q: e.target.value })}
-        />
-        <select value={filter.rep} onChange={(e) => setFilter({ ...filter, rep: e.target.value })}>
-          <option value="">All reps</option>
-          <option value="none">Unassigned</option>
-          {reps.map((r) => (
-            <option key={r._id} value={r._id}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-        <select value={filter.status} onChange={(e) => setFilter({ ...filter, status: e.target.value })}>
-          <option value="">All statuses</option>
-          {['pending', 'contacted', 'scheduled', 'booked', 'opted_out'].map((s) => (
-            <option key={s} value={s}>
-              {s.replace('_', ' ')}
-            </option>
-          ))}
-        </select>
-        <div style={{ flex: 1 }} />
-        <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
-          <option value="">Pick template to send…</option>
-          {templates.map((t) => (
-            <option key={t._id} value={t._id}>
-              [{t.type}] {t.name}
-            </option>
-          ))}
-        </select>
-        <button onClick={sendSelected} disabled={!templateId || selected.size === 0}>
-          Send to {selected.size} selected
-        </button>
-      </div>
-
-      <div className="card" style={{ padding: 0 }}>
-        <table>
-          <thead>
-            <tr>
-              <th style={{ width: 30 }}></th>
-              <th>Lot #</th>
-              <th>Address</th>
-              <th>Buyers</th>
-              <th>Rep</th>
-              <th>Status</th>
-              <th>Reminders</th>
-              <th>Last contact</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((l) => (
-              <tr key={l._id}>
-                <td>
-                  <input type="checkbox" checked={selected.has(l._id)} onChange={() => toggle(l._id)} />
-                </td>
-                <td>
-                  <Link to={`/lots/${l._id}`}>{l.lotNumber}</Link>
-                </td>
-                <td>{l.address}</td>
-                <td>
-                  {(l.buyers || []).map((b, i) => (
-                    <div key={i} style={{ fontSize: 12 }}>
-                      <strong>{b.name || '—'}</strong>{' '}
-                      <span className="muted">
-                        {b.email} {b.phone}
-                      </span>
-                    </div>
-                  ))}
-                </td>
-                <td>{l.assignedRep?.name || <span className="muted">—</span>}</td>
-                <td>
-                  <StatusBadge status={l.status} />
-                </td>
-                <td>
-                  {l.reminderCount} / {project.maxReminders}
-                </td>
-                <td className="muted nowrap">
-                  {l.lastContactedAt ? new Date(l.lastContactedAt).toLocaleDateString() : '—'}
-                </td>
-              </tr>
-            ))}
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                  No matching lots.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <p className="muted">
+        Lots for this project live on the <Link to={`/board?project=${project._id}`}>Board</Link>.
+        From there you select lots and trigger the first send; reminders then run automatically on
+        the schedule above.
+      </p>
     </div>
   );
 }

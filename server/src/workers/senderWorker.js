@@ -44,7 +44,7 @@ async function drainOnce() {
       );
       if (!claimed) continue;
 
-      const lot = await Lot.findById(claimed.lot).populate('project').populate('assignedRep');
+      const lot = await Lot.findById(claimed.lot).populate('project');
       if (!lot) {
         claimed.status = 'failed';
         claimed.lastError = 'lot deleted';
@@ -109,7 +109,6 @@ async function drainOnce() {
         await MessageLog.create({
           project: project._id,
           lot: lot._id,
-          rep: lot.assignedRep?._id || null,
           buyerIndex: claimed.buyerIndex,
           type: claimed.type,
           direction: 'out',
@@ -139,7 +138,6 @@ async function drainOnce() {
         await MessageLog.create({
           project: project._id,
           lot: lot._id,
-          rep: lot.assignedRep?._id || null,
           buyerIndex: claimed.buyerIndex,
           type: claimed.type,
           direction: 'out',

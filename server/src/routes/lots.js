@@ -7,10 +7,9 @@ const { enqueueBroadcast } = require('../services/enqueue');
 const router = express.Router();
 
 router.get('/', async (req, res) => {
-  const { project, rep, status, q, limit = 200 } = req.query;
+  const { project, status, q, limit = 200 } = req.query;
   const filter = {};
   if (project) filter.project = project;
-  if (rep) filter.assignedRep = rep === 'none' ? null : rep;
   if (status) filter.status = status;
   if (q) {
     const r = new RegExp(escapeRegex(q), 'i');
@@ -24,7 +23,6 @@ router.get('/', async (req, res) => {
   }
   const lots = await Lot.find(filter)
     .populate('project', 'name')
-    .populate('assignedRep', 'name')
     .sort({ updatedAt: -1 })
     .limit(Math.min(Number(limit) || 200, 1000))
     .lean();
@@ -32,9 +30,7 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/:id', async (req, res) => {
-  const lot = await Lot.findById(req.params.id)
-    .populate('project')
-    .populate('assignedRep');
+  const lot = await Lot.findById(req.params.id).populate('project');
   if (!lot) return res.status(404).json({ error: 'not_found' });
   const history = await MessageLog.find({ lot: lot._id })
     .sort({ createdAt: -1 })
@@ -47,11 +43,10 @@ router.get('/:id', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { project, lotNumber, address, buyers = [], assignedRep, status = 'pending', notes = '' } =
-    req.body || {};
+  const { project, lotNumber, address, buyers = [], status = 'pending', notes = '' } = req.body || {};
   if (!project || !lotNumber) return res.status(400).json({ error: 'project_and_lotNumber_required' });
   try {
-    const lot = await Lot.create({ project, lotNumber, address, buyers, assignedRep: assignedRep || null, status, notes });
+    const lot = await Lot.create({ project, lotNumber, address, buyers, status, notes });
     res.status(201).json(lot);
   } catch (err) {
     if (err.code === 11000) return res.status(409).json({ error: 'duplicate_lot_number' });
@@ -60,12 +55,10 @@ router.post('/', async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-  const allowed = ['lotNumber', 'address', 'buyers', 'assignedRep', 'status', 'notes', 'reminderCount'];
+  const allowed = ['lotNumber', 'address', 'buyers', 'status', 'notes', 'reminderCount'];
   const update = {};
   for (const k of allowed) if (k in req.body) update[k] = req.body[k];
-  const lot = await Lot.findByIdAndUpdate(req.params.id, update, { new: true })
-    .populate('project')
-    .populate('assignedRep');
+  const lot = await Lot.findByIdAndUpdate(req.params.id, update, { new: true }).populate('project');
   if (!lot) return res.status(404).json({ error: 'not_found' });
 
   // Cancel any pending outbox rows if lot is now stopped

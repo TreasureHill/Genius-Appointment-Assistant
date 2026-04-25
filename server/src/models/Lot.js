@@ -19,8 +19,8 @@ const LotSchema = new mongoose.Schema(
     lotNumber: { type: String, required: true, trim: true },
     address: { type: String, default: '' },
     buyers: { type: [BuyerSchema], default: [] },
-    assignedRep: { type: mongoose.Schema.Types.ObjectId, ref: 'Rep', default: null },
     status: { type: String, enum: LOT_STATUSES, default: 'pending', index: true },
+    importBatch: { type: mongoose.Schema.Types.ObjectId, ref: 'ImportBatch', default: null, index: true },
     reminderCount: { type: Number, default: 0 },
     lastContactedAt: { type: Date, default: null },
     nextReminderAt: { type: Date, default: null },
@@ -32,7 +32,6 @@ const LotSchema = new mongoose.Schema(
 );
 
 LotSchema.index({ project: 1, lotNumber: 1 }, { unique: true });
-LotSchema.index({ assignedRep: 1 });
 LotSchema.index({ 'buyers.email': 1 });
 
 LotSchema.statics.STATUSES = LOT_STATUSES;

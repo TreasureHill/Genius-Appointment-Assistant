@@ -7,9 +7,9 @@ const VARS = [
   '{{lot.address}}',
   '{{lot.status}}',
   '{{project.name}}',
-  '{{rep.name}}',
-  '{{rep.email}}',
-  '{{rep.calendlyUrl}}',
+  '{{owner.name}}',
+  '{{owner.email}}',
+  '{{owner.calendlyUrl}}',
 ];
 
 export default function VariableHelp() {

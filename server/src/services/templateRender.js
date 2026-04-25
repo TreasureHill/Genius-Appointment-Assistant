@@ -9,7 +9,15 @@ function compile(src) {
   return fn;
 }
 
-function renderContext({ project, lot, buyer, rep }) {
+function renderContext({ project, lot, buyer, owner }) {
+  const ownerCtx = owner
+    ? {
+        name: owner.name || '',
+        email: owner.email || '',
+        phone: owner.phone || '',
+        calendlyUrl: owner.calendlyUrl || '',
+      }
+    : {};
   return {
     project: project ? { name: project.name, description: project.description || '' } : {},
     lot: lot
@@ -28,16 +36,9 @@ function renderContext({ project, lot, buyer, rep }) {
           role: buyer.role || 'buyer',
         }
       : {},
-    rep: rep
-      ? {
-          name: rep.name || '',
-          email: rep.email || '',
-          phone: rep.phone || '',
-          calendlyUrl: rep.calendlyUser
-            ? `https://calendly.com/${rep.calendlyUser.replace(/^https?:\/\/calendly\.com\//, '')}`
-            : '',
-        }
-      : {},
+    // Backwards-compatible alias so older templates using {{rep.name}} still work
+    rep: ownerCtx,
+    owner: ownerCtx,
   };
 }
 

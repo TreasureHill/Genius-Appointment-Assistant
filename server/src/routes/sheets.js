@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const Lot = require('../models/Lot');
+const ImportBatch = require('../models/ImportBatch');
 const { buildBlankTemplate, buildExport } = require('../services/sheetExporter');
 const sheetParser = require('../services/sheetParser');
 
@@ -17,7 +18,7 @@ router.get('/template', (req, res) => {
 router.get('/export', async (req, res) => {
   const filter = {};
   if (req.query.project) filter.project = req.query.project;
-  const lots = await Lot.find(filter).populate('project', 'name').populate('assignedRep', 'name').lean();
+  const lots = await Lot.find(filter).populate('project', 'name').lean();
   const buf = buildExport(lots);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="genius-contacts-export.xlsx"');
@@ -38,8 +39,29 @@ router.post('/import', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'file_required' });
   const updateExisting = req.query.update === 'true' || req.body?.update === 'true';
   try {
-    const result = await sheetParser.commit(req.file.buffer, { updateExisting });
+    const result = await sheetParser.commit(req.file.buffer, {
+      updateExisting,
+      filename: req.file.originalname || '',
+    });
     res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/imports', async (req, res) => {
+  const rows = await ImportBatch.find({})
+    .populate('createdProjects', 'name')
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .lean();
+  res.json(rows);
+});
+
+router.post('/imports/:id/revert', async (req, res) => {
+  try {
+    const result = await sheetParser.revert(req.params.id);
+    res.json({ ok: true, ...result });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
