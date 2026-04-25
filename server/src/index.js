@@ -8,7 +8,7 @@ const cors = require('cors');
 const env = require('./config/env');
 const { connect: connectDb } = require('./config/db');
 const { requireAuth } = require('./middleware/auth');
-const { seedAdmin, seedStarterTemplates } = require('./scripts/seedBoot');
+const { seedAdmin, seedStarterTemplates, migrateBookedToScheduled } = require('./scripts/seedBoot');
 const { startWorkers } = require('./workers');
 
 // Routes
@@ -68,6 +68,7 @@ async function main() {
   await connectDb();
   await seedAdmin();
   await seedStarterTemplates();
+  await migrateBookedToScheduled();
   app.listen(env.port, () => {
     console.log(`[server] listening on :${env.port} (${env.nodeEnv})`);
     startWorkers();

@@ -1,6 +1,152 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 
+function ScheduleCard({ schedule, templates, onSaved }) {
+  const [form, setForm] = useState({
+    reminderIntervalDays: schedule.reminderIntervalDays ?? 14,
+    maxReminders: schedule.maxReminders ?? 3,
+    pacingMin: schedule.pacing?.minSec ?? 30,
+    pacingMax: schedule.pacing?.maxSec ?? 120,
+    quietEnabled: !!schedule.quietHours?.enabled,
+    quietStart: schedule.quietHours?.start || '21:00',
+    quietEnd: schedule.quietHours?.end || '08:00',
+    defaultEmailTemplate: schedule.defaultEmailTemplate || '',
+    defaultSmsTemplate: schedule.defaultSmsTemplate || '',
+  });
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    setMsg('');
+    try {
+      await api.patch('/api/settings/schedule', {
+        reminderIntervalDays: Number(form.reminderIntervalDays),
+        maxReminders: Number(form.maxReminders),
+        pacing: { minSec: Number(form.pacingMin), maxSec: Number(form.pacingMax) },
+        quietHours: { enabled: form.quietEnabled, start: form.quietStart, end: form.quietEnd },
+        defaultEmailTemplate: form.defaultEmailTemplate || null,
+        defaultSmsTemplate: form.defaultSmsTemplate || null,
+      });
+      setMsg('Saved.');
+      onSaved && onSaved();
+    } catch (ex) {
+      setMsg('Error: ' + ex.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2 style={{ marginTop: 0 }}>Sending schedule</h2>
+      <p className="muted">
+        Applies system-wide. After a lot's first manual send, a reminder is queued every{' '}
+        <strong>{form.reminderIntervalDays}</strong> day
+        {form.reminderIntervalDays === 1 ? '' : 's'} until either max reminders is hit, the lot is
+        marked <span className="badge scheduled">scheduled</span>, or the buyer opts out. Pacing
+        adds a random gap between consecutive sends so a batch doesn't trip spam filters.
+      </p>
+      <div className="row">
+        <div>
+          <label>Reminder interval (days)</label>
+          <input
+            type="number"
+            min="0"
+            value={form.reminderIntervalDays}
+            onChange={(e) => setForm({ ...form, reminderIntervalDays: e.target.value })}
+          />
+        </div>
+        <div>
+          <label>Max reminders per lot</label>
+          <input
+            type="number"
+            min="0"
+            value={form.maxReminders}
+            onChange={(e) => setForm({ ...form, maxReminders: e.target.value })}
+          />
+        </div>
+        <div>
+          <label>Pacing min gap (seconds)</label>
+          <input
+            type="number"
+            min="0"
+            value={form.pacingMin}
+            onChange={(e) => setForm({ ...form, pacingMin: e.target.value })}
+          />
+        </div>
+        <div>
+          <label>Pacing max gap (seconds)</label>
+          <input
+            type="number"
+            min="0"
+            value={form.pacingMax}
+            onChange={(e) => setForm({ ...form, pacingMax: e.target.value })}
+          />
+        </div>
+      </div>
+      <div className="row">
+        <div>
+          <label>Default email template</label>
+          <select
+            value={form.defaultEmailTemplate}
+            onChange={(e) => setForm({ ...form, defaultEmailTemplate: e.target.value })}
+          >
+            <option value="">— pick one (used for sends + reminders) —</option>
+            {templates.filter((t) => t.type === 'email').map((t) => (
+              <option key={t._id} value={t._id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label>Default SMS template</label>
+          <select
+            value={form.defaultSmsTemplate}
+            onChange={(e) => setForm({ ...form, defaultSmsTemplate: e.target.value })}
+          >
+            <option value="">— pick one (used for sends + reminders) —</option>
+            {templates.filter((t) => t.type === 'sms').map((t) => (
+              <option key={t._id} value={t._id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label>
+            <input
+              type="checkbox"
+              checked={form.quietEnabled}
+              onChange={(e) => setForm({ ...form, quietEnabled: e.target.checked })}
+            />{' '}
+            Quiet hours (don't send between)
+          </label>
+          <div className="row">
+            <input
+              value={form.quietStart}
+              onChange={(e) => setForm({ ...form, quietStart: e.target.value })}
+              placeholder="21:00"
+            />
+            <input
+              value={form.quietEnd}
+              onChange={(e) => setForm({ ...form, quietEnd: e.target.value })}
+              placeholder="08:00"
+            />
+          </div>
+        </div>
+      </div>
+      <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center' }}>
+        <button onClick={save} disabled={busy}>
+          {busy ? 'Saving…' : 'Save schedule'}
+        </button>
+        {msg && <span className={msg.startsWith('Error') ? 'error' : 'success'}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
 function OwnerCard({ owner, onSaved }) {
   const [form, setForm] = useState({
     name: owner.name || '',
@@ -91,12 +237,15 @@ function Health({ h }) {
 
 export default function Settings() {
   const [s, setS] = useState(null);
+  const [templates, setTemplates] = useState([]);
   const [testEmailTo, setTestEmailTo] = useState('');
   const [testSmsTo, setTestSmsTo] = useState('');
   const [msg, setMsg] = useState('');
 
   async function load() {
-    setS(await api.get('/api/settings'));
+    const [a, b] = await Promise.all([api.get('/api/settings'), api.get('/api/templates')]);
+    setS(a);
+    setTemplates(b);
   }
   useEffect(() => {
     load();
@@ -167,6 +316,8 @@ export default function Settings() {
       {msg && <div className="card">{msg}</div>}
 
       <OwnerCard owner={s.owner || {}} onSaved={load} />
+
+      <ScheduleCard schedule={s.schedule || {}} templates={templates} onSaved={load} />
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Sender</h2>
