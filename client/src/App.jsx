@@ -7,7 +7,6 @@ import Projects from './pages/Projects.jsx';
 import ProjectDetail from './pages/ProjectDetail.jsx';
 import ProjectBoard from './pages/ProjectBoard.jsx';
 import LotDetail from './pages/LotDetail.jsx';
-import Reps from './pages/Reps.jsx';
 import Templates from './pages/Templates.jsx';
 import TemplateEditor from './pages/TemplateEditor.jsx';
 import SheetImport from './pages/SheetImport.jsx';
@@ -38,7 +37,6 @@ export default function App() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:id" element={<ProjectDetail />} />
         <Route path="/lots/:id" element={<LotDetail />} />
-        <Route path="/reps" element={<Reps />} />
         <Route path="/templates" element={<Templates />} />
         <Route path="/templates/new" element={<TemplateEditor />} />
         <Route path="/templates/:id" element={<TemplateEditor />} />

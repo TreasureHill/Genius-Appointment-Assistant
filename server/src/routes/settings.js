@@ -10,12 +10,26 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   const s = await Setting.getSingleton();
   res.json({
+    owner: s.owner || {},
     smtp: { configured: env.smtp.configured, from: env.smtp.from, host: env.smtp.host, health: s.smtpHealth },
     twilio: { configured: env.twilio.configured, from: env.twilio.from, health: s.twilioHealth },
     calendly: { configured: env.calendly.configured, health: s.calendlyHealth, lastSync: s.lastCalendlySync },
     senderPaused: s.senderPaused,
     defaults: env.defaults,
   });
+});
+
+router.patch('/owner', async (req, res) => {
+  const { name, email, phone, calendlyUri, calendlyUrl } = req.body || {};
+  const s = await Setting.getSingleton();
+  s.owner = s.owner || {};
+  if (name != null) s.owner.name = name;
+  if (email != null) s.owner.email = email;
+  if (phone != null) s.owner.phone = phone;
+  if (calendlyUri != null) s.owner.calendlyUri = calendlyUri;
+  if (calendlyUrl != null) s.owner.calendlyUrl = calendlyUrl;
+  await s.save();
+  res.json(s.owner);
 });
 
 router.post('/pause', async (req, res) => {

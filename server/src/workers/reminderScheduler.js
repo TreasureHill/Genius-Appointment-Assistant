@@ -20,11 +20,14 @@ async function runOnce() {
 
   for (const project of projects) {
     const cutoff = new Date(now.getTime() - (project.reminderIntervalDays || 14) * 24 * 60 * 60 * 1000);
+    // Only contacted lots get automatic reminders. 'pending' means the user
+    // has never manually triggered a send for this lot, so we do nothing —
+    // first contact must always be a manual action from the Board.
     const due = await Lot.find({
       project: project._id,
-      status: { $in: ['pending', 'contacted'] },
+      status: 'contacted',
       reminderCount: { $lt: project.maxReminders || 3 },
-      $or: [{ lastContactedAt: null }, { lastContactedAt: { $lte: cutoff } }],
+      lastContactedAt: { $ne: null, $lte: cutoff },
     })
       .select('_id')
       .lean();

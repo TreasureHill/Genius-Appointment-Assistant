@@ -10,7 +10,7 @@ function start() {
   cron.schedule('*/30 * * * *', () => {
     syncAll().catch((e) => console.error('[calendly] sync error', e.message));
   });
-  console.log('[calendly] poller started (every 30 min)');
+  console.log('[calendly] poller started (every 30 min, uses owner URI from Settings)');
 }
 
 module.exports = { start };

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api';
 
 export default function SheetImport() {
@@ -8,6 +8,17 @@ export default function SheetImport() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [updateExisting, setUpdate] = useState(false);
+  const [imports, setImports] = useState([]);
+
+  async function loadImports() {
+    try {
+      const rows = await api.get('/api/sheets/imports');
+      setImports(rows);
+    } catch {}
+  }
+  useEffect(() => {
+    loadImports();
+  }, []);
 
   async function downloadTemplate() {
     const res = await api.raw('/api/sheets/template');
@@ -50,10 +61,27 @@ export default function SheetImport() {
       setResult(r);
       setPreview(null);
       setFile(null);
+      loadImports();
     } catch (ex) {
       setErr(ex.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function revert(batchId) {
+    if (!confirm('Revert this import? It will delete the lots it created and restore any lots it overwrote.')) return;
+    try {
+      const r = await api.post(`/api/sheets/imports/${batchId}/revert`);
+      alert(
+        `Reverted: deleted ${r.deletedLots} lot${r.deletedLots === 1 ? '' : 's'}, ` +
+          `restored ${r.restoredLots}, removed ${r.deletedProjects} empty project${
+            r.deletedProjects === 1 ? '' : 's'
+          }.`
+      );
+      loadImports();
+    } catch (ex) {
+      alert('Revert failed: ' + ex.message);
     }
   }
 
@@ -64,9 +92,9 @@ export default function SheetImport() {
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Template sheet</h2>
         <p className="muted">
-          Download a blank xlsx with all expected columns. Fill a row per lot per project, then
-          upload below. Existing lots (matched by project + lot #) are skipped by default; only new
-          rows are added.
+          Download the blank xlsx with the expected columns. The <span className="kbd">Project</span>{' '}
+          column determines which project each lot gets assigned to. Projects that don't exist yet
+          will be auto-created; lots under existing projects will be added to them.
         </p>
         <button className="secondary" onClick={downloadTemplate}>
           Download blank template
@@ -94,7 +122,7 @@ export default function SheetImport() {
               checked={updateExisting}
               onChange={(e) => setUpdate(e.target.checked)}
             />{' '}
-            Update existing lots on commit (overwrite buyers/address/rep)
+            Update existing lots on commit (overwrite buyers / address)
           </label>
         </div>
         {err && <div className="error">{err}</div>}
@@ -105,28 +133,27 @@ export default function SheetImport() {
           <h2 style={{ marginTop: 0 }}>Preview</h2>
           <div className="tiles">
             <div className="tile">
-              <div className="label">Rows</div>
+              <div className="label">Rows in sheet</div>
               <div className="value">{preview.totalRows}</div>
             </div>
             <div className="tile">
-              <div className="label">New lots</div>
-              <div className="value">{preview.toCreate.length}</div>
+              <div className="label">New lots (total)</div>
+              <div className="value">{preview.totalNew}</div>
             </div>
             <div className="tile">
               <div className="label">Existing (skipped)</div>
-              <div className="value">{preview.toSkip.length}</div>
+              <div className="value">{preview.totalSkip}</div>
             </div>
             <div className="tile">
-              <div className="label">Projects referenced</div>
+              <div className="label">Projects</div>
               <div className="value">{preview.projects.length}</div>
             </div>
+            <div className="tile">
+              <div className="label">New projects</div>
+              <div className="value">{preview.newProjectCount}</div>
+            </div>
           </div>
-          {preview.projects.some((p) => p.isNew) && (
-            <p className="muted">
-              New projects will be auto-created:{' '}
-              {preview.projects.filter((p) => p.isNew).map((p) => p.name).join(', ')}
-            </p>
-          )}
+
           {preview.warnings.length > 0 && (
             <div className="error">
               {preview.warnings.map((w, i) => (
@@ -135,36 +162,60 @@ export default function SheetImport() {
             </div>
           )}
 
-          <h3>Will create ({preview.toCreate.length})</h3>
-          <div style={{ maxHeight: 240, overflow: 'auto' }}>
-            <table>
-              <thead>
-                <tr>
-                  <th>Row</th>
-                  <th>Project</th>
-                  <th>Lot #</th>
-                  <th>Address</th>
-                  <th>Buyers</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.toCreate.slice(0, 200).map((r, i) => (
-                  <tr key={i}>
-                    <td>{r.rowNumber}</td>
-                    <td>{r.projectName}</td>
-                    <td>{r.lotNumber}</td>
-                    <td>{r.address}</td>
-                    <td className="muted" style={{ fontSize: 12 }}>
-                      {r.buyers.map((b) => b.name || b.email).join(' · ')}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div style={{ marginTop: 12 }}>
+          {preview.projects.map((p) => (
+            <div key={p.name} style={{ marginTop: 12 }}>
+              <h3 style={{ margin: '8px 0 4px' }}>
+                {p.name}{' '}
+                {p.isNew ? (
+                  <span className="badge err" style={{ background: '#dbeafe', color: '#1e40af' }}>
+                    new project
+                  </span>
+                ) : (
+                  <span className="badge ok">existing project</span>
+                )}
+              </h3>
+              <div className="muted" style={{ fontSize: 12 }}>
+                {p.toCreate.length} new lot{p.toCreate.length === 1 ? '' : 's'} ·{' '}
+                {p.toSkip.length} existing (skipped)
+                {updateExisting && p.toSkip.length > 0 && ' — will be overwritten on commit'}
+              </div>
+              {p.toCreate.length > 0 && (
+                <div style={{ maxHeight: 220, overflow: 'auto', marginTop: 4 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Row</th>
+                        <th>Lot #</th>
+                        <th>Address</th>
+                        <th>Buyers</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {p.toCreate.slice(0, 50).map((r, i) => (
+                        <tr key={i}>
+                          <td>{r.rowNumber}</td>
+                          <td>{r.lotNumber}</td>
+                          <td>{r.address}</td>
+                          <td className="muted" style={{ fontSize: 12 }}>
+                            {r.buyers.map((b) => b.name || b.email).filter(Boolean).join(' · ')}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {p.toCreate.length > 50 && (
+                    <div className="muted" style={{ fontSize: 12, padding: 6 }}>
+                      …and {p.toCreate.length - 50} more
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div style={{ marginTop: 16 }}>
             <button onClick={commit} disabled={busy}>
-              {busy ? 'Importing…' : `Commit import (${preview.toCreate.length} new)`}
+              {busy ? 'Importing…' : `Commit import (${preview.totalNew} new)`}
             </button>
           </div>
         </div>
@@ -186,12 +237,63 @@ export default function SheetImport() {
               ))}
             </div>
           )}
+          <p className="muted" style={{ marginBottom: 0 }}>
+            You can revert this import below.
+          </p>
         </div>
       )}
 
+      <h2>Previous imports</h2>
+      <div className="card" style={{ padding: 0 }}>
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>File</th>
+              <th>New projects</th>
+              <th>New lots</th>
+              <th>Overwrites</th>
+              <th>Mode</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {imports.map((b) => (
+              <tr key={b._id}>
+                <td className="nowrap">{new Date(b.createdAt).toLocaleString()}</td>
+                <td>{b.filename || <span className="muted">(unnamed)</span>}</td>
+                <td>{(b.createdProjects || []).length}</td>
+                <td>{(b.createdLots || []).length}</td>
+                <td>{(b.updatedLotSnapshots || []).length}</td>
+                <td className="muted">{b.updateExisting ? 'update existing' : 'add only'}</td>
+                <td>
+                  <span className={`badge ${b.status === 'reverted' ? 'err' : 'ok'}`}>
+                    {b.status}
+                  </span>
+                </td>
+                <td className="nowrap">
+                  {b.status !== 'reverted' && (
+                    <button className="danger" onClick={() => revert(b._id)}>
+                      Revert
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {imports.length === 0 && (
+              <tr>
+                <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                  No imports yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Export everything</h2>
-        <p className="muted">Download all lots across all projects as an xlsx file.</p>
         <button
           className="secondary"
           onClick={async () => {

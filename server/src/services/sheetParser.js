@@ -1,7 +1,7 @@
 const XLSX = require('xlsx');
 const Project = require('../models/Project');
 const Lot = require('../models/Lot');
-const Rep = require('../models/Rep');
+const ImportBatch = require('../models/ImportBatch');
 
 const BUYER_ROLES = ['buyer', 'coBuyer', 'thirdBuyer'];
 
@@ -18,15 +18,11 @@ const HEADER_ALIASES = {
   thirdBuyerName: ['third buyer name', 'third buyer'],
   thirdBuyerEmail: ['third buyer email'],
   thirdBuyerPhone: ['third buyer phone'],
-  assignedRep: ['assigned rep', 'rep', 'sales rep'],
   status: ['status'],
 };
 
 function normalize(s) {
-  return String(s || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function buildHeaderMap(headerRow) {
@@ -80,24 +76,23 @@ function buildBuyers(row, hm) {
   return list;
 }
 
+// Preview what will happen without touching the database. Groups by project
+// so the UI can show "5 new lots under existing Project A" vs "3 new lots
+// creating new Project B".
 async function preview(buffer) {
   const { headerMap, dataRows } = parseRows(buffer);
   const missing = ['project', 'lotNumber'].filter((k) => headerMap[k] == null);
-  if (missing.length) {
-    throw new Error(`Missing required columns: ${missing.join(', ')}`);
-  }
-
-  const projectsSeen = new Map(); // name -> {name, isNew}
-  const toCreate = [];
-  const toSkip = [];
-  const warnings = [];
+  if (missing.length) throw new Error(`Missing required columns: ${missing.join(', ')}`);
 
   const existingProjects = await Project.find({}).lean();
   const projectByName = new Map(existingProjects.map((p) => [p.name.toLowerCase(), p]));
 
-  const existingLotsKey = new Set();
+  const existingLotKey = new Set();
   const allLots = await Lot.find({}, { project: 1, lotNumber: 1 }).lean();
-  for (const l of allLots) existingLotsKey.add(`${l.project}:${l.lotNumber}`);
+  for (const l of allLots) existingLotKey.add(`${l.project}:${l.lotNumber}`);
+
+  const byProject = new Map(); // normalized project name -> { name, isNew, toCreate:[], toSkip:[] }
+  const warnings = [];
 
   for (let i = 0; i < dataRows.length; i++) {
     const row = dataRows[i];
@@ -107,46 +102,59 @@ async function preview(buffer) {
       warnings.push(`Row ${i + 2}: missing project or lot #, skipped`);
       continue;
     }
-    const existing = projectByName.get(projectName.toLowerCase());
-    if (!existing && !projectsSeen.has(projectName)) {
-      projectsSeen.set(projectName, { name: projectName, isNew: true });
-    } else if (existing && !projectsSeen.has(projectName)) {
-      projectsSeen.set(projectName, { name: projectName, isNew: false, id: String(existing._id) });
+    const pkey = projectName.toLowerCase();
+    const existing = projectByName.get(pkey);
+    if (!byProject.has(pkey)) {
+      byProject.set(pkey, {
+        name: projectName,
+        isNew: !existing,
+        projectId: existing ? String(existing._id) : null,
+        toCreate: [],
+        toSkip: [],
+      });
     }
-
-    const key = existing ? `${existing._id}:${lotNumber}` : `NEW:${projectName}:${lotNumber}`;
-    const buyers = buildBuyers(row, headerMap);
+    const bucket = byProject.get(pkey);
     const entry = {
       rowNumber: i + 2,
-      projectName,
       lotNumber,
       address: cell(row, headerMap.address),
-      buyers,
-      assignedRepName: cell(row, headerMap.assignedRep),
+      buyers: buildBuyers(row, headerMap),
       status: cell(row, headerMap.status).toLowerCase() || 'pending',
     };
-    if (existing && existingLotsKey.has(key)) {
-      toSkip.push(entry);
+    const key = existing ? `${existing._id}:${lotNumber}` : `NEW:${projectName}:${lotNumber}`;
+    if (existing && existingLotKey.has(key)) {
+      bucket.toSkip.push(entry);
     } else {
-      toCreate.push(entry);
+      bucket.toCreate.push(entry);
     }
   }
 
+  const projects = Array.from(byProject.values());
   return {
-    projects: Array.from(projectsSeen.values()),
-    toCreate,
-    toSkip,
-    warnings,
+    projects,
     totalRows: dataRows.length,
+    totalNew: projects.reduce((n, p) => n + p.toCreate.length, 0),
+    totalSkip: projects.reduce((n, p) => n + p.toSkip.length, 0),
+    newProjectCount: projects.filter((p) => p.isNew).length,
+    warnings,
   };
 }
 
-async function commit(buffer, { updateExisting = false } = {}) {
+// Actually write changes. Every insert/update is recorded on an ImportBatch
+// row so the user can revert the whole upload.
+async function commit(buffer, { updateExisting = false, filename = '' } = {}) {
   const { headerMap, dataRows } = parseRows(buffer);
   const missing = ['project', 'lotNumber'].filter((k) => headerMap[k] == null);
   if (missing.length) throw new Error(`Missing required columns: ${missing.join(', ')}`);
 
+  const batch = await ImportBatch.create({
+    filename,
+    updateExisting: Boolean(updateExisting),
+    totalRows: dataRows.length,
+  });
+
   const result = {
+    batchId: String(batch._id),
     createdProjects: 0,
     createdLots: 0,
     updatedLots: 0,
@@ -155,28 +163,20 @@ async function commit(buffer, { updateExisting = false } = {}) {
   };
 
   const projectCache = new Map();
-  const repCache = new Map();
 
   async function getProject(name) {
     const key = name.toLowerCase();
     if (projectCache.has(key)) return projectCache.get(key);
     let p = await Project.findOne({ name });
+    let created = false;
     if (!p) {
       p = await Project.create({ name });
+      created = true;
       result.createdProjects += 1;
+      batch.createdProjects.push(p._id);
     }
     projectCache.set(key, p);
-    return p;
-  }
-
-  async function getRep(name) {
-    if (!name) return null;
-    const key = name.toLowerCase();
-    if (repCache.has(key)) return repCache.get(key);
-    const rep = await Rep.findOne({ name: new RegExp(`^${escapeRegex(name)}$`, 'i') });
-    repCache.set(key, rep || null);
-    if (!rep) result.warnings.push(`Rep "${name}" not found — leaving lot unassigned`);
-    return rep;
+    return { project: p, created };
   }
 
   for (let i = 0; i < dataRows.length; i++) {
@@ -187,18 +187,30 @@ async function commit(buffer, { updateExisting = false } = {}) {
       result.warnings.push(`Row ${i + 2}: missing project or lot #, skipped`);
       continue;
     }
-    const project = await getProject(projectName);
+    const { project } = await getProject(projectName);
     const existing = await Lot.findOne({ project: project._id, lotNumber });
     const buyers = buildBuyers(row, headerMap);
-    const rep = await getRep(cell(row, headerMap.assignedRep));
     const statusCell = cell(row, headerMap.status).toLowerCase();
     const status = Lot.STATUSES.includes(statusCell) ? statusCell : undefined;
 
     if (existing) {
       if (updateExisting) {
+        batch.updatedLotSnapshots.push({
+          lotId: existing._id,
+          prev: {
+            address: existing.address,
+            buyers: existing.buyers.map((b) => ({
+              role: b.role,
+              name: b.name,
+              email: b.email,
+              phone: b.phone,
+              optedOut: b.optedOut,
+            })),
+            status: existing.status,
+          },
+        });
         existing.address = cell(row, headerMap.address) || existing.address;
         if (buyers.length) existing.buyers = buyers;
-        if (rep) existing.assignedRep = rep._id;
         if (status) existing.status = status;
         await existing.save();
         result.updatedLots += 1;
@@ -206,22 +218,71 @@ async function commit(buffer, { updateExisting = false } = {}) {
         result.skippedLots += 1;
       }
     } else {
-      await Lot.create({
+      const created = await Lot.create({
         project: project._id,
         lotNumber,
         address: cell(row, headerMap.address),
         buyers,
-        assignedRep: rep ? rep._id : null,
         status: status || 'pending',
+        importBatch: batch._id,
       });
       result.createdLots += 1;
+      batch.createdLots.push(created._id);
     }
   }
+
+  batch.warnings = result.warnings;
+  await batch.save();
   return result;
 }
 
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Undo a batch: delete the lots we created, restore snapshots for lots we
+// updated, and delete any projects we created if they have no lots left.
+async function revert(batchId) {
+  const batch = await ImportBatch.findById(batchId);
+  if (!batch) throw new Error('Import batch not found');
+  if (batch.status === 'reverted') throw new Error('Already reverted');
+
+  const Outbox = require('../models/Outbox');
+  let deletedLots = 0;
+  let restoredLots = 0;
+  let deletedProjects = 0;
+
+  // 1. Delete created lots + any pending outbox rows for them
+  if (batch.createdLots.length) {
+    await Outbox.deleteMany({ lot: { $in: batch.createdLots } });
+    const del = await Lot.deleteMany({ _id: { $in: batch.createdLots } });
+    deletedLots = del.deletedCount || 0;
+  }
+
+  // 2. Restore overwritten lots
+  for (const snap of batch.updatedLotSnapshots || []) {
+    const lot = await Lot.findById(snap.lotId);
+    if (!lot) continue;
+    const prev = snap.prev || {};
+    if (prev.address != null) lot.address = prev.address;
+    if (Array.isArray(prev.buyers)) lot.buyers = prev.buyers;
+    if (prev.status) lot.status = prev.status;
+    await lot.save();
+    restoredLots += 1;
+  }
+
+  // 3. Delete any projects we created that now have zero lots
+  if (batch.createdProjects.length) {
+    for (const pid of batch.createdProjects) {
+      const remaining = await Lot.countDocuments({ project: pid });
+      if (remaining === 0) {
+        await Project.deleteOne({ _id: pid });
+        deletedProjects += 1;
+      }
+    }
+  }
+
+  batch.status = 'reverted';
+  batch.revertedAt = new Date();
+  await batch.save();
+
+  return { deletedLots, restoredLots, deletedProjects };
 }
 
-module.exports = { preview, commit, parseRows, BUYER_ROLES };
+module.exports = { preview, commit, revert, parseRows, BUYER_ROLES };

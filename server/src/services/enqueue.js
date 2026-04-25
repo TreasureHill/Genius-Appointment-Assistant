@@ -1,8 +1,7 @@
 const Outbox = require('../models/Outbox');
 const Lot = require('../models/Lot');
-const Project = require('../models/Project');
 const Template = require('../models/Template');
-const Rep = require('../models/Rep');
+const Setting = require('../models/Setting');
 const { renderTemplate, renderContext } = require('./templateRender');
 
 function randomBetween(min, max) {
@@ -18,9 +17,10 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
   const template = await Template.findById(templateId);
   if (!template) throw new Error('Template not found');
 
-  const lots = await Lot.find({ _id: { $in: lotIds } })
-    .populate('project')
-    .populate('assignedRep');
+  const lots = await Lot.find({ _id: { $in: lotIds } }).populate('project');
+
+  const setting = await Setting.getSingleton();
+  const owner = setting.owner || {};
 
   const queued = [];
   const skipped = [];
@@ -59,7 +59,7 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
           skipped.push({ lotId: String(lot._id), reason: `buyer ${buyer.role} missing ${template.type}` });
           continue;
         }
-        const ctx = renderContext({ project, lot, buyer, rep: lot.assignedRep });
+        const ctx = renderContext({ project, lot, buyer, owner });
         const rendered = renderTemplate(template, ctx);
 
         await Outbox.create({
