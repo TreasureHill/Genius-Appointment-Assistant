@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
 
-const STATUSES = ['pending', 'contacted', 'scheduled', 'booked', 'opted_out'];
+const STATUSES = ['pending', 'contacted', 'scheduled', 'opted_out'];
 const ROLE_LABELS = { buyer: 'Buyer', coBuyer: 'Co-buyer', thirdBuyer: 'Third buyer' };
 
 function BuyerCell({ buyer }) {
@@ -57,20 +57,20 @@ export default function ProjectBoard() {
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(initialProject);
   const [project, setProject] = useState(null);
+  const [maxReminders, setMaxReminders] = useState(null);
   const [lots, setLots] = useState([]);
-  const [templates, setTemplates] = useState([]);
   const [filter, setFilter] = useState({ status: '', q: '' });
   const [selected, setSelected] = useState(new Set());
-  const [templateId, setTemplateId] = useState('');
   const [busyLotId, setBusyLotId] = useState(null);
   const [sendMsg, setSendMsg] = useState('');
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     api.get('/api/projects').then((list) => {
       setProjects(list);
       if (!projectId && list.length) setProjectId(list[0]._id);
     });
-    api.get('/api/templates').then(setTemplates);
+    api.get('/api/settings').then((s) => setMaxReminders(s.schedule?.maxReminders ?? null));
   }, []);
 
   useEffect(() => {
@@ -88,7 +88,7 @@ export default function ProjectBoard() {
   }, [projectId]);
 
   const byStatus = useMemo(() => {
-    const m = { pending: 0, contacted: 0, scheduled: 0, booked: 0, opted_out: 0 };
+    const m = { pending: 0, contacted: 0, scheduled: 0, opted_out: 0 };
     for (const l of lots) m[l.status] = (m[l.status] || 0) + 1;
     return m;
   }, [lots]);
@@ -136,31 +136,39 @@ export default function ProjectBoard() {
     }
   }
 
-  async function sendSelected() {
+  async function sendDefaults({ all = false } = {}) {
     setSendMsg('');
-    if (!templateId || selected.size === 0) return;
+    setSending(true);
     try {
-      const result = await api.post('/api/messages/send', {
-        lotIds: Array.from(selected),
-        templateId,
-      });
+      const body = all
+        ? { projectId, onlyPending: true }
+        : { lotIds: Array.from(selected) };
+      if (!all && selected.size === 0) {
+        setSendMsg('Pick lots first, or click "Send to all pending".');
+        setSending(false);
+        return;
+      }
+      const result = await api.post('/api/messages/send-defaults', body);
+      const tplBits = [];
+      if (result.usedEmail) tplBits.push(`email "${result.usedEmail.name}"`);
+      if (result.usedSms) tplBits.push(`SMS "${result.usedSms.name}"`);
       setSendMsg(
-        `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} across ${
-          selected.size
-        } lot${selected.size === 1 ? '' : 's'}. ${
-          result.skipped.length
-            ? `Skipped ${result.skipped.length} — see reasons in the outbox.`
-            : ''
-        } Reminders will start ${project.reminderIntervalDays}d after each send, up to ${project.maxReminders}× per lot.`
+        `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} ` +
+          `(${tplBits.join(' + ') || 'no templates configured'}). ` +
+          (result.skipped.length
+            ? `Skipped ${result.skipped.length} (already contacted / scheduled / opted out / missing contact). `
+            : '') +
+          'Email + SMS interleave with the global pacing gap so they go out spread over minutes, not seconds.'
       );
       setSelected(new Set());
-      // Refresh lots to reflect contacted status after send
       setTimeout(async () => {
         const fresh = await api.get(`/api/lots?project=${projectId}&limit=1000`);
         setLots(fresh);
       }, 800);
     } catch (ex) {
       setSendMsg('Error: ' + ex.message);
+    } finally {
+      setSending(false);
     }
   }
 
@@ -198,12 +206,9 @@ export default function ProjectBoard() {
           </Link>
         )}
         <div style={{ flex: 1 }} />
-        {project && (
-          <div className="muted" style={{ fontSize: 12 }}>
-            reminder every {project.reminderIntervalDays}d · max {project.maxReminders} · pacing{' '}
-            {project.pacing.minSec}–{project.pacing.maxSec}s
-          </div>
-        )}
+        <div className="muted" style={{ fontSize: 12 }}>
+          Sending schedule lives in <Link to="/settings">Settings</Link>.
+        </div>
       </div>
 
       <div className="tiles" style={{ marginTop: 16 }}>
@@ -235,15 +240,15 @@ export default function ProjectBoard() {
           Showing {filtered.length} of {lots.length} · {selected.size} selected
         </div>
         <div style={{ flex: 1 }} />
-        <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
-          <option value="">Pick template…</option>
-          {templates.map((t) => (
-            <option key={t._id} value={t._id}>
-              [{t.type}] {t.name}
-            </option>
-          ))}
-        </select>
-        <button onClick={sendSelected} disabled={!templateId || selected.size === 0}>
+        <button
+          className="secondary"
+          onClick={() => sendDefaults({ all: true })}
+          disabled={sending || (byStatus.pending || 0) === 0}
+          title="Sends the default email + SMS to every pending lot in this project. Already-contacted, scheduled, and opted-out lots are skipped."
+        >
+          Send to all pending ({byStatus.pending || 0})
+        </button>
+        <button onClick={() => sendDefaults({})} disabled={sending || selected.size === 0}>
           Send to {selected.size} selected
         </button>
       </div>
@@ -316,7 +321,8 @@ export default function ProjectBoard() {
                     </div>
                   </td>
                   <td>
-                    {lot.reminderCount} / {project?.maxReminders ?? '–'}
+                    {lot.reminderCount}
+                    {maxReminders != null ? ` / ${maxReminders}` : ''}
                   </td>
                   <td className="muted nowrap">
                     {lot.lastContactedAt
@@ -350,8 +356,8 @@ export default function ProjectBoard() {
         flips to <span className="badge contacted">contacted</span> and automatic reminders begin
         after the configured interval — until the lot is marked{' '}
         <span className="badge scheduled">scheduled</span> (manually, by Calendly match, or manual
-        mapping) / <span className="badge booked">booked</span> /{' '}
-        <span className="badge opted_out">opted out</span>, or the max reminder count is reached.
+        mapping) or <span className="badge opted_out">opted out</span>, or the max reminder count
+        is reached.
       </div>
     </div>
   );

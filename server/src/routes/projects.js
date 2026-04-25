@@ -30,25 +30,13 @@ router.post('/', async (req, res) => {
 });
 
 router.get('/:id', async (req, res) => {
-  const project = await Project.findById(req.params.id)
-    .populate('defaultEmailTemplate')
-    .populate('defaultSmsTemplate');
+  const project = await Project.findById(req.params.id);
   if (!project) return res.status(404).json({ error: 'not_found' });
   res.json(project);
 });
 
 router.patch('/:id', async (req, res) => {
-  const allowed = [
-    'name',
-    'description',
-    'reminderIntervalDays',
-    'maxReminders',
-    'pacing',
-    'quietHours',
-    'defaultEmailTemplate',
-    'defaultSmsTemplate',
-    'active',
-  ];
+  const allowed = ['name', 'description', 'active'];
   const update = {};
   for (const k of allowed) if (k in req.body) update[k] = req.body[k];
   const project = await Project.findByIdAndUpdate(req.params.id, update, { new: true });

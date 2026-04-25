@@ -212,10 +212,6 @@ tr:hover td {
   background: #dbeafe;
   color: #1e40af;
 }
-.badge.booked {
-  background: #d1fae5;
-  color: #065f46;
-}
 .badge.opted_out {
   background: #fee2e2;
   color: #991b1b;

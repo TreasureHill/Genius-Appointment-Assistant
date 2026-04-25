@@ -137,7 +137,7 @@ async function syncAll() {
       const multi = hits.some((h) => h.occurrences.length > 1);
       const firstHit = hits[0].occurrences[0];
 
-      if (!['scheduled', 'booked'].includes(lot.status)) lot.status = 'scheduled';
+      if (lot.status !== 'scheduled') lot.status = 'scheduled';
       lot.calendlyEventUri = firstHit.eventUri || lot.calendlyEventUri;
       lot.calendlyWarning = multi
         ? `Invitee appears in multiple active Calendly events (${hits[0].occurrences.length}). Check for duplicates.`
@@ -213,7 +213,7 @@ async function handleWebhook(payload) {
 
   const lots = await Lot.find({ 'buyers.email': email });
   for (const lot of lots) {
-    if (!['scheduled', 'booked'].includes(lot.status)) lot.status = 'scheduled';
+    if (lot.status !== 'scheduled') lot.status = 'scheduled';
     lot.calendlyEventUri = eventUri || lot.calendlyEventUri;
     await lot.save();
     await MessageLog.create({

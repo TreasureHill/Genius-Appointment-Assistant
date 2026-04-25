@@ -66,7 +66,7 @@ export default function Dashboard() {
 
       <h2>Lots by status</h2>
       <div className="tiles">
-        {['pending', 'contacted', 'scheduled', 'booked', 'opted_out'].map((s) => (
+        {['pending', 'contacted', 'scheduled', 'opted_out'].map((s) => (
           <Tile key={s} label={s.replace('_', ' ')} value={d.lotsByStatus[s] || 0} />
         ))}
       </div>
@@ -149,9 +149,7 @@ export default function Dashboard() {
               <th>Pending</th>
               <th>Contacted</th>
               <th>Scheduled</th>
-              <th>Booked</th>
               <th>Opted out</th>
-              <th>Reminder cfg</th>
             </tr>
           </thead>
           <tbody>
@@ -164,11 +162,7 @@ export default function Dashboard() {
                 <td>{p.byStatus.pending}</td>
                 <td>{p.byStatus.contacted}</td>
                 <td>{p.byStatus.scheduled}</td>
-                <td>{p.byStatus.booked}</td>
                 <td>{p.byStatus.opted_out}</td>
-                <td className="muted nowrap">
-                  every {p.reminderIntervalDays}d · max {p.maxReminders}
-                </td>
               </tr>
             ))}
           </tbody>

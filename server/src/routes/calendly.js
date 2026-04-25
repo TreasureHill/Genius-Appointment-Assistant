@@ -49,7 +49,7 @@ router.post('/unmatched/:id/map', async (req, res) => {
     }
   }
 
-  if (!['scheduled', 'booked'].includes(lot.status)) lot.status = 'scheduled';
+  if (lot.status !== 'scheduled') lot.status = 'scheduled';
   lot.calendlyEventUri = entry.eventUri || lot.calendlyEventUri;
   await lot.save();
 

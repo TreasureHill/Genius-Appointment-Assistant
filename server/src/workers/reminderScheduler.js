@@ -1,79 +1,73 @@
 const cron = require('node-cron');
-const Project = require('../models/Project');
 const Lot = require('../models/Lot');
+const Setting = require('../models/Setting');
 const Template = require('../models/Template');
 const Outbox = require('../models/Outbox');
 const { enqueueBroadcast } = require('../services/enqueue');
 
-// Hourly: find lots that are due for a reminder, enqueue default email + sms.
+// Hourly: find lots that have been manually contacted at least once and are
+// past their next-reminder due date. Pacing, interval, and max are all read
+// from the global Setting singleton (single-owner system).
 async function runOnce() {
-  const now = new Date();
-  const projects = await Project.find({ active: true }).lean();
-  if (!projects.length) return { scanned: 0, enqueued: 0 };
+  const setting = await Setting.getSingleton();
+  const sched = setting.schedule || {};
+  const intervalDays = sched.reminderIntervalDays ?? 14;
+  const maxReminders = sched.maxReminders ?? 3;
 
-  const defaultEmail = await Template.findOne({ type: 'email', isDefaultReminder: true }).lean();
-  const defaultSms = await Template.findOne({ type: 'sms', isDefaultReminder: true }).lean();
-  if (!defaultEmail && !defaultSms) return { scanned: 0, enqueued: 0, reason: 'no_default_templates' };
+  const cutoff = new Date(Date.now() - intervalDays * 24 * 60 * 60 * 1000);
+
+  // Pick up the project's default templates if set on the singleton; otherwise
+  // fall back to whichever template is flagged isDefaultReminder.
+  let emailTpl = null;
+  let smsTpl = null;
+  if (sched.defaultEmailTemplate) emailTpl = await Template.findById(sched.defaultEmailTemplate).lean();
+  if (sched.defaultSmsTemplate) smsTpl = await Template.findById(sched.defaultSmsTemplate).lean();
+  if (!emailTpl) emailTpl = await Template.findOne({ type: 'email', isDefaultReminder: true }).lean();
+  if (!smsTpl) smsTpl = await Template.findOne({ type: 'sms', isDefaultReminder: true }).lean();
+  if (!emailTpl && !smsTpl) return { scanned: 0, enqueued: 0, reason: 'no_default_templates' };
+
+  // Only contacted lots get automatic reminders. 'pending' = never manually
+  // contacted, the user must pick + send from the Board first.
+  const due = await Lot.find({
+    status: 'contacted',
+    reminderCount: { $lt: maxReminders },
+    lastContactedAt: { $ne: null, $lte: cutoff },
+  })
+    .select('_id')
+    .lean();
+  if (!due.length) return { scanned: 0, enqueued: 0 };
+
+  const lotIds = due.map((l) => l._id);
+  // Skip lots that already have a pending reminder queued
+  const alreadyQueued = await Outbox.distinct('lot', {
+    lot: { $in: lotIds },
+    status: 'pending',
+    isReminder: true,
+  });
+  const queuedSet = new Set(alreadyQueued.map((x) => String(x)));
+  const filtered = lotIds.filter((id) => !queuedSet.has(String(id)));
+  if (!filtered.length) return { scanned: due.length, enqueued: 0 };
 
   let totalEnqueued = 0;
-  let totalScanned = 0;
-
-  for (const project of projects) {
-    const cutoff = new Date(now.getTime() - (project.reminderIntervalDays || 14) * 24 * 60 * 60 * 1000);
-    // Only contacted lots get automatic reminders. 'pending' means the user
-    // has never manually triggered a send for this lot, so we do nothing —
-    // first contact must always be a manual action from the Board.
-    const due = await Lot.find({
-      project: project._id,
-      status: 'contacted',
-      reminderCount: { $lt: project.maxReminders || 3 },
-      lastContactedAt: { $ne: null, $lte: cutoff },
-    })
-      .select('_id')
-      .lean();
-    totalScanned += due.length;
-    if (!due.length) continue;
-
-    const lotIds = due.map((l) => l._id);
-
-    // Skip lots that already have a pending reminder in the outbox
-    const alreadyQueued = await Outbox.distinct('lot', {
-      lot: { $in: lotIds },
-      status: 'pending',
-      isReminder: true,
-    });
-    const queuedSet = new Set(alreadyQueued.map((x) => String(x)));
-    const filtered = lotIds.filter((id) => !queuedSet.has(String(id)));
-    if (!filtered.length) continue;
-
-    if (defaultEmail) {
-      const r = await enqueueBroadcast({
-        lotIds: filtered,
-        templateId: defaultEmail._id,
-        isReminder: true,
-      });
-      totalEnqueued += r.queued.length;
-    }
-    if (defaultSms) {
-      const r = await enqueueBroadcast({
-        lotIds: filtered,
-        templateId: defaultSms._id,
-        isReminder: true,
-      });
-      totalEnqueued += r.queued.length;
-    }
+  if (emailTpl) {
+    const r = await enqueueBroadcast({ lotIds: filtered, templateId: emailTpl._id, isReminder: true });
+    totalEnqueued += r.queued.length;
   }
-
-  if (totalEnqueued) console.log(`[reminders] scanned ${totalScanned} lots, enqueued ${totalEnqueued} messages`);
-  return { scanned: totalScanned, enqueued: totalEnqueued };
+  if (smsTpl) {
+    const r = await enqueueBroadcast({ lotIds: filtered, templateId: smsTpl._id, isReminder: true });
+    totalEnqueued += r.queued.length;
+  }
+  if (totalEnqueued) {
+    console.log(`[reminders] scanned ${due.length} due lots, enqueued ${totalEnqueued} messages`);
+  }
+  return { scanned: due.length, enqueued: totalEnqueued };
 }
 
 function start() {
-  // Top of every hour
   cron.schedule('0 * * * *', () => {
     runOnce().catch((e) => console.error('[reminders]', e));
   });
-  console.log('[reminders] scheduler started (hourly)');
+  console.log('[reminders] scheduler started (hourly, uses Settings → Schedule)');
 }
 
 module.exports = { start, runOnce };
