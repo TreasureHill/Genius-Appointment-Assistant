@@ -67,8 +67,16 @@ Write-Host ""
 
 # 2. Install deps --------------------------------------------------------------
 Section "Installing dependencies (npm install)"
-npm install --no-audit --no-fund
-if ($LASTEXITCODE -ne 0) { Fail "npm install failed" }
+# Force --include=dev so build tools (vite, plugins) are installed even when
+# NODE_ENV=production is set somewhere on the machine. Also clear NODE_ENV
+# for THIS step only - npm respects the env var and would otherwise prune
+# devDependencies before the build step has a chance to use them.
+$prevNodeEnv = $env:NODE_ENV
+$env:NODE_ENV = ""
+npm install --include=dev --no-audit --no-fund
+$installExit = $LASTEXITCODE
+$env:NODE_ENV = $prevNodeEnv
+if ($installExit -ne 0) { Fail "npm install failed" }
 
 # 3. Build client --------------------------------------------------------------
 Section "Building client (npm run build)"
