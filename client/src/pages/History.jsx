@@ -2,32 +2,74 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+
 export default function History() {
-  const [list, setList] = useState([]);
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [pages, setPages] = useState(1);
+  const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState([]);
-  const [filter, setFilter] = useState({ project: '', type: '', direction: '', status: '' });
+  const [filter, setFilter] = useState({
+    project: '',
+    type: '',
+    direction: '',
+    status: '',
+    q: '',
+  });
 
   async function load() {
+    setLoading(true);
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(filter)) if (v) qs.append(k, v);
-    const [l, p] = await Promise.all([
-      api.get(`/api/messages/history?${qs.toString()}`),
-      api.get('/api/projects'),
-    ]);
-    setList(l);
-    setProjects(p);
+    qs.append('page', String(page));
+    qs.append('pageSize', String(pageSize));
+    try {
+      const [l, p] = await Promise.all([
+        api.get(`/api/messages/history?${qs.toString()}`),
+        projects.length ? Promise.resolve(projects) : api.get('/api/projects'),
+      ]);
+      setItems(l.items || []);
+      setTotal(l.total || 0);
+      setPages(l.pages || 1);
+      if (!projects.length) setProjects(p);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     load();
-  }, [filter]);
+  }, [filter.project, filter.type, filter.direction, filter.status, page, pageSize]);
+
+  function setF(patch) {
+    setFilter((f) => ({ ...f, ...patch }));
+    setPage(1);
+  }
+
+  function goto(p) {
+    if (p < 1 || p > pages) return;
+    setPage(p);
+  }
+
+  const startRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endRow = Math.min(total, page * pageSize);
 
   return (
     <div>
-      <h1>Message history</h1>
+      <div className="page-head">
+        <div>
+          <h1 style={{ margin: 0 }}>Message history</h1>
+          <div className="muted" style={{ fontSize: 13 }}>
+            Every email, SMS, and Calendly match — with status and errors.
+          </div>
+        </div>
+      </div>
 
       <div className="toolbar">
-        <select value={filter.project} onChange={(e) => setFilter({ ...filter, project: e.target.value })}>
+        <select value={filter.project} onChange={(e) => setF({ project: e.target.value })}>
           <option value="">All projects</option>
           {projects.map((p) => (
             <option key={p._id} value={p._id}>
@@ -35,24 +77,34 @@ export default function History() {
             </option>
           ))}
         </select>
-        <select value={filter.type} onChange={(e) => setFilter({ ...filter, type: e.target.value })}>
+        <select value={filter.type} onChange={(e) => setF({ type: e.target.value })}>
           <option value="">All types</option>
           <option value="email">Email</option>
           <option value="sms">SMS</option>
           <option value="calendly">Calendly</option>
         </select>
-        <select value={filter.direction} onChange={(e) => setFilter({ ...filter, direction: e.target.value })}>
+        <select value={filter.direction} onChange={(e) => setF({ direction: e.target.value })}>
           <option value="">In + out</option>
           <option value="out">Outbound</option>
           <option value="in">Inbound</option>
         </select>
-        <select value={filter.status} onChange={(e) => setFilter({ ...filter, status: e.target.value })}>
+        <select value={filter.status} onChange={(e) => setF({ status: e.target.value })}>
           <option value="">Any status</option>
           <option value="sent">Sent</option>
           <option value="failed">Failed</option>
           <option value="received">Received</option>
           <option value="queued">Queued</option>
         </select>
+        <input
+          placeholder="Search recipient / subject / error…"
+          value={filter.q}
+          onChange={(e) => setFilter((f) => ({ ...f, q: e.target.value }))}
+          onKeyDown={(e) => e.key === 'Enter' && (setPage(1), load())}
+          style={{ minWidth: 240 }}
+        />
+        <button className="secondary" onClick={() => (setPage(1), load())}>
+          Search
+        </button>
       </div>
 
       <div className="card" style={{ padding: 0 }}>
@@ -70,19 +122,28 @@ export default function History() {
             </tr>
           </thead>
           <tbody>
-            {list.map((h) => (
+            {items.map((h) => (
               <tr key={h._id}>
                 <td className="nowrap">{new Date(h.createdAt).toLocaleString()}</td>
                 <td>{h.type}</td>
                 <td>{h.direction}</td>
                 <td>{h.project?.name}</td>
                 <td>{h.lot ? <Link to={`/lots/${h.lot._id}`}>{h.lot.lotNumber}</Link> : ''}</td>
-                <td>{h.to}</td>
-                <td>{h.subject || h.body?.slice(0, 80)}</td>
+                <td className="nowrap" style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {h.to}
+                </td>
+                <td style={{ maxWidth: 360 }}>
+                  {h.subject || h.body?.slice(0, 80)}
+                  {h.error && <div className="error" style={{ fontSize: 11, marginTop: 2 }}>{h.error}</div>}
+                </td>
                 <td>
                   <span
                     className={`badge ${
-                      h.status === 'sent' || h.status === 'received' ? 'ok' : h.status === 'failed' ? 'err' : 'pending'
+                      h.status === 'sent' || h.status === 'received'
+                        ? 'ok'
+                        : h.status === 'failed'
+                          ? 'err'
+                          : 'pending'
                     }`}
                   >
                     {h.status}
@@ -90,15 +151,61 @@ export default function History() {
                 </td>
               </tr>
             ))}
-            {list.length === 0 && (
+            {!loading && items.length === 0 && (
               <tr>
                 <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                   No messages matched.
                 </td>
               </tr>
             )}
+            {loading && items.length === 0 && (
+              <tr>
+                <td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                  Loading…
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
+      </div>
+
+      <div className="pagination">
+        <div className="muted" style={{ fontSize: 12 }}>
+          {total === 0 ? 'No results' : `Showing ${startRow}–${endRow} of ${total.toLocaleString()}`}
+        </div>
+        <div style={{ flex: 1 }} />
+        <label className="muted" style={{ fontSize: 12, margin: 0 }}>
+          Per page&nbsp;
+        </label>
+        <select
+          value={pageSize}
+          onChange={(e) => {
+            setPageSize(Number(e.target.value));
+            setPage(1);
+          }}
+          style={{ width: 'auto' }}
+        >
+          {PAGE_SIZE_OPTIONS.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <button className="secondary" disabled={page <= 1 || loading} onClick={() => goto(1)}>
+          « First
+        </button>
+        <button className="secondary" disabled={page <= 1 || loading} onClick={() => goto(page - 1)}>
+          ‹ Prev
+        </button>
+        <span className="muted" style={{ fontSize: 12, padding: '0 6px' }}>
+          Page {page} of {pages}
+        </span>
+        <button className="secondary" disabled={page >= pages || loading} onClick={() => goto(page + 1)}>
+          Next ›
+        </button>
+        <button className="secondary" disabled={page >= pages || loading} onClick={() => goto(pages)}>
+          Last »
+        </button>
       </div>
     </div>
   );

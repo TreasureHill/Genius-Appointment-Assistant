@@ -126,8 +126,9 @@ async function drainOnce() {
         await lot.save();
       } catch (err) {
         console.warn('[sender] send failed', err.message);
+        const errMsg = err.message || String(err);
         claimed.status = 'failed';
-        claimed.lastError = err.message || String(err);
+        claimed.lastError = errMsg;
         await claimed.save();
         await MessageLog.create({
           project: lot.project._id,
@@ -139,16 +140,56 @@ async function drainOnce() {
           subject: claimed.renderedSubject,
           body: claimed.renderedBody,
           status: 'failed',
-          error: err.message || String(err),
+          error: errMsg,
           scheduledFor: claimed.sendAfter,
           isReminder: claimed.isReminder,
           reminderIndex: claimed.reminderIndex,
         });
+
+        // Treat invalid-recipient errors as a buyer-email problem so the UI
+        // can flag it. Covers SMTP 550/553 ("no such user", "invalid
+        // recipient", "address rejected") and Twilio "invalid To number".
+        if (looksLikeBadRecipient(errMsg, claimed.type)) {
+          lot.bounceCount = (lot.bounceCount || 0) + 1;
+          lot.lastBounceAt = new Date();
+          lot.lastBounceError = `${claimed.type === 'email' ? 'Email' : 'SMS'} to ${claimed.to} rejected: ${errMsg.slice(0, 240)}`;
+          await lot.save();
+        }
       }
     }
   } finally {
     running = false;
   }
+}
+
+function looksLikeBadRecipient(errMsg, type) {
+  const m = String(errMsg || '').toLowerCase();
+  if (!m) return false;
+  if (type === 'email') {
+    return (
+      m.includes('550') ||
+      m.includes('553') ||
+      m.includes('554') ||
+      m.includes('no such user') ||
+      m.includes('user unknown') ||
+      m.includes('does not exist') ||
+      m.includes('mailbox unavailable') ||
+      m.includes('invalid recipient') ||
+      m.includes('recipient rejected') ||
+      m.includes('address rejected') ||
+      m.includes('bad address') ||
+      m.includes('invalid address') ||
+      m.includes('could not be delivered')
+    );
+  }
+  // sms
+  return (
+    m.includes('invalid to') ||
+    m.includes('invalid phone') ||
+    m.includes('not a valid phone') ||
+    m.includes('21211') || // twilio: invalid 'To' number
+    m.includes('21614')    // twilio: 'To' number is not a valid mobile number
+  );
 }
 
 function start() {

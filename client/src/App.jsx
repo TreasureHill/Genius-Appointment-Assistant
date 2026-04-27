@@ -13,6 +13,7 @@ import SheetImport from './pages/SheetImport.jsx';
 import History from './pages/History.jsx';
 import Settings from './pages/Settings.jsx';
 import CalendlyEvents from './pages/CalendlyEvents.jsx';
+import Reports from './pages/Reports.jsx';
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/import" element={<SheetImport />} />
         <Route path="/history" element={<History />} />
         <Route path="/calendly" element={<CalendlyEvents />} />
+        <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
