@@ -23,6 +23,8 @@ router.get('/', async (req, res) => {
     setting,
     unmatchedCalendly,
     unmatchedCalendlyList,
+    bouncedLots,
+    recentFailures,
   ] = await Promise.all([
     Lot.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
     Outbox.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
@@ -88,6 +90,18 @@ router.get('/', async (req, res) => {
       .sort({ lastSeenAt: -1 })
       .limit(10)
       .lean(),
+    Lot.find({ bounceCount: { $gt: 0 } })
+      .populate('project', 'name')
+      .select('lotNumber bounceCount lastBounceAt lastBounceError project status buyers')
+      .sort({ lastBounceAt: -1 })
+      .limit(20)
+      .lean(),
+    MessageLog.find({ status: 'failed', direction: 'out' })
+      .sort({ createdAt: -1 })
+      .limit(15)
+      .populate('project', 'name')
+      .populate('lot', 'lotNumber')
+      .lean(),
   ]);
 
   const shape = (rows) => {
@@ -118,6 +132,8 @@ router.get('/', async (req, res) => {
     warnings,
     perProject,
     unmatchedCalendly: { count: unmatchedCalendly, recent: unmatchedCalendlyList },
+    bouncedLots,
+    recentFailures,
     health: {
       smtp: setting.smtpHealth,
       twilio: setting.twilioHealth,

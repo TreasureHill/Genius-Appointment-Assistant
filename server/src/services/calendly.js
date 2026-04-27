@@ -110,8 +110,12 @@ async function syncAll() {
         eventUri: ev.uri,
         eventName: ev.name,
         startTime: ev.start_time,
+        endTime: ev.end_time,
+        location: ev.location?.location || ev.location?.join_url || '',
         inviteeName: inv.name || '',
         inviteeStatus: inv.status,
+        rescheduleUrl: inv.reschedule_url || '',
+        cancelUrl: inv.cancel_url || '',
       };
       const arr = emailOccurrences.get(email) || [];
       arr.push(entry);
@@ -122,43 +126,71 @@ async function syncAll() {
   const emails = Array.from(emailOccurrences.keys());
   const matchedEmails = new Set();
   const matched = [];
+  const reMatched = [];
 
   if (emails.length) {
+    // Match against ALL buyer roles (buyer, coBuyer, thirdBuyer). The
+    // BuyerSchema lowercases email on save, but be defensive in case any
+    // legacy rows have mixed-case values.
     const lots = await Lot.find({ 'buyers.email': { $in: emails } });
     for (const lot of lots) {
       const hits = [];
       for (const b of lot.buyers) {
-        if (!b.email) continue;
-        const occ = emailOccurrences.get(b.email.toLowerCase());
-        if (occ && occ.length) hits.push({ email: b.email, occurrences: occ });
+        const email = (b.email || '').toLowerCase().trim();
+        if (!email) continue;
+        const occ = emailOccurrences.get(email);
+        if (occ && occ.length) {
+          hits.push({ email, role: b.role, name: b.name, occurrences: occ });
+        }
       }
       if (!hits.length) continue;
 
       const multi = hits.some((h) => h.occurrences.length > 1);
       const firstHit = hits[0].occurrences[0];
+      const alreadyMatchedSameEvent =
+        lot.calendlyEventUri && lot.calendlyEventUri === firstHit.eventUri;
 
       if (lot.status !== 'scheduled') lot.status = 'scheduled';
       lot.calendlyEventUri = firstHit.eventUri || lot.calendlyEventUri;
       lot.calendlyWarning = multi
         ? `Invitee appears in multiple active Calendly events (${hits[0].occurrences.length}). Check for duplicates.`
         : '';
+      lot.calendlyEvent = {
+        name: firstHit.eventName || '',
+        startTime: firstHit.startTime ? new Date(firstHit.startTime) : null,
+        endTime: firstHit.endTime ? new Date(firstHit.endTime) : null,
+        inviteeName: firstHit.inviteeName || '',
+        inviteeEmail: hits[0].email,
+        inviteeStatus: firstHit.inviteeStatus || '',
+        matchedBuyerRole: hits[0].role || '',
+        location: firstHit.location || '',
+        rescheduleUrl: firstHit.rescheduleUrl || '',
+        cancelUrl: firstHit.cancelUrl || '',
+        lastSyncedAt: new Date(),
+      };
       await lot.save();
 
-      await MessageLog.create({
-        project: lot.project,
-        lot: lot._id,
-        type: 'calendly',
-        direction: 'in',
-        to: hits[0].email,
-        subject: firstHit.eventName || 'Calendly event',
-        body: `Matched invitee ${hits[0].email} in event ${firstHit.eventUri}`,
-        status: 'received',
-        providerId: firstHit.eventUri,
-        sentAt: new Date(),
-      });
-
+      // Only log on the FIRST time we match this (lot, event) pair. This
+      // keeps the 30-min poll from spamming the activity feed once a lot is
+      // already mapped to a Calendly event.
+      if (!alreadyMatchedSameEvent) {
+        await MessageLog.create({
+          project: lot.project,
+          lot: lot._id,
+          type: 'calendly',
+          direction: 'in',
+          to: hits[0].email,
+          subject: firstHit.eventName || 'Calendly event',
+          body: `Matched invitee ${hits[0].email} (${hits[0].role}) in event ${firstHit.eventUri}`,
+          status: 'received',
+          providerId: firstHit.eventUri,
+          sentAt: new Date(),
+        });
+        matched.push({ lotId: String(lot._id), email: hits[0].email, multi });
+      } else {
+        reMatched.push({ lotId: String(lot._id), email: hits[0].email });
+      }
       for (const h of hits) matchedEmails.add(h.email.toLowerCase());
-      matched.push({ lotId: String(lot._id), email: hits[0].email, multi });
     }
   }
 
@@ -200,6 +232,7 @@ async function syncAll() {
     events: events.length,
     emailsSeen: emails.length,
     matched,
+    reMatched: reMatched.length,
     unmatched: unmatchedCount,
   };
 }
@@ -209,25 +242,47 @@ async function handleWebhook(payload) {
   const invitee = payload?.payload || {};
   const email = (invitee.email || '').toLowerCase();
   const eventUri = invitee.event || payload?.payload?.scheduled_event?.uri || '';
+  const ev = payload?.payload?.scheduled_event || {};
   if (!email) return { matched: 0 };
 
   const lots = await Lot.find({ 'buyers.email': email });
   for (const lot of lots) {
+    const alreadyMatchedSameEvent =
+      lot.calendlyEventUri && eventUri && lot.calendlyEventUri === eventUri;
+
+    const matchedRole = (lot.buyers.find((b) => (b.email || '').toLowerCase() === email) || {}).role || '';
+
     if (lot.status !== 'scheduled') lot.status = 'scheduled';
     lot.calendlyEventUri = eventUri || lot.calendlyEventUri;
+    lot.calendlyEvent = {
+      name: ev.name || invitee.name || '',
+      startTime: ev.start_time ? new Date(ev.start_time) : lot.calendlyEvent?.startTime || null,
+      endTime: ev.end_time ? new Date(ev.end_time) : lot.calendlyEvent?.endTime || null,
+      inviteeName: invitee.name || lot.calendlyEvent?.inviteeName || '',
+      inviteeEmail: email,
+      inviteeStatus: invitee.status || lot.calendlyEvent?.inviteeStatus || '',
+      matchedBuyerRole: matchedRole,
+      location: ev.location?.location || ev.location?.join_url || lot.calendlyEvent?.location || '',
+      rescheduleUrl: invitee.reschedule_url || lot.calendlyEvent?.rescheduleUrl || '',
+      cancelUrl: invitee.cancel_url || lot.calendlyEvent?.cancelUrl || '',
+      lastSyncedAt: new Date(),
+    };
     await lot.save();
-    await MessageLog.create({
-      project: lot.project,
-      lot: lot._id,
-      type: 'calendly',
-      direction: 'in',
-      to: email,
-      subject: invitee.name || 'Calendly invitee.created',
-      body: JSON.stringify(invitee).slice(0, 2000),
-      status: 'received',
-      providerId: eventUri,
-      sentAt: new Date(),
-    });
+
+    if (!alreadyMatchedSameEvent) {
+      await MessageLog.create({
+        project: lot.project,
+        lot: lot._id,
+        type: 'calendly',
+        direction: 'in',
+        to: email,
+        subject: invitee.name || 'Calendly invitee.created',
+        body: JSON.stringify(invitee).slice(0, 2000),
+        status: 'received',
+        providerId: eventUri,
+        sentAt: new Date(),
+      });
+    }
   }
 
   if (lots.length === 0 && eventUri) {

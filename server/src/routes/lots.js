@@ -92,6 +92,16 @@ router.delete('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+router.post('/:id/clear-bounce', async (req, res) => {
+  const lot = await Lot.findByIdAndUpdate(
+    req.params.id,
+    { $set: { bounceCount: 0, lastBounceAt: null, lastBounceError: '' } },
+    { new: true }
+  );
+  if (!lot) return res.status(404).json({ error: 'not_found' });
+  res.json(lot);
+});
+
 router.post('/:id/send', async (req, res) => {
   const { templateId } = req.body || {};
   if (!templateId) return res.status(400).json({ error: 'templateId_required' });

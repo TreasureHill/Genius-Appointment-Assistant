@@ -84,17 +84,135 @@ export default function LotDetail() {
     window.location.href = `/projects/${data.lot.project._id}`;
   }
 
+  async function clearBounce() {
+    await api.post(`/api/lots/${id}/clear-bounce`);
+    load();
+  }
+
   if (!data) return <div className="muted">Loading…</div>;
   const { lot, history, queued } = data;
+  const calEvent = lot.calendlyEvent;
+  const hasCalEvent = !!(calEvent && (calEvent.startTime || calEvent.name || calEvent.inviteeEmail));
 
   return (
     <div>
-      <h1>
-        Lot {lot.lotNumber} <span className="muted" style={{ fontSize: 14 }}>· {lot.project?.name}</span>{' '}
-        <Link to={`/projects/${lot.project?._id}`} className="muted" style={{ fontSize: 13 }}>
-          ← project
-        </Link>
-      </h1>
+      <div className="page-head">
+        <div>
+          <Link to={`/projects/${lot.project?._id}`} className="muted" style={{ fontSize: 13 }}>
+            ← {lot.project?.name}
+          </Link>
+          <h1 style={{ margin: '4px 0 0' }}>
+            Lot {lot.lotNumber}{' '}
+            <span className={`badge ${lot.status}`} style={{ marginLeft: 8, verticalAlign: 'middle' }}>
+              {lot.status.replace('_', ' ')}
+            </span>
+          </h1>
+          {lot.address && (
+            <div className="muted" style={{ fontSize: 13 }}>
+              {lot.address}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {(lot.bounceCount || 0) > 0 && (
+        <div className="card alert alert-err">
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ fontSize: 20 }}>⚠️</div>
+            <div style={{ flex: 1 }}>
+              <strong>Recipient address rejected ({lot.bounceCount} time{lot.bounceCount === 1 ? '' : 's'}).</strong>
+              <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                Last error: {lot.lastBounceError || 'unknown'}
+                {lot.lastBounceAt && <> · {new Date(lot.lastBounceAt).toLocaleString()}</>}
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                Likely a wrong email or phone — fix the buyer record and click "Clear" once the new
+                address is correct.
+              </div>
+            </div>
+            <button className="secondary" onClick={clearBounce}>
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      {hasCalEvent && (
+        <div className="card alert alert-ok">
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ fontSize: 20 }}>📅</div>
+            <div style={{ flex: 1 }}>
+              <strong>{calEvent.name || 'Calendly event'}</strong>
+              {calEvent.matchedBuyerRole && (
+                <span className="badge ok" style={{ marginLeft: 8 }}>
+                  matched on {calEvent.matchedBuyerRole === 'buyer' ? 'buyer' : calEvent.matchedBuyerRole === 'coBuyer' ? 'co-buyer' : 'third buyer'}
+                </span>
+              )}
+              <div className="cal-grid">
+                <div>
+                  <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    When
+                  </div>
+                  <div>
+                    {calEvent.startTime ? new Date(calEvent.startTime).toLocaleString() : '—'}
+                    {calEvent.endTime && (
+                      <span className="muted">
+                        {' '}
+                        – {new Date(calEvent.endTime).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    Invitee
+                  </div>
+                  <div>
+                    <strong>{calEvent.inviteeName || '—'}</strong>
+                    <div className="muted" style={{ fontSize: 12 }}>{calEvent.inviteeEmail}</div>
+                  </div>
+                </div>
+                {calEvent.location && (
+                  <div>
+                    <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                      Location
+                    </div>
+                    <div style={{ wordBreak: 'break-all' }}>{calEvent.location}</div>
+                  </div>
+                )}
+                <div>
+                  <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    Status
+                  </div>
+                  <div>{calEvent.inviteeStatus || 'active'}</div>
+                </div>
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {calEvent.rescheduleUrl && (
+                  <a className="btn-link" href={calEvent.rescheduleUrl} target="_blank" rel="noreferrer">
+                    Reschedule ↗
+                  </a>
+                )}
+                {calEvent.cancelUrl && (
+                  <a className="btn-link" href={calEvent.cancelUrl} target="_blank" rel="noreferrer">
+                    Cancel ↗
+                  </a>
+                )}
+                {lot.calendlyEventUri && (
+                  <span className="muted" style={{ fontSize: 11, alignSelf: 'center' }}>
+                    {lot.calendlyEventUri}
+                  </span>
+                )}
+              </div>
+              {calEvent.lastSyncedAt && (
+                <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+                  Last synced {new Date(calEvent.lastSyncedAt).toLocaleString()}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <div className="row">
@@ -119,6 +237,9 @@ export default function LotDetail() {
         </div>
 
         <h2>Buyers</h2>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+          Calendly is matched against every buyer email below — buyer, co-buyer, and third buyer.
+        </div>
         {lot.buyers.map((b, i) => (
           <div key={i} className="row" style={{ marginBottom: 8 }}>
             <div style={{ minWidth: 110 }}>

@@ -27,6 +27,22 @@ const LotSchema = new mongoose.Schema(
     notes: { type: String, default: '' },
     calendlyWarning: { type: String, default: '' },
     calendlyEventUri: { type: String, default: '' },
+    calendlyEvent: {
+      name: { type: String, default: '' },
+      startTime: { type: Date, default: null },
+      endTime: { type: Date, default: null },
+      inviteeName: { type: String, default: '' },
+      inviteeEmail: { type: String, default: '' },
+      inviteeStatus: { type: String, default: '' },
+      matchedBuyerRole: { type: String, default: '' },
+      location: { type: String, default: '' },
+      rescheduleUrl: { type: String, default: '' },
+      cancelUrl: { type: String, default: '' },
+      lastSyncedAt: { type: Date, default: null },
+    },
+    bounceCount: { type: Number, default: 0 },
+    lastBounceAt: { type: Date, default: null },
+    lastBounceError: { type: String, default: '' },
   },
   { timestamps: true }
 );

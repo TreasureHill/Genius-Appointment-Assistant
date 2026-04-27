@@ -2,14 +2,15 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 
 const links = [
-  { to: '/', label: 'Dashboard', end: true },
-  { to: '/board', label: 'Board' },
-  { to: '/projects', label: 'Projects' },
-  { to: '/templates', label: 'Templates' },
-  { to: '/import', label: 'Import / Export' },
-  { to: '/history', label: 'History' },
-  { to: '/calendly', label: 'Calendly events' },
-  { to: '/settings', label: 'Settings' },
+  { to: '/', label: 'Dashboard', icon: '◧', end: true },
+  { to: '/board', label: 'Board', icon: '▦' },
+  { to: '/projects', label: 'Projects', icon: '▤' },
+  { to: '/templates', label: 'Templates', icon: '✎' },
+  { to: '/import', label: 'Import / Export', icon: '⇅' },
+  { to: '/history', label: 'History', icon: '⏱' },
+  { to: '/calendly', label: 'Calendly events', icon: '📅' },
+  { to: '/reports', label: 'Reports', icon: '📊' },
+  { to: '/settings', label: 'Settings', icon: '⚙' },
 ];
 
 export default function Layout() {
@@ -22,16 +23,28 @@ export default function Layout() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">Genius Appointments</div>
+        <div className="brand">
+          <span className="brand-mark">G</span>
+          <span>Genius Appointments</span>
+        </div>
         <nav>
           {links.map((l) => (
             <NavLink key={l.to} to={l.to} end={l.end}>
-              {l.label}
+              <span className="nav-icon" aria-hidden="true">
+                {l.icon}
+              </span>
+              <span>{l.label}</span>
             </NavLink>
           ))}
         </nav>
-        <div className="logout" onClick={onLogout} title={user?.username}>
-          Log out ({user?.username})
+        <div className="sidebar-foot">
+          <div className="user-chip" title={user?.username}>
+            <span className="avatar">{(user?.username || '?').slice(0, 1).toUpperCase()}</span>
+            <span className="user-name">{user?.username}</span>
+          </div>
+          <button className="logout" onClick={onLogout}>
+            Log out
+          </button>
         </div>
       </aside>
       <main className="main">

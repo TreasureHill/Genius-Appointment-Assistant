@@ -9,20 +9,39 @@ const { enqueueBroadcast } = require('../services/enqueue');
 const router = express.Router();
 
 router.get('/history', async (req, res) => {
-  const { project, lot, type, direction, status, limit = 200 } = req.query;
+  const { project, lot, type, direction, status, q } = req.query;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(200, Math.max(5, Number(req.query.pageSize) || 25));
+
   const filter = {};
   if (project) filter.project = project;
   if (lot) filter.lot = lot;
   if (type) filter.type = type;
   if (direction) filter.direction = direction;
   if (status) filter.status = status;
-  const logs = await MessageLog.find(filter)
-    .populate('project', 'name')
-    .populate('lot', 'lotNumber address')
-    .sort({ createdAt: -1 })
-    .limit(Math.min(Number(limit) || 200, 1000))
-    .lean();
-  res.json(logs);
+  if (q) {
+    const r = new RegExp(String(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    filter.$or = [{ to: r }, { subject: r }, { body: r }, { error: r }];
+  }
+
+  const [items, total] = await Promise.all([
+    MessageLog.find(filter)
+      .populate('project', 'name')
+      .populate('lot', 'lotNumber address')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .lean(),
+    MessageLog.countDocuments(filter),
+  ]);
+
+  res.json({
+    items,
+    total,
+    page,
+    pageSize,
+    pages: Math.max(1, Math.ceil(total / pageSize)),
+  });
 });
 
 router.get('/outbox', async (req, res) => {
