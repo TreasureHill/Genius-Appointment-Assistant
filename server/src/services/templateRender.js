@@ -9,6 +9,37 @@ function compile(src) {
   return fn;
 }
 
+function firstNameOf(name) {
+  return (name || '').trim().split(/\s+/)[0] || '';
+}
+
+function buyerView(b) {
+  if (!b || !(b.name || b.email || b.phone)) {
+    return { name: '', firstName: '', email: '', phone: '', role: '', present: false };
+  }
+  return {
+    name: b.name || '',
+    firstName: firstNameOf(b.name),
+    email: b.email || '',
+    phone: b.phone || '',
+    role: b.role || '',
+    present: true,
+  };
+}
+
+// "Jane and John" if both present, otherwise "Jane," (with trailing comma)
+// so templates can write `Hello {{buyersDisplay}}` and have it always look
+// natural — couple greeting when there's a co-buyer, single-name + comma
+// when there isn't.
+function combineNames(a, b) {
+  const aT = (a || '').trim();
+  const bT = (b || '').trim();
+  if (aT && bT) return `${aT} and ${bT}`;
+  if (aT) return `${aT},`;
+  if (bT) return `${bT},`;
+  return '';
+}
+
 function renderContext({ project, lot, buyer, owner }) {
   const ownerCtx = owner
     ? {
@@ -18,6 +49,30 @@ function renderContext({ project, lot, buyer, owner }) {
         calendlyUrl: owner.calendlyUrl || '',
       }
     : {};
+
+  // Pull every buyer slot off the lot so templates can address co-buyers
+  // even when the message is being sent to the primary buyer.
+  const buyers = (lot && lot.buyers) || [];
+  const findRole = (role) => buyers.find((x) => x.role === role) || null;
+  const buyerRow = findRole('buyer');
+  const coBuyerRow = findRole('coBuyer');
+  const thirdBuyerRow = findRole('thirdBuyer');
+
+  // The "current" recipient (the buyer this specific message is going to).
+  // Falls back to the primary buyer slot when not given (e.g. test sends).
+  const recipient = buyer || buyerRow || {};
+  const buyerCtx = {
+    name: recipient.name || '',
+    firstName: firstNameOf(recipient.name),
+    email: recipient.email || '',
+    phone: recipient.phone || '',
+    role: recipient.role || 'buyer',
+  };
+
+  const coBuyerCtx = buyerView(coBuyerRow);
+  const thirdBuyerCtx = buyerView(thirdBuyerRow);
+  const primaryCtx = buyerView(buyerRow);
+
   return {
     project: project ? { name: project.name, description: project.description || '' } : {},
     lot: lot
@@ -27,15 +82,16 @@ function renderContext({ project, lot, buyer, owner }) {
           status: lot.status,
         }
       : {},
-    buyer: buyer
-      ? {
-          name: buyer.name || '',
-          firstName: (buyer.name || '').split(/\s+/)[0] || '',
-          email: buyer.email || '',
-          phone: buyer.phone || '',
-          role: buyer.role || 'buyer',
-        }
-      : {},
+    buyer: buyerCtx,
+    coBuyer: coBuyerCtx,
+    thirdBuyer: thirdBuyerCtx,
+    primaryBuyer: primaryCtx,
+
+    // Smart combined displays. Use either the full-name or first-name
+    // version depending on how formal the template is.
+    buyersDisplay: combineNames(primaryCtx.name, coBuyerCtx.name),
+    buyersFirstDisplay: combineNames(primaryCtx.firstName, coBuyerCtx.firstName),
+
     // Backwards-compatible alias so older templates using {{rep.name}} still work
     rep: ownerCtx,
     owner: ownerCtx,
