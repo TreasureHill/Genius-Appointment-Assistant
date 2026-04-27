@@ -513,6 +513,54 @@ tbody tr:last-child td {
   min-height: 180px;
   background: #fff;
 }
+
+/* Email editor (rich/HTML toggle) */
+.email-editor .editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  margin-bottom: 4px;
+}
+.email-editor .editor-tabs {
+  display: inline-flex;
+  background: #f3f4f6;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+}
+.email-editor .editor-tab {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.email-editor .editor-tab.active {
+  background: #fff;
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+.email-editor .html-editor {
+  width: 100%;
+  min-height: 280px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: #0f172a;
+  color: #e5e7eb;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+.email-editor .html-editor:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.25);
+}
 .preview-frame {
   width: 100%;
   min-height: 220px;
