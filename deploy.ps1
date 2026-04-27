@@ -1,4 +1,4 @@
-# Genius Appointment Assistant — Windows deploy script
+﻿# Genius Appointment Assistant - Windows deploy script
 #
 # What it does, in order:
 #   1. Pulls latest `main` from origin (hard reset, discards local junk)
@@ -62,7 +62,7 @@ if ($LASTEXITCODE -ne 0) { Fail "git fetch failed" }
 git checkout $Branch
 git reset --hard "origin/$Branch"
 if ($LASTEXITCODE -ne 0) { Fail "git reset failed" }
-git --no-pager log -1 --pretty=format:"   on commit %h — %s (%an, %ar)"
+git --no-pager log -1 --pretty=format:"   on commit %h - %s (%an, %ar)"
 Write-Host ""
 
 # 2. Install deps --------------------------------------------------------------
@@ -123,9 +123,9 @@ for ($i = 0; $i -lt 15; $i++) {
     } catch {}
 }
 if (-not $ok) {
-    Write-Host "   server didn't answer on :$Port within 15s — check $ServerErr" -ForegroundColor Yellow
+    Write-Host "   server didn't answer on :$Port within 15s - check $ServerErr" -ForegroundColor Yellow
 } else {
-    Write-Host "   OK — server is up" -ForegroundColor Green
+    Write-Host "   OK - server is up" -ForegroundColor Green
 }
 
 # 6. Make sure Caddy is running -----------------------------------------------
@@ -133,10 +133,10 @@ Section "Ensuring Caddy is running"
 if ($caddySvc) {
     # Service install
     if ((Get-Service caddy).Status -ne "Running") {
-        Write-Host "   caddy service not running — starting"
+        Write-Host "   caddy service not running - starting"
         Start-Service caddy
     } else {
-        Write-Host "   caddy service is running — reloading config"
+        Write-Host "   caddy service is running - reloading config"
     }
     # Validate the Caddyfile before asking caddy to reload
     if (Test-Path $Caddyfile) {
@@ -146,22 +146,22 @@ if ($caddySvc) {
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "   caddy reloaded" -ForegroundColor Green
             } else {
-                Write-Host "   caddy reload returned $LASTEXITCODE — check Event Viewer" -ForegroundColor Yellow
+                Write-Host "   caddy reload returned $LASTEXITCODE - check Event Viewer" -ForegroundColor Yellow
             }
         } else {
-            Write-Host "   Caddyfile invalid — NOT reloading. Fix $Caddyfile and re-run." -ForegroundColor Red
+            Write-Host "   Caddyfile invalid - NOT reloading. Fix $Caddyfile and re-run." -ForegroundColor Red
         }
     } else {
-        Write-Host "   Caddyfile not found at $Caddyfile — skipping reload" -ForegroundColor Yellow
+        Write-Host "   Caddyfile not found at $Caddyfile - skipping reload" -ForegroundColor Yellow
     }
 } else {
-    # No service — try to find caddy.exe and run it standalone
+    # No service - try to find caddy.exe and run it standalone
     $running = Get-Process caddy -ErrorAction SilentlyContinue
     if ($running) {
-        Write-Host "   caddy.exe already running (PID $($running.Id | Select-Object -First 1)) — reloading"
+        Write-Host "   caddy.exe already running (PID $($running.Id | Select-Object -First 1)) - reloading"
         & caddy reload --config $Caddyfile
     } else {
-        Write-Host "   caddy not running — starting detached"
+        Write-Host "   caddy not running - starting detached"
         Start-Process -FilePath "caddy" -ArgumentList @("run","--config",$Caddyfile) -WindowStyle Hidden
     }
 }
