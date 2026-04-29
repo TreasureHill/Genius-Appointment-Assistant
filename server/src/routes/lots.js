@@ -92,6 +92,16 @@ router.delete('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+router.post('/bulk-delete', async (req, res) => {
+  const { ids } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids_required' });
+  }
+  await Outbox.deleteMany({ lot: { $in: ids } });
+  const r = await Lot.deleteMany({ _id: { $in: ids } });
+  res.json({ ok: true, deleted: r.deletedCount || 0 });
+});
+
 router.post('/:id/clear-bounce', async (req, res) => {
   const lot = await Lot.findByIdAndUpdate(
     req.params.id,
