@@ -183,53 +183,58 @@ async function commit(buffer, { updateExisting = false, filename = '' } = {}) {
 
   for (let i = 0; i < dataRows.length; i++) {
     const row = dataRows[i];
-    const projectName = cell(row, headerMap.project);
-    const lotNumber = cell(row, headerMap.lotNumber);
-    if (!projectName || !lotNumber) {
-      result.warnings.push(`Row ${i + 2}: missing project or lot #, skipped`);
-      continue;
-    }
-    const { project } = await getProject(projectName);
-    const existing = await Lot.findOne({ project: project._id, lotNumber });
-    const buyers = buildBuyers(row, headerMap);
-    const statusCell = cell(row, headerMap.status).toLowerCase();
-    const status = Lot.STATUSES.includes(statusCell) ? statusCell : undefined;
-
-    if (existing) {
-      if (updateExisting) {
-        batch.updatedLotSnapshots.push({
-          lotId: existing._id,
-          prev: {
-            address: existing.address,
-            buyers: existing.buyers.map((b) => ({
-              role: b.role,
-              name: b.name,
-              email: b.email,
-              phone: b.phone,
-              optedOut: b.optedOut,
-            })),
-            status: existing.status,
-          },
-        });
-        existing.address = cell(row, headerMap.address) || existing.address;
-        if (buyers.length) existing.buyers = buyers;
-        if (status) existing.status = status;
-        await existing.save();
-        result.updatedLots += 1;
-      } else {
-        result.skippedLots += 1;
+    const rowNum = i + 2;
+    try {
+      const projectName = cell(row, headerMap.project);
+      const lotNumber = cell(row, headerMap.lotNumber);
+      if (!projectName || !lotNumber) {
+        result.warnings.push(`Row ${rowNum}: missing project or lot #, skipped`);
+        continue;
       }
-    } else {
-      const created = await Lot.create({
-        project: project._id,
-        lotNumber,
-        address: cell(row, headerMap.address),
-        buyers,
-        status: status || 'pending',
-        importBatch: batch._id,
-      });
-      result.createdLots += 1;
-      batch.createdLots.push(created._id);
+      const { project } = await getProject(projectName);
+      const existing = await Lot.findOne({ project: project._id, lotNumber });
+      const buyers = buildBuyers(row, headerMap);
+      const statusCell = cell(row, headerMap.status).toLowerCase();
+      const status = Lot.STATUSES.includes(statusCell) ? statusCell : undefined;
+
+      if (existing) {
+        if (updateExisting) {
+          batch.updatedLotSnapshots.push({
+            lotId: existing._id,
+            prev: {
+              address: existing.address,
+              buyers: existing.buyers.map((b) => ({
+                role: b.role,
+                name: b.name,
+                email: b.email,
+                phone: b.phone,
+                optedOut: b.optedOut,
+              })),
+              status: existing.status,
+            },
+          });
+          existing.address = cell(row, headerMap.address) || existing.address;
+          if (buyers.length) existing.buyers = buyers;
+          if (status) existing.status = status;
+          await existing.save();
+          result.updatedLots += 1;
+        } else {
+          result.skippedLots += 1;
+        }
+      } else {
+        const created = await Lot.create({
+          project: project._id,
+          lotNumber,
+          address: cell(row, headerMap.address),
+          buyers,
+          status: status || 'pending',
+          importBatch: batch._id,
+        });
+        result.createdLots += 1;
+        batch.createdLots.push(created._id);
+      }
+    } catch (err) {
+      result.warnings.push(`Row ${rowNum}: ${err.message}`);
     }
   }
 
