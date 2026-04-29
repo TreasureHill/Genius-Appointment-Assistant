@@ -7,9 +7,15 @@ const { enqueueBroadcast } = require('../services/enqueue');
 const router = express.Router();
 
 router.get('/', async (req, res) => {
-  const { project, status, q, limit = 200 } = req.query;
+  const { project, projects, status, q, limit = 200 } = req.query;
   const filter = {};
-  if (project) filter.project = project;
+  if (projects) {
+    const ids = String(projects).split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 1) filter.project = ids[0];
+    else if (ids.length > 1) filter.project = { $in: ids };
+  } else if (project) {
+    filter.project = project;
+  }
   if (status) filter.status = status;
   if (q) {
     const r = new RegExp(escapeRegex(q), 'i');

@@ -23,6 +23,7 @@ const settingsRoutes = require('./routes/settings');
 const webhooksRoutes = require('./routes/webhooks');
 const calendlyRoutes = require('./routes/calendly');
 const reportsRoutes = require('./routes/reports');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 
@@ -50,6 +51,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/calendly', calendlyRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Serve built client in production
 const clientDist = path.resolve(__dirname, '../../client/dist');

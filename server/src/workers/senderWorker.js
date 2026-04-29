@@ -117,7 +117,7 @@ async function drainOnce() {
           reminderIndex: claimed.reminderIndex,
         });
 
-        lot.reminderCount += 1;
+        // reminderCount is incremented per-lot at enqueue time, not here.
         lot.lastContactedAt = new Date();
         lot.nextReminderAt = new Date(
           Date.now() + (sched.reminderIntervalDays || 14) * 24 * 60 * 60 * 1000

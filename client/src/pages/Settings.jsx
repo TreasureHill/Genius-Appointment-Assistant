@@ -235,6 +235,60 @@ function Health({ h }) {
   );
 }
 
+function DangerZone({ onDone }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  async function wipe() {
+    if (!confirm(
+      'WIPE THE DATABASE?\n\nThis permanently deletes every project, lot, message log, outbox row, import batch, and Calendly mapping. Settings, templates, and your login stay. This cannot be undone.\n\nProceed?'
+    )) return;
+    if (!confirm(
+      'Are you ABSOLUTELY sure?\n\nThere is no undo. There is no backup. Click Cancel to back out.'
+    )) return;
+    if (!confirm(
+      'Last chance. Click OK to wipe everything.'
+    )) return;
+    const typed = prompt('Type WIPE EVERYTHING (caps, with the space) to confirm.');
+    if (typed !== 'WIPE EVERYTHING') {
+      setMsg('Cancelled — confirmation text did not match.');
+      return;
+    }
+    setBusy(true);
+    setMsg('');
+    try {
+      const r = await api.post('/api/admin/wipe', { confirm: 'WIPE EVERYTHING' });
+      const d = r.deleted || {};
+      setMsg(
+        `Database wiped. Removed ${d.projects} project${d.projects === 1 ? '' : 's'}, ` +
+          `${d.lots} lot${d.lots === 1 ? '' : 's'}, ${d.messageLogs} message log${d.messageLogs === 1 ? '' : 's'}, ` +
+          `${d.outbox} queued, ${d.importBatches} import batch${d.importBatches === 1 ? '' : 'es'}, ` +
+          `${d.calendlyUnmatched} Calendly mapping${d.calendlyUnmatched === 1 ? '' : 's'}.`
+      );
+      onDone && onDone();
+    } catch (ex) {
+      setMsg('Wipe failed: ' + ex.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ borderColor: '#fecaca' }}>
+      <h2 style={{ marginTop: 0, color: '#b91c1c' }}>Danger zone</h2>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Wipe all operational data — projects, lots, message history, queued sends, import batches,
+        and Calendly mappings. Templates, settings, and your login are preserved. Cannot be undone.
+        You'll be asked to confirm three times and then to type a phrase before anything is deleted.
+      </p>
+      <button className="danger" onClick={wipe} disabled={busy}>
+        {busy ? 'Wiping…' : 'Wipe database'}
+      </button>
+      {msg && <div className={msg.startsWith('Wipe failed') || msg.startsWith('Cancelled') ? 'error' : 'success'} style={{ marginTop: 8 }}>{msg}</div>}
+    </div>
+  );
+}
+
 export default function Settings() {
   const [s, setS] = useState(null);
   const [templates, setTemplates] = useState([]);
@@ -404,6 +458,8 @@ export default function Settings() {
           <button onClick={syncCalendly}>Sync now</button>
         </div>
       </div>
+
+      <DangerZone onDone={load} />
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Defaults (.env)</h2>

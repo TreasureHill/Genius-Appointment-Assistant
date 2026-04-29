@@ -100,10 +100,22 @@ function renderContext({ project, lot, buyer, owner }) {
 
 function render(src, ctx) {
   try {
-    return compile(src || '')(ctx);
+    return compile(sanitizeHandlebars(src) || '')(ctx);
   } catch (err) {
     return `[template error: ${err.message}]`;
   }
+}
+
+// Rich-text editors (ReactQuill etc.) sometimes wrap parts of a {{var}}
+// expression in HTML tags when the user formats around it, producing
+// {{<span ...>buyer.name</span>}} which Handlebars rejects. Strip any HTML
+// tags that landed inside a {{...}} block before compiling.
+function sanitizeHandlebars(src) {
+  if (!src) return src;
+  return src.replace(/\{\{([\s\S]*?)\}\}/g, (_, expr) => {
+    const cleaned = expr.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ');
+    return `{{${cleaned}}}`;
+  });
 }
 
 function renderTemplate(template, ctx) {
