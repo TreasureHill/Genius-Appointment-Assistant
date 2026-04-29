@@ -4,7 +4,7 @@ const Outbox = require('../models/Outbox');
 const Setting = require('../models/Setting');
 const Template = require('../models/Template');
 const Lot = require('../models/Lot');
-const { enqueueBroadcast } = require('../services/enqueue');
+const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
 
 const router = express.Router();
 
@@ -64,6 +64,7 @@ router.post('/send', async (req, res) => {
   if (!Array.isArray(lotIds) || lotIds.length === 0) return res.status(400).json({ error: 'lotIds_required' });
   if (!templateId) return res.status(400).json({ error: 'templateId_required' });
   const result = await enqueueBroadcast({ lotIds, templateId });
+  await bumpReminderCount(result.touchedLotIds);
   res.json(result);
 });
 
@@ -106,19 +107,26 @@ router.post('/send-defaults', async (req, res) => {
 
   const queued = [];
   const skipped = [];
+  const touched = new Set();
   if (emailTpl) {
     const r = await enqueueBroadcast({ lotIds: targetLotIds, templateId: emailTpl._id });
     queued.push(...r.queued);
     skipped.push(...r.skipped);
+    for (const id of r.touchedLotIds) touched.add(id);
   }
   if (smsTpl) {
     const r = await enqueueBroadcast({ lotIds: targetLotIds, templateId: smsTpl._id });
     queued.push(...r.queued);
     skipped.push(...r.skipped);
+    for (const id of r.touchedLotIds) touched.add(id);
   }
+  // Single bump per lot per user action — email + SMS in one click counts as
+  // ONE reminder for the lot, not two.
+  await bumpReminderCount(Array.from(touched));
   res.json({
     queued,
     skipped,
+    touchedLots: touched.size,
     usedEmail: emailTpl ? { id: String(emailTpl._id), name: emailTpl.name } : null,
     usedSms: smsTpl ? { id: String(smsTpl._id), name: smsTpl.name } : null,
   });
