@@ -166,7 +166,9 @@ async function commit(buffer, { updateExisting = false, filename = '' } = {}) {
 
   async function getProject(name) {
     const key = name.toLowerCase();
-    if (projectCache.has(key)) return projectCache.get(key);
+    if (projectCache.has(key)) {
+      return { project: projectCache.get(key), created: false };
+    }
     let p = await Project.findOne({ name });
     let created = false;
     if (!p) {
