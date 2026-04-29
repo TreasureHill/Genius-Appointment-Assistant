@@ -121,6 +121,40 @@ export default function ProjectBoard() {
     }
   }
 
+  async function deleteLot(lot) {
+    if (!confirm(`Delete lot ${lot.lotNumber}? This removes the lot and any pending messages for it. Cannot be undone.`)) return;
+    setBusyLotId(lot._id);
+    try {
+      await api.del(`/api/lots/${lot._id}`);
+      setLots((prev) => prev.filter((l) => l._id !== lot._id));
+      setSelected((prev) => {
+        if (!prev.has(lot._id)) return prev;
+        const next = new Set(prev);
+        next.delete(lot._id);
+        return next;
+      });
+    } catch (ex) {
+      alert('Delete failed: ' + ex.message);
+    } finally {
+      setBusyLotId(null);
+    }
+  }
+
+  async function deleteSelected() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} lot${ids.length === 1 ? '' : 's'}? This also removes any pending messages for them. Cannot be undone.`)) return;
+    try {
+      const r = await api.post('/api/lots/bulk-delete', { ids });
+      const idSet = new Set(ids);
+      setLots((prev) => prev.filter((l) => !idSet.has(l._id)));
+      setSelected(new Set());
+      setSendMsg(`Deleted ${r.deleted} lot${r.deleted === 1 ? '' : 's'}.`);
+    } catch (ex) {
+      setSendMsg('Delete failed: ' + ex.message);
+    }
+  }
+
   function toggle(lotId) {
     const next = new Set(selected);
     if (next.has(lotId)) next.delete(lotId);
@@ -251,6 +285,14 @@ export default function ProjectBoard() {
         <button onClick={() => sendDefaults({})} disabled={sending || selected.size === 0}>
           Send to {selected.size} selected
         </button>
+        <button
+          className="danger"
+          onClick={deleteSelected}
+          disabled={selected.size === 0}
+          title="Permanently delete the selected lots and any pending messages for them"
+        >
+          Delete {selected.size} selected
+        </button>
       </div>
       {sendMsg && (
         <div className={sendMsg.startsWith('Error') ? 'error' : 'card'} style={{ marginBottom: 10 }}>
@@ -332,7 +374,15 @@ export default function ProjectBoard() {
                   <td className="nowrap">
                     <Link to={`/lots/${lot._id}`}>
                       <button className="secondary">Open</button>
-                    </Link>
+                    </Link>{' '}
+                    <button
+                      className="danger"
+                      onClick={() => deleteLot(lot)}
+                      disabled={disabled}
+                      title="Delete this lot"
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               );
