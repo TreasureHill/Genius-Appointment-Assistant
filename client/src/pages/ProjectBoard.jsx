@@ -51,12 +51,16 @@ function Tile({ label, value, active, onClick }) {
   );
 }
 
+function parseIds(str) {
+  if (!str) return [];
+  return String(str).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 export default function ProjectBoard() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialProject = searchParams.get('project') || localStorage.getItem('board:project') || '';
+  const initialIds = parseIds(searchParams.get('project') || localStorage.getItem('board:project') || '');
   const [projects, setProjects] = useState([]);
-  const [projectId, setProjectId] = useState(initialProject);
-  const [project, setProject] = useState(null);
+  const [selectedProjectIds, setSelectedProjectIds] = useState(() => new Set(initialIds));
   const [maxReminders, setMaxReminders] = useState(null);
   const [lots, setLots] = useState([]);
   const [filter, setFilter] = useState({ status: '', q: '' });
@@ -68,24 +72,53 @@ export default function ProjectBoard() {
   useEffect(() => {
     api.get('/api/projects').then((list) => {
       setProjects(list);
-      if (!projectId && list.length) setProjectId(list[0]._id);
+      // Default to first project if nothing selected yet (e.g. fresh visit).
+      setSelectedProjectIds((prev) => {
+        if (prev.size > 0) return prev;
+        return list.length ? new Set([list[0]._id]) : prev;
+      });
     });
     api.get('/api/settings').then((s) => setMaxReminders(s.schedule?.maxReminders ?? null));
   }, []);
 
+  const selectedIdsKey = Array.from(selectedProjectIds).sort().join(',');
+
   useEffect(() => {
-    if (!projectId) return;
-    localStorage.setItem('board:project', projectId);
-    setSearchParams({ project: projectId }, { replace: true });
-    Promise.all([
-      api.get(`/api/projects/${projectId}`),
-      api.get(`/api/lots?project=${projectId}&limit=1000`),
-    ]).then(([p, l]) => {
-      setProject(p);
+    if (!selectedIdsKey) {
+      setLots([]);
+      setSelected(new Set());
+      localStorage.setItem('board:project', '');
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    localStorage.setItem('board:project', selectedIdsKey);
+    setSearchParams({ project: selectedIdsKey }, { replace: true });
+    api.get(`/api/lots?projects=${selectedIdsKey}&limit=1000`).then((l) => {
       setLots(l);
       setSelected(new Set());
     });
-  }, [projectId]);
+  }, [selectedIdsKey]);
+
+  function toggleProjectId(id) {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function selectAllProjects() {
+    setSelectedProjectIds(new Set(projects.map((p) => p._id)));
+  }
+  function clearProjects() {
+    setSelectedProjectIds(new Set());
+  }
+
+  const projectById = useMemo(() => new Map(projects.map((p) => [String(p._id), p])), [projects]);
+  const showProjectCol = selectedProjectIds.size !== 1;
+  const singleProject = selectedProjectIds.size === 1
+    ? projectById.get(Array.from(selectedProjectIds)[0])
+    : null;
 
   const byStatus = useMemo(() => {
     const m = { pending: 0, contacted: 0, scheduled: 0, opted_out: 0 };
@@ -174,13 +207,22 @@ export default function ProjectBoard() {
     setSendMsg('');
     setSending(true);
     try {
-      const body = all
-        ? { projectId, onlyPending: true }
-        : { lotIds: Array.from(selected) };
-      if (!all && selected.size === 0) {
-        setSendMsg('Pick lots first, or click "Send to all pending".');
-        setSending(false);
-        return;
+      let body;
+      if (all) {
+        const pendingIds = lots.filter((l) => l.status === 'pending').map((l) => l._id);
+        if (pendingIds.length === 0) {
+          setSendMsg('Nothing pending in the selected projects.');
+          setSending(false);
+          return;
+        }
+        body = { lotIds: pendingIds };
+      } else {
+        if (selected.size === 0) {
+          setSendMsg('Pick lots first, or click "Send to all pending".');
+          setSending(false);
+          return;
+        }
+        body = { lotIds: Array.from(selected) };
       }
       const result = await api.post('/api/messages/send-defaults', body);
       const tplBits = [];
@@ -196,7 +238,8 @@ export default function ProjectBoard() {
       );
       setSelected(new Set());
       setTimeout(async () => {
-        const fresh = await api.get(`/api/lots?project=${projectId}&limit=1000`);
+        if (!selectedIdsKey) return;
+        const fresh = await api.get(`/api/lots?projects=${selectedIdsKey}&limit=1000`);
         setLots(fresh);
       }, 800);
     } catch (ex) {
@@ -223,25 +266,52 @@ export default function ProjectBoard() {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <h1 style={{ margin: 0 }}>Board</h1>
-        <select
-          value={projectId}
-          onChange={(e) => setProjectId(e.target.value)}
-          style={{ width: 'auto', minWidth: 240, fontSize: 15, fontWeight: 600 }}
-        >
-          {projects.map((p) => (
-            <option key={p._id} value={p._id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-        {project && (
-          <Link to={`/projects/${project._id}`} className="muted" style={{ fontSize: 13 }}>
-            settings →
+        {singleProject && (
+          <Link to={`/projects/${singleProject._id}`} className="muted" style={{ fontSize: 13 }}>
+            {singleProject.name} settings →
           </Link>
         )}
         <div style={{ flex: 1 }} />
         <div className="muted" style={{ fontSize: 12 }}>
           Sending schedule lives in <Link to="/settings">Settings</Link>.
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 12 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong style={{ fontSize: 13 }}>Projects ({selectedProjectIds.size}/{projects.length}):</strong>
+          <button
+            className="secondary"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            onClick={selectAllProjects}
+            disabled={selectedProjectIds.size === projects.length}
+          >
+            Select all
+          </button>
+          <button
+            className="secondary"
+            style={{ padding: '4px 10px', fontSize: 12 }}
+            onClick={clearProjects}
+            disabled={selectedProjectIds.size === 0}
+          >
+            Clear
+          </button>
+          <div style={{ width: 1, height: 18, background: 'var(--border)' }} />
+          {projects.map((p) => {
+            const active = selectedProjectIds.has(p._id);
+            return (
+              <button
+                key={p._id}
+                className={active ? '' : 'secondary'}
+                style={{ padding: '4px 10px', fontSize: 12 }}
+                onClick={() => toggleProjectId(p._id)}
+                title={active ? 'Click to remove' : 'Click to add'}
+              >
+                {active ? '✓ ' : ''}
+                {p.name}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -307,6 +377,7 @@ export default function ProjectBoard() {
               <th style={{ width: 32 }}>
                 <input type="checkbox" checked={allSelected} onChange={toggleAll} />
               </th>
+              {showProjectCol && <th style={{ minWidth: 140 }}>Project</th>}
               <th style={{ minWidth: 70 }}>Lot #</th>
               <th style={{ minWidth: 140 }}>Address</th>
               <th style={{ minWidth: 200 }}>{ROLE_LABELS.buyer}</th>
@@ -330,6 +401,11 @@ export default function ProjectBoard() {
                       onChange={() => toggle(lot._id)}
                     />
                   </td>
+                  {showProjectCol && (
+                    <td className="muted" style={{ fontSize: 12 }}>
+                      {lot.project?.name || projectById.get(String(lot.project))?.name || ''}
+                    </td>
+                  )}
                   <td>
                     <Link to={`/lots/${lot._id}`}>
                       <strong>{lot.lotNumber}</strong>
@@ -389,7 +465,7 @@ export default function ProjectBoard() {
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 24 }}>
+                <td colSpan={showProjectCol ? 11 : 10} className="muted" style={{ textAlign: 'center', padding: 24 }}>
                   {lots.length === 0
                     ? 'This project has no lots yet. Import a sheet to add some.'
                     : 'No lots match your filters.'}

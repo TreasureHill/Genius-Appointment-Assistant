@@ -41,6 +41,8 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
       });
       continue;
     }
+    let queuedThisLot = 0;
+    const sentTo = new Set();
     for (let i = 0; i < lot.buyers.length; i++) {
       const buyer = lot.buyers[i];
       if (buyer.optedOut) {
@@ -52,6 +54,15 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
         skipped.push({ lotId: String(lot._id), reason: `buyer ${buyer.role} missing ${template.type}` });
         continue;
       }
+      const dedupKey = String(to).toLowerCase().trim();
+      if (sentTo.has(dedupKey)) {
+        skipped.push({
+          lotId: String(lot._id),
+          reason: `buyer ${buyer.role} duplicate ${template.type} (${to}) within lot`,
+        });
+        continue;
+      }
+      sentTo.add(dedupKey);
       const ctx = renderContext({ project: lot.project, lot, buyer, owner });
       const rendered = renderTemplate(template, ctx);
 
@@ -71,9 +82,17 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
         reminderIndex: isReminder ? lot.reminderCount + 1 : 0,
       });
       queued.push({ lotId: String(lot._id), buyerIndex: i, sendAfter: cursor });
+      queuedThisLot += 1;
 
       const jitter = randomBetween(pacing.minSec, pacing.maxSec);
       cursor = new Date(cursor.getTime() + jitter * 1000);
+    }
+    // Reminder count is per-lot, not per-recipient: bump it once per
+    // enqueue-round if anything actually got queued. Multiple buyers in the
+    // same lot all share the same "reminder #N".
+    if (queuedThisLot > 0) {
+      lot.reminderCount += 1;
+      await lot.save();
     }
   }
   return { queued, skipped };
