@@ -228,20 +228,52 @@ export default function ProjectBoard() {
       const tplBits = [];
       if (result.usedEmail) tplBits.push(`email "${result.usedEmail.name}"`);
       if (result.usedSms) tplBits.push(`SMS "${result.usedSms.name}"`);
+
+      // Per-lot counts of how many messages were queued, for optimistic UI.
+      const queuedByLot = new Map();
+      for (const q of result.queued) {
+        queuedByLot.set(q.lotId, (queuedByLot.get(q.lotId) || 0) + 1);
+      }
+      const touchedCount = queuedByLot.size;
+
+      setLots((prev) =>
+        prev.map((l) => {
+          const add = queuedByLot.get(String(l._id)) || 0;
+          if (!add) return l;
+          return {
+            ...l,
+            reminderCount: (l.reminderCount || 0) + 1,
+            pendingMessages: (l.pendingMessages || 0) + add,
+          };
+        })
+      );
+
       setSendMsg(
-        `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} ` +
+        `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} across ` +
+          `${touchedCount} lot${touchedCount === 1 ? '' : 's'} ` +
           `(${tplBits.join(' + ') || 'no templates configured'}). ` +
           (result.skipped.length
-            ? `Skipped ${result.skipped.length} (already contacted / scheduled / opted out / missing contact). `
+            ? `Skipped ${result.skipped.length} (already contacted / scheduled / opted out / duplicate / missing contact). `
             : '') +
-          'Email + SMS interleave with the global pacing gap so they go out spread over minutes, not seconds.'
+          'They go out spread over minutes per your pacing settings — the row counters will update as each message sends.'
       );
       setSelected(new Set());
-      setTimeout(async () => {
-        if (!selectedIdsKey) return;
-        const fresh = await api.get(`/api/lots?projects=${selectedIdsKey}&limit=1000`);
-        setLots(fresh);
-      }, 800);
+
+      // Short polling burst so the board reflects sends as they happen
+      // without the user having to refresh manually.
+      const key = selectedIdsKey;
+      const startedAt = Date.now();
+      async function refresh() {
+        if (!key || key !== selectedIdsKey) return;
+        try {
+          const fresh = await api.get(`/api/lots?projects=${key}&limit=1000`);
+          setLots(fresh);
+        } catch {}
+        if (Date.now() - startedAt < 60_000) {
+          setTimeout(refresh, 5_000);
+        }
+      }
+      setTimeout(refresh, 1_500);
     } catch (ex) {
       setSendMsg('Error: ' + ex.message);
     } finally {
@@ -423,7 +455,18 @@ export default function ProjectBoard() {
                   </td>
                   <td>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <StatusBadge status={lot.status} />
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <StatusBadge status={lot.status} />
+                        {lot.pendingMessages > 0 && (
+                          <span
+                            className="badge pending"
+                            title="Messages queued for this lot — they'll send over the next few minutes per pacing"
+                            style={{ fontSize: 10 }}
+                          >
+                            {lot.pendingMessages} queued
+                          </span>
+                        )}
+                      </div>
                       <select
                         value={lot.status}
                         onChange={(e) => changeStatus(lot, e.target.value)}

@@ -12,6 +12,12 @@ function randomBetween(min, max) {
 
 // Enqueue a template (email or sms) for selected lots. Pacing and reminder
 // caps live on the global Setting singleton (single-owner system).
+//
+// Note: this function does NOT increment lot.reminderCount. The caller is
+// responsible for bumping the count exactly once per "send round" via
+// bumpReminderCount() — that way a round that fans out across multiple
+// templates (e.g. Send to all pending fires email + SMS) only counts as
+// ONE reminder, not one per channel.
 async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startAt = null }) {
   const template = await Template.findById(templateId);
   if (!template) throw new Error('Template not found');
@@ -26,6 +32,7 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
 
   const queued = [];
   const skipped = [];
+  const touchedLotIds = new Set();
 
   let cursor = startAt ? new Date(startAt) : new Date();
 
@@ -87,15 +94,21 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
       const jitter = randomBetween(pacing.minSec, pacing.maxSec);
       cursor = new Date(cursor.getTime() + jitter * 1000);
     }
-    // Reminder count is per-lot, not per-recipient: bump it once per
-    // enqueue-round if anything actually got queued. Multiple buyers in the
-    // same lot all share the same "reminder #N".
     if (queuedThisLot > 0) {
-      lot.reminderCount += 1;
-      await lot.save();
+      touchedLotIds.add(String(lot._id));
     }
   }
-  return { queued, skipped };
+  return { queued, skipped, touchedLotIds: Array.from(touchedLotIds) };
 }
 
-module.exports = { enqueueBroadcast, randomBetween };
+// Bump lot.reminderCount by 1 for each lot in the list. Idempotency is the
+// caller's responsibility — typically you union touchedLotIds across every
+// enqueueBroadcast call in a single user action and pass the deduped list
+// here once.
+async function bumpReminderCount(lotIds) {
+  if (!Array.isArray(lotIds) || lotIds.length === 0) return { matched: 0 };
+  const r = await Lot.updateMany({ _id: { $in: lotIds } }, { $inc: { reminderCount: 1 } });
+  return { matched: r.modifiedCount || r.nModified || 0 };
+}
+
+module.exports = { enqueueBroadcast, bumpReminderCount, randomBetween };

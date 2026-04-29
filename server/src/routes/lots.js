@@ -2,7 +2,7 @@ const express = require('express');
 const Lot = require('../models/Lot');
 const MessageLog = require('../models/MessageLog');
 const Outbox = require('../models/Outbox');
-const { enqueueBroadcast } = require('../services/enqueue');
+const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
 
 const router = express.Router();
 
@@ -32,6 +32,19 @@ router.get('/', async (req, res) => {
     .sort({ updatedAt: -1 })
     .limit(Math.min(Number(limit) || 200, 1000))
     .lean();
+
+  // Attach per-lot count of currently-pending Outbox rows so the board can
+  // surface "X queued" without a second round-trip.
+  if (lots.length) {
+    const lotIds = lots.map((l) => l._id);
+    const counts = await Outbox.aggregate([
+      { $match: { lot: { $in: lotIds }, status: { $in: ['pending', 'sending'] } } },
+      { $group: { _id: '$lot', n: { $sum: 1 } } },
+    ]);
+    const map = new Map(counts.map((c) => [String(c._id), c.n]));
+    for (const l of lots) l.pendingMessages = map.get(String(l._id)) || 0;
+  }
+
   res.json(lots);
 });
 
@@ -122,6 +135,7 @@ router.post('/:id/send', async (req, res) => {
   const { templateId } = req.body || {};
   if (!templateId) return res.status(400).json({ error: 'templateId_required' });
   const result = await enqueueBroadcast({ lotIds: [req.params.id], templateId });
+  await bumpReminderCount(result.touchedLotIds);
   res.json(result);
 });
 

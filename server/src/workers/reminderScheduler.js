@@ -3,7 +3,7 @@ const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
 const Template = require('../models/Template');
 const Outbox = require('../models/Outbox');
-const { enqueueBroadcast } = require('../services/enqueue');
+const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
 
 // Hourly: find lots that have been manually contacted at least once and are
 // past their next-reminder due date. Pacing, interval, and max are all read
@@ -49,16 +49,20 @@ async function runOnce() {
   if (!filtered.length) return { scanned: due.length, enqueued: 0 };
 
   let totalEnqueued = 0;
+  const touched = new Set();
   if (emailTpl) {
     const r = await enqueueBroadcast({ lotIds: filtered, templateId: emailTpl._id, isReminder: true });
     totalEnqueued += r.queued.length;
+    for (const id of r.touchedLotIds) touched.add(id);
   }
   if (smsTpl) {
     const r = await enqueueBroadcast({ lotIds: filtered, templateId: smsTpl._id, isReminder: true });
     totalEnqueued += r.queued.length;
+    for (const id of r.touchedLotIds) touched.add(id);
   }
+  await bumpReminderCount(Array.from(touched));
   if (totalEnqueued) {
-    console.log(`[reminders] scanned ${due.length} due lots, enqueued ${totalEnqueued} messages`);
+    console.log(`[reminders] scanned ${due.length} due lots, enqueued ${totalEnqueued} messages across ${touched.size} lots`);
   }
   return { scanned: due.length, enqueued: totalEnqueued };
 }
