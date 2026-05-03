@@ -310,6 +310,11 @@ export default function Settings() {
     load();
   }
 
+  async function toggleEmailImportance() {
+    await api.post('/api/settings/email-importance', { enabled: !s.emailHighImportance });
+    load();
+  }
+
   async function testSmtp() {
     setMsg('');
     try {
@@ -392,6 +397,25 @@ export default function Settings() {
         </div>
         <div>
           Last check: <Health h={s.smtp.health} />
+        </div>
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <div className="muted" style={{ marginBottom: 6 }}>
+            High importance flag — when on, outgoing emails are tagged with{' '}
+            <span className="kbd">Importance: High</span> /{' '}
+            <span className="kbd">X-Priority: 1</span> so most clients show a red exclamation
+            marker.
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              onClick={toggleEmailImportance}
+              className={s.emailHighImportance ? '' : 'secondary'}
+            >
+              {s.emailHighImportance ? 'Disable high importance' : 'Enable high importance'}
+            </button>
+            <span className={`badge ${s.emailHighImportance ? 'ok' : ''}`}>
+              {s.emailHighImportance ? 'on' : 'off'}
+            </span>
+          </div>
         </div>
         <div className="row" style={{ marginTop: 10 }}>
           <div>

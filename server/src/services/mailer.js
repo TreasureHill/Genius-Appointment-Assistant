@@ -26,16 +26,26 @@ async function verifySmtp() {
   }
 }
 
-async function sendEmail({ to, subject, html, text }) {
+async function sendEmail({ to, subject, html, text, highImportance }) {
   const t = getTransporter();
   if (!t) throw new Error('SMTP not configured');
-  const info = await t.sendMail({
+  const message = {
     from: env.smtp.from,
     to,
     subject,
     html: html || undefined,
     text: text || stripHtml(html || ''),
-  });
+  };
+  if (highImportance) {
+    message.priority = 'high';
+    message.headers = {
+      ...(message.headers || {}),
+      'X-Priority': '1 (Highest)',
+      'X-MSMail-Priority': 'High',
+      Importance: 'High',
+    };
+  }
+  const info = await t.sendMail(message);
   return { messageId: info.messageId };
 }
 
