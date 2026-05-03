@@ -89,6 +89,7 @@ async function drainOnce() {
             subject: claimed.renderedSubject,
             html: claimed.renderedBody,
             text: claimed.renderedText,
+            highImportance: !!setting.emailHighImportance,
           });
           providerId = info.messageId;
         } else {

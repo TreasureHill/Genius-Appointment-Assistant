@@ -24,8 +24,17 @@ router.get('/', async (req, res) => {
     twilio: { configured: env.twilio.configured, from: env.twilio.from, health: s.twilioHealth },
     calendly: { configured: env.calendly.configured, health: s.calendlyHealth, lastSync: s.lastCalendlySync },
     senderPaused: s.senderPaused,
+    emailHighImportance: !!s.emailHighImportance,
     defaults: env.defaults,
   });
+});
+
+router.post('/email-importance', async (req, res) => {
+  const { enabled } = req.body || {};
+  const s = await Setting.getSingleton();
+  s.emailHighImportance = Boolean(enabled);
+  await s.save();
+  res.json({ emailHighImportance: s.emailHighImportance });
 });
 
 router.patch('/owner', async (req, res) => {
@@ -87,6 +96,7 @@ router.post('/test/smtp', async (req, res) => {
         subject: 'Genius test email',
         html: '<p>This is a test from the Genius Appointment Assistant.</p>',
         text: 'This is a test from the Genius Appointment Assistant.',
+        highImportance: !!s.emailHighImportance,
       });
       return res.json({ ok: true, message: verify.message, messageId });
     } catch (err) {
