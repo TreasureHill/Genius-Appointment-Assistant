@@ -53,19 +53,16 @@ async function drainOnce() {
 
       // Guard rails — pacing/limits/quiet hours all live on the global Setting
       const sched = setting.schedule || {};
-      const maxReminders = sched.maxReminders ?? 3;
       if (Lot.STOP_STATUSES.includes(lot.status)) {
         claimed.status = 'cancelled';
         claimed.lastError = `lot status=${lot.status}`;
         await claimed.save();
         continue;
       }
-      if (lot.reminderCount >= maxReminders) {
-        claimed.status = 'cancelled';
-        claimed.lastError = `max reminders reached`;
-        await claimed.save();
-        continue;
-      }
+      // Note: max-reminders cap is enforced at enqueue time. We do NOT re-check
+      // it here because lot.reminderCount is bumped immediately after enqueue,
+      // so by the time the worker runs the counter already reflects this very
+      // round and would falsely look over-quota.
       const buyer = lot.buyers[claimed.buyerIndex];
       if (!buyer || buyer.optedOut) {
         claimed.status = 'cancelled';
