@@ -95,7 +95,8 @@ export default function Reports() {
         <div>
           <h1 style={{ margin: 0 }}>Reports</h1>
           <div className="muted" style={{ fontSize: 13 }}>
-            Lot status across every project. Export an Excel report broken down by status.
+            Lot status across every project. Export an Excel report with current status, all
+            Calendly appointments, and upcoming vs past bookings on dedicated sheets.
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>

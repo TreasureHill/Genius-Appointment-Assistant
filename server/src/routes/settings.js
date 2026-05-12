@@ -24,6 +24,7 @@ router.get('/', async (req, res) => {
     twilio: { configured: env.twilio.configured, from: env.twilio.from, health: s.twilioHealth },
     calendly: { configured: env.calendly.configured, health: s.calendlyHealth, lastSync: s.lastCalendlySync },
     senderPaused: s.senderPaused,
+    remindersPaused: !!s.remindersPaused,
     emailHighImportance: !!s.emailHighImportance,
     defaults: env.defaults,
   });
@@ -80,6 +81,14 @@ router.post('/pause', async (req, res) => {
   s.senderPaused = Boolean(paused);
   await s.save();
   res.json({ senderPaused: s.senderPaused });
+});
+
+router.post('/reminders/pause', async (req, res) => {
+  const { paused } = req.body || {};
+  const s = await Setting.getSingleton();
+  s.remindersPaused = Boolean(paused);
+  await s.save();
+  res.json({ remindersPaused: s.remindersPaused });
 });
 
 router.post('/test/smtp', async (req, res) => {

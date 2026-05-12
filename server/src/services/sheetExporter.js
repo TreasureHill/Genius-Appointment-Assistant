@@ -194,6 +194,79 @@ function buildStatusReport(perProject, lotsByProject) {
   detailWs['!cols'] = detailHeaders.map(() => ({ wch: 20 }));
   XLSX.utils.book_append_sheet(wb, detailWs, 'All Lots');
 
+  // Appointments / Calendly bookings — only lots with a synced event, ordered
+  // by start time so upcoming bookings sit at the top.
+  const apptHeaders = [
+    'Project',
+    'Lot #',
+    'Lot Status',
+    'Appointment',
+    'Start Time',
+    'End Time',
+    'Booking Status',
+    'Invitee',
+    'Invitee Email',
+    'Buyer Match',
+    'Location',
+    'Buyer',
+    'Buyer Email',
+    'Buyer Phone',
+    'Reschedule URL',
+    'Cancel URL',
+    'Last Synced',
+  ];
+  const withAppts = lotsByProject
+    .filter((l) => l.calendlyEvent && (l.calendlyEvent.name || l.calendlyEvent.startTime))
+    .sort((a, b) => {
+      const ax = a.calendlyEvent?.startTime ? new Date(a.calendlyEvent.startTime).getTime() : 0;
+      const bx = b.calendlyEvent?.startTime ? new Date(b.calendlyEvent.startTime).getTime() : 0;
+      return bx - ax;
+    });
+  const apptRows = [apptHeaders];
+  for (const lot of withAppts) {
+    const projectName = lot.project?.name || '';
+    const byRole = (role) => (lot.buyers || []).find((x) => x.role === role) || {};
+    const buyer = byRole('buyer');
+    const ev = lot.calendlyEvent || {};
+    apptRows.push([
+      projectName,
+      lot.lotNumber || '',
+      lot.status || '',
+      ev.name || '',
+      ev.startTime ? new Date(ev.startTime).toLocaleString() : '',
+      ev.endTime ? new Date(ev.endTime).toLocaleString() : '',
+      ev.inviteeStatus || '',
+      ev.inviteeName || '',
+      ev.inviteeEmail || '',
+      ev.matchedBuyerRole || '',
+      ev.location || '',
+      buyer.name || '',
+      buyer.email || '',
+      buyer.phone || '',
+      ev.rescheduleUrl || '',
+      ev.cancelUrl || '',
+      ev.lastSyncedAt ? new Date(ev.lastSyncedAt).toLocaleString() : '',
+    ]);
+  }
+  const apptWs = XLSX.utils.aoa_to_sheet(apptRows);
+  apptWs['!cols'] = apptHeaders.map(() => ({ wch: 22 }));
+  XLSX.utils.book_append_sheet(wb, apptWs, 'Appointments');
+
+  // Upcoming vs past split for at-a-glance planning
+  const nowMs = Date.now();
+  const splitSheet = (label, rows) => {
+    const sheet = XLSX.utils.aoa_to_sheet([apptHeaders, ...rows]);
+    sheet['!cols'] = apptHeaders.map(() => ({ wch: 22 }));
+    XLSX.utils.book_append_sheet(wb, sheet, label);
+  };
+  const upcoming = apptRows
+    .slice(1)
+    .filter((r) => r[4] && new Date(r[4]).getTime() >= nowMs)
+    .sort((a, b) => new Date(a[4]).getTime() - new Date(b[4]).getTime());
+  const past = apptRows.slice(1).filter((r) => r[4] && new Date(r[4]).getTime() < nowMs);
+  splitSheet('Upcoming', upcoming);
+  splitSheet('Past', past);
+
   // One sheet per status for easy filtering by stakeholders
   for (const status of ['pending', 'contacted', 'scheduled', 'opted_out']) {
     const subset = lotsByProject.filter((l) => l.status === status);

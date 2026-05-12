@@ -10,6 +10,7 @@ const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
 // from the global Setting singleton (single-owner system).
 async function runOnce() {
   const setting = await Setting.getSingleton();
+  if (setting.remindersPaused) return { scanned: 0, enqueued: 0, reason: 'reminders_paused' };
   const sched = setting.schedule || {};
   const intervalDays = sched.reminderIntervalDays ?? 14;
   const maxReminders = sched.maxReminders ?? 3;
