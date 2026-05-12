@@ -30,7 +30,9 @@ async function drainOnce() {
     if (setting.senderPaused) return;
 
     const now = new Date();
-    const batch = await Outbox.find({ status: 'pending', sendAfter: { $lte: now } })
+    const pendingFilter = { status: 'pending', sendAfter: { $lte: now } };
+    if (setting.remindersPaused) pendingFilter.isReminder = { $ne: true };
+    const batch = await Outbox.find(pendingFilter)
       .sort({ sendAfter: 1 })
       .limit(20);
 

@@ -44,6 +44,7 @@ const SettingSchema = new mongoose.Schema(
     },
     lastCalendlySync: { type: Date, default: null },
     senderPaused: { type: Boolean, default: false },
+    remindersPaused: { type: Boolean, default: false },
     emailHighImportance: { type: Boolean, default: false },
   },
   { timestamps: true }

@@ -310,6 +310,11 @@ export default function Settings() {
     load();
   }
 
+  async function toggleRemindersPause() {
+    await api.post('/api/settings/reminders/pause', { paused: !s.remindersPaused });
+    load();
+  }
+
   async function toggleEmailImportance() {
     await api.post('/api/settings/email-importance', { enabled: !s.emailHighImportance });
     load();
@@ -387,6 +392,24 @@ export default function Settings() {
         <button onClick={togglePause} className={s.senderPaused ? '' : 'secondary'}>
           {s.senderPaused ? 'Resume sending' : 'Pause sending'}
         </button>
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+          <div className="muted" style={{ marginBottom: 6 }}>
+            Master reminder switch — when on, the hourly scheduler stops queuing new reminders and
+            any reminders already sitting in the outbox are skipped. Manual one-off sends from the
+            Board still go through.
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button
+              onClick={toggleRemindersPause}
+              className={s.remindersPaused ? '' : 'secondary'}
+            >
+              {s.remindersPaused ? 'Resume reminders' : 'Stop all reminders'}
+            </button>
+            <span className={`badge ${s.remindersPaused ? 'err' : 'ok'}`}>
+              {s.remindersPaused ? 'paused' : 'active'}
+            </span>
+          </div>
+        </div>
       </div>
 
       <div className="card">
