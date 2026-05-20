@@ -516,7 +516,8 @@ export default function Settings() {
           <li>Max reminders per lot: {s.defaults.maxReminders}</li>
         </ul>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Per-project overrides live on each project's settings panel.
+          Per-project default template overrides live on each project's detail page — when set,
+          they take priority over the system-wide defaults above.
         </p>
       </div>
     </div>

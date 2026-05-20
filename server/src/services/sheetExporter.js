@@ -114,11 +114,12 @@ function buildStatusReport(perProject, lotsByProject) {
     'Pending',
     'Contacted',
     'Scheduled',
+    'Completed',
     'Opted Out',
     '% Scheduled',
   ];
   const summaryRows = [summaryHeaders];
-  let grand = { total: 0, pending: 0, contacted: 0, scheduled: 0, opted_out: 0 };
+  let grand = { total: 0, pending: 0, contacted: 0, scheduled: 0, completed: 0, opted_out: 0 };
   for (const p of perProject) {
     const s = p.byStatus || {};
     const total = p.totalLots || 0;
@@ -128,6 +129,7 @@ function buildStatusReport(perProject, lotsByProject) {
       s.pending || 0,
       s.contacted || 0,
       s.scheduled || 0,
+      s.completed || 0,
       s.opted_out || 0,
       total ? Math.round(((s.scheduled || 0) / total) * 100) + '%' : '0%',
     ]);
@@ -135,6 +137,7 @@ function buildStatusReport(perProject, lotsByProject) {
     grand.pending += s.pending || 0;
     grand.contacted += s.contacted || 0;
     grand.scheduled += s.scheduled || 0;
+    grand.completed += s.completed || 0;
     grand.opted_out += s.opted_out || 0;
   }
   summaryRows.push([
@@ -143,6 +146,7 @@ function buildStatusReport(perProject, lotsByProject) {
     grand.pending,
     grand.contacted,
     grand.scheduled,
+    grand.completed,
     grand.opted_out,
     grand.total ? Math.round((grand.scheduled / grand.total) * 100) + '%' : '0%',
   ]);
@@ -268,7 +272,7 @@ function buildStatusReport(perProject, lotsByProject) {
   splitSheet('Past', past);
 
   // One sheet per status for easy filtering by stakeholders
-  for (const status of ['pending', 'contacted', 'scheduled', 'opted_out']) {
+  for (const status of ['pending', 'contacted', 'scheduled', 'completed', 'opted_out']) {
     const subset = lotsByProject.filter((l) => l.status === status);
     const rows = [detailHeaders];
     for (const lot of subset) {

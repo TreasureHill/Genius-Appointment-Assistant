@@ -36,9 +36,16 @@ router.get('/:id', async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-  const allowed = ['name', 'description', 'active'];
+  const allowed = ['name', 'description', 'active', 'defaultEmailTemplate', 'defaultSmsTemplate'];
   const update = {};
-  for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+  for (const k of allowed) if (k in req.body) {
+    const v = req.body[k];
+    if ((k === 'defaultEmailTemplate' || k === 'defaultSmsTemplate') && (v === '' || v === undefined)) {
+      update[k] = null;
+    } else {
+      update[k] = v;
+    }
+  }
   const project = await Project.findByIdAndUpdate(req.params.id, update, { new: true });
   if (!project) return res.status(404).json({ error: 'not_found' });
   res.json(project);

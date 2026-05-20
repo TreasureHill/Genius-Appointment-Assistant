@@ -5,10 +5,11 @@ const STATUS_LABELS = {
   pending: 'Pending',
   contacted: 'Contacted',
   scheduled: 'Scheduled',
+  completed: 'Completed',
   opted_out: 'Opted out',
 };
 
-const STATUS_KEYS = ['pending', 'contacted', 'scheduled', 'opted_out'];
+const STATUS_KEYS = ['pending', 'contacted', 'scheduled', 'completed', 'opted_out'];
 
 function StatusBar({ byStatus, total }) {
   if (!total) return <div className="muted" style={{ fontSize: 12 }}>no lots</div>;

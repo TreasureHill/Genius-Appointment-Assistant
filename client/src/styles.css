@@ -375,6 +375,10 @@ tbody tr:last-child td {
   background: #dbeafe;
   color: #1e40af;
 }
+.badge.completed {
+  background: #e2e8f0;
+  color: #334155;
+}
 .badge.opted_out {
   background: var(--danger-soft);
   color: #991b1b;
@@ -600,6 +604,9 @@ tbody tr:last-child td {
 .seg-scheduled {
   background: #2563eb;
 }
+.seg-completed {
+  background: #64748b;
+}
 .seg-opted_out {
   background: #dc2626;
 }
@@ -624,4 +631,46 @@ tbody tr:last-child td {
   .main {
     padding: 16px;
   }
+}
+
+/* Searchable select (combobox) */
+.searchable-select {
+  position: relative;
+  width: 100%;
+}
+.searchable-select input {
+  cursor: text;
+}
+.searchable-select.is-disabled input {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+.searchable-select-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  z-index: 20;
+}
+.searchable-select-option {
+  padding: 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.searchable-select-option.is-highlight {
+  background: #eef2ff;
+}
+.searchable-select-option.is-selected {
+  font-weight: 600;
+}
+.searchable-select-empty {
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-style: italic;
 }

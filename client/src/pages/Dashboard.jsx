@@ -83,7 +83,7 @@ export default function Dashboard() {
 
       <h2>Lots by status</h2>
       <div className="tiles">
-        {['pending', 'contacted', 'scheduled', 'opted_out'].map((s) => (
+        {['pending', 'contacted', 'scheduled', 'completed', 'opted_out'].map((s) => (
           <Tile
             key={s}
             label={s.replace('_', ' ')}
@@ -210,6 +210,7 @@ export default function Dashboard() {
               <th>Pending</th>
               <th>Contacted</th>
               <th>Scheduled</th>
+              <th>Completed</th>
               <th>Opted out</th>
               <th style={{ minWidth: 120 }}>Mix</th>
             </tr>
@@ -227,12 +228,14 @@ export default function Dashboard() {
                   <td>{p.byStatus.pending}</td>
                   <td>{p.byStatus.contacted}</td>
                   <td>{p.byStatus.scheduled}</td>
+                  <td>{p.byStatus.completed || 0}</td>
                   <td>{p.byStatus.opted_out}</td>
                   <td>
                     <div className="mini-bar">
                       <span className="seg-pending" style={{ width: `${seg('pending')}%` }} />
                       <span className="seg-contacted" style={{ width: `${seg('contacted')}%` }} />
                       <span className="seg-scheduled" style={{ width: `${seg('scheduled')}%` }} />
+                      <span className="seg-completed" style={{ width: `${seg('completed')}%` }} />
                       <span className="seg-opted_out" style={{ width: `${seg('opted_out')}%` }} />
                     </div>
                   </td>

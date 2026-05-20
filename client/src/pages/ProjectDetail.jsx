@@ -6,17 +6,26 @@ export default function ProjectDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const [project, setProject] = useState(null);
+  const [templates, setTemplates] = useState([]);
   const [lotCount, setLotCount] = useState(0);
   const [saved, setSaved] = useState('');
   const [err, setErr] = useState('');
+  const [tplEmail, setTplEmail] = useState('');
+  const [tplSms, setTplSms] = useState('');
+  const [tplSaved, setTplSaved] = useState('');
+  const [tplErr, setTplErr] = useState('');
 
   async function load() {
-    const [p, lots] = await Promise.all([
+    const [p, lots, tpls] = await Promise.all([
       api.get(`/api/projects/${id}`),
       api.get(`/api/lots?project=${id}&limit=500`),
+      api.get('/api/templates'),
     ]);
     setProject(p);
     setLotCount(lots.length);
+    setTemplates(tpls);
+    setTplEmail(p.defaultEmailTemplate || '');
+    setTplSms(p.defaultSmsTemplate || '');
   }
 
   useEffect(() => {
@@ -37,6 +46,21 @@ export default function ProjectDetail() {
       setSaved('Saved.');
     } catch (ex) {
       setErr(ex.message);
+    }
+  }
+
+  async function saveTemplates() {
+    setTplSaved('');
+    setTplErr('');
+    try {
+      const updated = await api.patch(`/api/projects/${id}`, {
+        defaultEmailTemplate: tplEmail || null,
+        defaultSmsTemplate: tplSms || null,
+      });
+      setProject(updated);
+      setTplSaved('Saved.');
+    } catch (ex) {
+      setTplErr(ex.message);
     }
   }
 
@@ -62,6 +86,9 @@ export default function ProjectDetail() {
   }
 
   if (!project) return <div className="muted">Loading…</div>;
+
+  const emailTemplates = templates.filter((t) => t.type === 'email');
+  const smsTemplates = templates.filter((t) => t.type === 'sms');
 
   return (
     <div>
@@ -104,10 +131,47 @@ export default function ProjectDetail() {
       </div>
 
       <div className="card">
+        <h2 style={{ marginTop: 0 }}>Default templates</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Pick which email and SMS templates this project uses for "send defaults" and automatic
+          reminders. Leave blank to fall back to the system-wide defaults from{' '}
+          <Link to="/settings">Settings</Link>.
+        </p>
+        <div className="row">
+          <div>
+            <label>Default email template</label>
+            <select value={tplEmail} onChange={(e) => setTplEmail(e.target.value)}>
+              <option value="">— use system default —</option>
+              {emailTemplates.map((t) => (
+                <option key={t._id} value={t._id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label>Default SMS template</label>
+            <select value={tplSms} onChange={(e) => setTplSms(e.target.value)}>
+              <option value="">— use system default —</option>
+              {smsTemplates.map((t) => (
+                <option key={t._id} value={t._id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button onClick={saveTemplates}>Save templates</button>
+          {tplSaved && <span className="success">{tplSaved}</span>}
+          {tplErr && <span className="error">{tplErr}</span>}
+        </div>
+      </div>
+
+      <div className="card">
         <p className="muted" style={{ margin: 0 }}>
-          Pacing, reminder interval, max reminders, and default email/SMS templates are configured
-          system-wide on the <Link to="/settings">Settings</Link> page (this is a single-owner
-          system, so they apply to every project).
+          Pacing, reminder interval, max reminders, and quiet hours are configured system-wide on
+          the <Link to="/settings">Settings</Link> page.
         </p>
       </div>
 

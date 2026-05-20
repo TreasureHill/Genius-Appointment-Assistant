@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
+import SearchableSelect from '../components/SearchableSelect.jsx';
+
+function naturalCmp(a, b) {
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+}
 
 function MapRow({ entry, projects, onDone }) {
   const [projectId, setProjectId] = useState('');
@@ -16,8 +21,27 @@ function MapRow({ entry, projects, onDone }) {
       setLotId('');
       return;
     }
-    api.get(`/api/lots?project=${projectId}&limit=500`).then(setLots);
+    api.get(`/api/lots?project=${projectId}&limit=500`).then((list) => {
+      const sorted = [...list].sort((a, b) => naturalCmp(a.lotNumber, b.lotNumber));
+      setLots(sorted);
+    });
   }, [projectId]);
+
+  const projectOptions = useMemo(
+    () =>
+      [...projects]
+        .sort((a, b) => naturalCmp(a.name, b.name))
+        .map((p) => ({ value: p._id, label: p.name })),
+    [projects]
+  );
+  const lotOptions = useMemo(
+    () =>
+      lots.map((l) => ({
+        value: l._id,
+        label: `Lot ${l.lotNumber}${l.address ? ` — ${l.address}` : ''}`,
+      })),
+    [lots]
+  );
 
   async function submit() {
     if (!lotId) {
@@ -58,23 +82,19 @@ function MapRow({ entry, projects, onDone }) {
       <td>{entry.eventName}</td>
       <td style={{ minWidth: 420 }}>
         <div className="row" style={{ gap: 6 }}>
-          <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-            <option value="">Pick project…</option>
-            {projects.map((p) => (
-              <option key={p._id} value={p._id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <select value={lotId} onChange={(e) => setLotId(e.target.value)} disabled={!projectId}>
-            <option value="">Pick lot…</option>
-            {lots.map((l) => (
-              <option key={l._id} value={l._id}>
-                Lot {l.lotNumber}
-                {l.address ? ` — ${l.address}` : ''}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            value={projectId}
+            onChange={(v) => setProjectId(v)}
+            options={projectOptions}
+            placeholder="Pick project…"
+          />
+          <SearchableSelect
+            value={lotId}
+            onChange={(v) => setLotId(v)}
+            options={lotOptions}
+            placeholder="Pick lot…"
+            disabled={!projectId}
+          />
         </div>
         <label style={{ fontSize: 12, marginTop: 4 }}>
           <input type="checkbox" checked={addAsBuyer} onChange={(e) => setAddAsBuyer(e.target.checked)} />{' '}
@@ -143,7 +163,7 @@ export default function CalendlyEvents() {
       api.get('/api/projects'),
     ]);
     setRows(list);
-    setProjects(projs);
+    setProjects([...projs].sort((a, b) => naturalCmp(a.name, b.name)));
   }
   useEffect(() => {
     load();

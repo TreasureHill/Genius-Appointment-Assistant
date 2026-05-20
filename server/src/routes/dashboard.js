@@ -76,6 +76,9 @@ router.get('/', async (req, res) => {
             scheduled: {
               $size: { $filter: { input: '$lots', cond: { $eq: ['$$this.status', 'scheduled'] } } },
             },
+            completed: {
+              $size: { $filter: { input: '$lots', cond: { $eq: ['$$this.status', 'completed'] } } },
+            },
             opted_out: {
               $size: { $filter: { input: '$lots', cond: { $eq: ['$$this.status', 'opted_out'] } } },
             },

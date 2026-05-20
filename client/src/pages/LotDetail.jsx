@@ -8,7 +8,7 @@ const ROLES = [
   { key: 'coBuyer', label: 'Co-buyer' },
   { key: 'thirdBuyer', label: 'Third buyer' },
 ];
-const STATUSES = ['pending', 'contacted', 'scheduled', 'opted_out'];
+const STATUSES = ['pending', 'contacted', 'scheduled', 'completed', 'opted_out'];
 
 function emptyBuyer(role) {
   return { role, name: '', email: '', phone: '', optedOut: false };
