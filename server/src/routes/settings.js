@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
       reminderIntervalDays: sched.reminderIntervalDays ?? env.defaults.reminderDays,
       maxReminders: sched.maxReminders ?? env.defaults.maxReminders,
       pacing: sched.pacing || { minSec: env.defaults.pacingMin, maxSec: env.defaults.pacingMax },
-      quietHours: sched.quietHours || { enabled: false, start: '21:00', end: '08:00' },
+      sendWindows: sched.sendWindows || null,
       defaultEmailTemplate: sched.defaultEmailTemplate || null,
       defaultSmsTemplate: sched.defaultSmsTemplate || null,
     },
@@ -51,8 +51,10 @@ router.patch('/owner', async (req, res) => {
   res.json(s.owner);
 });
 
+const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+
 router.patch('/schedule', async (req, res) => {
-  const { reminderIntervalDays, maxReminders, pacing, quietHours, defaultEmailTemplate, defaultSmsTemplate } =
+  const { reminderIntervalDays, maxReminders, pacing, sendWindows, defaultEmailTemplate, defaultSmsTemplate } =
     req.body || {};
   const s = await Setting.getSingleton();
   s.schedule = s.schedule || {};
@@ -63,11 +65,16 @@ router.patch('/schedule', async (req, res) => {
     if (pacing.minSec != null) s.schedule.pacing.minSec = Number(pacing.minSec);
     if (pacing.maxSec != null) s.schedule.pacing.maxSec = Number(pacing.maxSec);
   }
-  if (quietHours) {
-    s.schedule.quietHours = s.schedule.quietHours || {};
-    if (quietHours.enabled != null) s.schedule.quietHours.enabled = Boolean(quietHours.enabled);
-    if (quietHours.start != null) s.schedule.quietHours.start = quietHours.start;
-    if (quietHours.end != null) s.schedule.quietHours.end = quietHours.end;
+  if (sendWindows && typeof sendWindows === 'object') {
+    s.schedule.sendWindows = s.schedule.sendWindows || {};
+    for (const day of DAY_KEYS) {
+      const incoming = sendWindows[day];
+      if (!incoming) continue;
+      s.schedule.sendWindows[day] = s.schedule.sendWindows[day] || {};
+      if (incoming.enabled != null) s.schedule.sendWindows[day].enabled = Boolean(incoming.enabled);
+      if (incoming.start != null) s.schedule.sendWindows[day].start = String(incoming.start);
+      if (incoming.end != null) s.schedule.sendWindows[day].end = String(incoming.end);
+    }
   }
   if (defaultEmailTemplate !== undefined) s.schedule.defaultEmailTemplate = defaultEmailTemplate || null;
   if (defaultSmsTemplate !== undefined) s.schedule.defaultSmsTemplate = defaultSmsTemplate || null;

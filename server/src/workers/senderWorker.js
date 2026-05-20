@@ -4,23 +4,12 @@ const MessageLog = require('../models/MessageLog');
 const Setting = require('../models/Setting');
 const { sendEmail } = require('../services/mailer');
 const { sendSms } = require('../services/sms');
+const { isWithinSendWindow, nextSendOpening } = require('../services/sendWindow');
+const { logStatusChange } = require('../services/lotEventLogger');
 
 const POLL_MS = 10_000;
 let timer = null;
 let running = false;
-
-function inQuietHours(quietHours, now = new Date()) {
-  if (!quietHours?.enabled) return false;
-  const [sh, sm] = (quietHours.start || '').split(':').map((n) => Number(n));
-  const [eh, em] = (quietHours.end || '').split(':').map((n) => Number(n));
-  if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return false;
-  const mins = now.getHours() * 60 + now.getMinutes();
-  const startMins = sh * 60 + sm;
-  const endMins = eh * 60 + em;
-  // Quiet window can wrap midnight (e.g. 21:00 → 08:00)
-  if (startMins <= endMins) return mins >= startMins && mins < endMins;
-  return mins >= startMins || mins < endMins;
-}
 
 async function drainOnce() {
   if (running) return;
@@ -72,10 +61,12 @@ async function drainOnce() {
         await claimed.save();
         continue;
       }
-      if (inQuietHours(sched.quietHours, new Date())) {
-        // defer by 30 min
+      if (!isWithinSendWindow(sched.sendWindows, new Date())) {
+        // Defer to the next open window (next enabled weekday's start time).
+        // Falls back to a 30-minute nudge if every day is disabled.
+        const next = nextSendOpening(sched.sendWindows, new Date());
         claimed.status = 'pending';
-        claimed.sendAfter = new Date(Date.now() + 30 * 60 * 1000);
+        claimed.sendAfter = next || new Date(Date.now() + 30 * 60 * 1000);
         await claimed.save();
         continue;
       }
@@ -122,8 +113,19 @@ async function drainOnce() {
         lot.nextReminderAt = new Date(
           Date.now() + (sched.reminderIntervalDays || 14) * 24 * 60 * 60 * 1000
         );
-        if (lot.status === 'pending') lot.status = 'contacted';
+        const wasPending = lot.status === 'pending';
+        if (wasPending) lot.status = 'contacted';
         await lot.save();
+        if (wasPending) {
+          await logStatusChange({
+            lot,
+            project: lot.project._id,
+            fromStatus: 'pending',
+            toStatus: 'contacted',
+            actor: 'sender_worker',
+            message: `First send dispatched (${claimed.type}).`,
+          });
+        }
       } catch (err) {
         console.warn('[sender] send failed', err.message);
         const errMsg = err.message || String(err);

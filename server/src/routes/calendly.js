@@ -2,6 +2,7 @@ const express = require('express');
 const CalendlyUnmatch = require('../models/CalendlyUnmatch');
 const Lot = require('../models/Lot');
 const MessageLog = require('../models/MessageLog');
+const { logStatusChange } = require('../services/lotEventLogger');
 
 const router = express.Router();
 
@@ -49,6 +50,7 @@ router.post('/unmatched/:id/map', async (req, res) => {
     }
   }
 
+  const priorStatus = lot.status;
   if (lot.status !== 'scheduled') lot.status = 'scheduled';
   lot.calendlyEventUri = entry.eventUri || lot.calendlyEventUri;
   await lot.save();
@@ -57,6 +59,17 @@ router.post('/unmatched/:id/map', async (req, res) => {
   entry.mappedLot = lot._id;
   entry.mappedAt = new Date();
   await entry.save();
+
+  if (priorStatus !== 'scheduled') {
+    await logStatusChange({
+      lot,
+      project: lot.project._id,
+      fromStatus: priorStatus,
+      toStatus: 'scheduled',
+      actor: 'calendly_map',
+      message: `Manually mapped ${entry.inviteeEmail} to ${entry.eventName || 'Calendly event'}.`,
+    });
+  }
 
   await MessageLog.create({
     project: lot.project._id,

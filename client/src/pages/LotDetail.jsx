@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
@@ -8,10 +8,74 @@ const ROLES = [
   { key: 'coBuyer', label: 'Co-buyer' },
   { key: 'thirdBuyer', label: 'Third buyer' },
 ];
-const STATUSES = ['pending', 'contacted', 'scheduled', 'opted_out'];
+const STATUSES = ['pending', 'contacted', 'scheduled', 'completed', 'opted_out'];
+
+const ACTOR_LABELS = {
+  user: 'You',
+  sender_worker: 'Sender',
+  completion_worker: 'Auto-complete',
+  calendly_sync: 'Calendly sync',
+  calendly_map: 'Calendly mapping',
+  system: 'System',
+};
 
 function emptyBuyer(role) {
   return { role, name: '', email: '', phone: '', optedOut: false };
+}
+
+function buildTimeline(history, events) {
+  const items = [];
+  for (const h of history || []) {
+    let kind, icon, title, subtitle;
+    if (h.type === 'email') {
+      kind = 'email';
+      icon = '✉';
+      title = (h.direction === 'in' ? 'Email received' : 'Email sent') + (h.subject ? ` · ${h.subject}` : '');
+      subtitle = `${h.direction === 'in' ? 'from' : 'to'} ${h.to || '—'}`;
+    } else if (h.type === 'sms') {
+      kind = 'sms';
+      icon = '💬';
+      title = h.direction === 'in' ? 'SMS received' : 'SMS sent';
+      subtitle = `${h.direction === 'in' ? 'from' : 'to'} ${h.to || '—'}${h.body ? ' · ' + String(h.body).slice(0, 120) : ''}`;
+    } else if (h.type === 'calendly') {
+      kind = 'calendly';
+      icon = '📅';
+      title = h.subject || 'Calendly event';
+      subtitle = h.body ? String(h.body).slice(0, 200) : '';
+    } else {
+      kind = 'msg';
+      icon = '•';
+      title = h.subject || h.type;
+      subtitle = h.body ? String(h.body).slice(0, 200) : '';
+    }
+    items.push({
+      id: 'm-' + h._id,
+      at: h.createdAt,
+      kind,
+      icon,
+      title,
+      subtitle,
+      status: h.status,
+      error: h.error,
+      isReminder: h.isReminder,
+      reminderIndex: h.reminderIndex,
+    });
+  }
+  for (const e of events || []) {
+    if (e.type !== 'status_change') continue;
+    const actorLabel = ACTOR_LABELS[e.actor] || e.actor;
+    items.push({
+      id: 'e-' + e._id,
+      at: e.createdAt,
+      kind: 'status',
+      icon: '🔄',
+      title: `Status: ${(e.fromStatus || '—').replace('_', ' ')} → ${(e.toStatus || '—').replace('_', ' ')}`,
+      subtitle: `${actorLabel}${e.message ? ' · ' + e.message : ''}`,
+      toStatus: e.toStatus,
+    });
+  }
+  items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  return items;
 }
 
 export default function LotDetail() {
@@ -89,8 +153,13 @@ export default function LotDetail() {
     load();
   }
 
+  const timeline = useMemo(
+    () => (data ? buildTimeline(data.history || [], data.events || []) : []),
+    [data]
+  );
+
   if (!data) return <div className="muted">Loading…</div>;
-  const { lot, history, queued } = data;
+  const { lot, queued } = data;
   const calEvent = lot.calendlyEvent;
   const hasCalEvent = !!(calEvent && (calEvent.startTime || calEvent.name || calEvent.inviteeEmail));
 
@@ -350,52 +419,52 @@ export default function LotDetail() {
         </div>
       )}
 
-      <h2>History</h2>
-      <div className="card" style={{ padding: 0 }}>
-        <table>
-          <thead>
-            <tr>
-              <th>When</th>
-              <th>Type</th>
-              <th>Dir</th>
-              <th>To</th>
-              <th>Subject / body</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.map((h) => (
-              <tr key={h._id}>
-                <td className="nowrap">{new Date(h.createdAt).toLocaleString()}</td>
-                <td>{h.type}</td>
-                <td>{h.direction}</td>
-                <td>{h.to}</td>
-                <td>{h.subject || h.body?.slice(0, 100)}</td>
-                <td>
+      <h2>Activity timeline</h2>
+      <div className="card timeline-card">
+        {timeline.length === 0 && (
+          <div className="muted" style={{ textAlign: 'center', padding: 16 }}>
+            No activity yet.
+          </div>
+        )}
+        {timeline.map((item) => (
+          <div key={item.id} className={`timeline-item timeline-${item.kind}`}>
+            <div className="timeline-icon" aria-hidden>
+              {item.icon}
+            </div>
+            <div className="timeline-body">
+              <div className="timeline-title">
+                {item.title}
+                {item.kind === 'status' && item.toStatus && (
+                  <span className={`badge ${item.toStatus}`} style={{ marginLeft: 8 }}>
+                    {String(item.toStatus).replace('_', ' ')}
+                  </span>
+                )}
+                {item.isReminder && (
+                  <span className="badge contacted" style={{ marginLeft: 8 }}>
+                    reminder #{item.reminderIndex || 1}
+                  </span>
+                )}
+                {item.status && item.kind !== 'status' && (
                   <span
                     className={`badge ${
-                      h.status === 'sent' || h.status === 'received'
+                      item.status === 'sent' || item.status === 'received'
                         ? 'ok'
-                        : h.status === 'failed'
+                        : item.status === 'failed'
                           ? 'err'
                           : 'pending'
                     }`}
+                    style={{ marginLeft: 8 }}
                   >
-                    {h.status}
+                    {item.status}
                   </span>
-                  {h.error && <div className="error" style={{ fontSize: 11 }}>{h.error}</div>}
-                </td>
-              </tr>
-            ))}
-            {history.length === 0 && (
-              <tr>
-                <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>
-                  No messages yet.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                )}
+              </div>
+              {item.subtitle && <div className="timeline-sub muted">{item.subtitle}</div>}
+              {item.error && <div className="error" style={{ fontSize: 11 }}>{item.error}</div>}
+              <div className="timeline-when muted">{new Date(item.at).toLocaleString()}</div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
 
-const STATUSES = ['pending', 'contacted', 'scheduled', 'opted_out'];
+const STATUSES = ['pending', 'contacted', 'scheduled', 'completed', 'opted_out'];
 const ROLE_LABELS = { buyer: 'Buyer', coBuyer: 'Co-buyer', thirdBuyer: 'Third buyer' };
 
 function BuyerCell({ buyer }) {
@@ -121,7 +121,7 @@ export default function ProjectBoard() {
     : null;
 
   const byStatus = useMemo(() => {
-    const m = { pending: 0, contacted: 0, scheduled: 0, opted_out: 0 };
+    const m = { pending: 0, contacted: 0, scheduled: 0, completed: 0, opted_out: 0 };
     for (const l of lots) m[l.status] = (m[l.status] || 0) + 1;
     return m;
   }, [lots]);

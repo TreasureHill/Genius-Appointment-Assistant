@@ -19,10 +19,53 @@ const SettingSchema = new mongoose.Schema(
         minSec: { type: Number, default: env.defaults.pacingMin, min: 0 },
         maxSec: { type: Number, default: env.defaults.pacingMax, min: 0 },
       },
+      // Legacy "quiet hours" — replaced by sendWindows below. Kept on the
+      // schema so older documents don't lose data on read, but the sender
+      // worker no longer consults it.
       quietHours: {
         enabled: { type: Boolean, default: false },
         start: { type: String, default: '21:00' },
         end: { type: String, default: '08:00' },
+      },
+      // Per-day-of-week send windows. Reminders + queued sends only fire when
+      // the current weekday's window is enabled and the time falls inside it.
+      // Outside the window, sends defer to the next open window.
+      sendWindows: {
+        monday: {
+          enabled: { type: Boolean, default: true },
+          start: { type: String, default: '09:00' },
+          end: { type: String, default: '21:00' },
+        },
+        tuesday: {
+          enabled: { type: Boolean, default: true },
+          start: { type: String, default: '09:00' },
+          end: { type: String, default: '21:00' },
+        },
+        wednesday: {
+          enabled: { type: Boolean, default: true },
+          start: { type: String, default: '09:00' },
+          end: { type: String, default: '21:00' },
+        },
+        thursday: {
+          enabled: { type: Boolean, default: true },
+          start: { type: String, default: '09:00' },
+          end: { type: String, default: '21:00' },
+        },
+        friday: {
+          enabled: { type: Boolean, default: true },
+          start: { type: String, default: '09:00' },
+          end: { type: String, default: '21:00' },
+        },
+        saturday: {
+          enabled: { type: Boolean, default: true },
+          start: { type: String, default: '10:00' },
+          end: { type: String, default: '18:00' },
+        },
+        sunday: {
+          enabled: { type: Boolean, default: false },
+          start: { type: String, default: '10:00' },
+          end: { type: String, default: '18:00' },
+        },
       },
       defaultEmailTemplate: { type: mongoose.Schema.Types.ObjectId, ref: 'Template', default: null },
       defaultSmsTemplate: { type: mongoose.Schema.Types.ObjectId, ref: 'Template', default: null },

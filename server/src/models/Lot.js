@@ -11,7 +11,7 @@ const BuyerSchema = new mongoose.Schema(
   { _id: false }
 );
 
-const LOT_STATUSES = ['pending', 'contacted', 'scheduled', 'opted_out'];
+const LOT_STATUSES = ['pending', 'contacted', 'scheduled', 'completed', 'opted_out'];
 
 const LotSchema = new mongoose.Schema(
   {
@@ -51,6 +51,6 @@ LotSchema.index({ project: 1, lotNumber: 1 }, { unique: true });
 LotSchema.index({ 'buyers.email': 1 });
 
 LotSchema.statics.STATUSES = LOT_STATUSES;
-LotSchema.statics.STOP_STATUSES = ['scheduled', 'opted_out'];
+LotSchema.statics.STOP_STATUSES = ['scheduled', 'completed', 'opted_out'];
 
 module.exports = mongoose.model('Lot', LotSchema);

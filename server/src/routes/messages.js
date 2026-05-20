@@ -1,10 +1,9 @@
 const express = require('express');
 const MessageLog = require('../models/MessageLog');
 const Outbox = require('../models/Outbox');
-const Setting = require('../models/Setting');
-const Template = require('../models/Template');
 const Lot = require('../models/Lot');
 const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
+const { resolveDefaultsForProject } = require('../services/templateResolver');
 
 const router = express.Router();
 
@@ -68,58 +67,74 @@ router.post('/send', async (req, res) => {
   res.json(result);
 });
 
-// "Send defaults" — fires both the default email AND default SMS templates
-// (configured under Settings → Sending schedule) at every selected lot.
-// Pacing applies across the combined queue so email+SMS don't blast at once.
+// "Send defaults" — fires both the default email AND default SMS templates at
+// every selected lot. Templates resolve per project: project-level default
+// (set on the project page) takes priority, then system-wide Setting default,
+// then the isDefaultReminder fallback. Pacing applies across the combined
+// queue so email+SMS don't blast at once.
 // Filter:
-//   - { lotIds: [...] } sends to those specific lots
-//   - { projectId: '...', onlyPending: true } sends to every pending lot in
-//     a project (skipping contacted / scheduled / opted_out automatically)
+//   - { lotIds: [...] } sends to those specific lots (grouped by project for resolution)
+//   - { projectId: '...', onlyPending: true } sends to every pending lot in a
+//     project (skipping contacted / scheduled / completed / opted_out automatically)
 router.post('/send-defaults', async (req, res) => {
   const { lotIds, projectId, onlyPending = false } = req.body || {};
 
-  const setting = await Setting.getSingleton();
-  const sched = setting.schedule || {};
-  let emailTpl = null;
-  let smsTpl = null;
-  if (sched.defaultEmailTemplate) emailTpl = await Template.findById(sched.defaultEmailTemplate);
-  if (sched.defaultSmsTemplate) smsTpl = await Template.findById(sched.defaultSmsTemplate);
-  if (!emailTpl) emailTpl = await Template.findOne({ type: 'email', isDefaultReminder: true });
-  if (!smsTpl) smsTpl = await Template.findOne({ type: 'sms', isDefaultReminder: true });
-  if (!emailTpl && !smsTpl) {
-    return res
-      .status(400)
-      .json({ error: 'no_default_templates', message: 'Set default email + SMS templates in Settings first.' });
-  }
-
-  let targetLotIds = [];
+  // Gather target lots together with their project ids so we can resolve
+  // templates per-project.
+  let targetLots = [];
   if (Array.isArray(lotIds) && lotIds.length) {
-    targetLotIds = lotIds;
+    targetLots = await Lot.find({ _id: { $in: lotIds } }).select('_id project').lean();
   } else if (projectId) {
     const filter = { project: projectId };
     if (onlyPending) filter.status = 'pending';
-    const lots = await Lot.find(filter).select('_id').lean();
-    targetLotIds = lots.map((l) => l._id);
+    targetLots = await Lot.find(filter).select('_id project').lean();
   } else {
     return res.status(400).json({ error: 'lotIds_or_projectId_required' });
   }
-  if (!targetLotIds.length) return res.json({ queued: [], skipped: [], note: 'no lots matched' });
+  if (!targetLots.length) return res.json({ queued: [], skipped: [], note: 'no lots matched' });
+
+  // Group lots by their project id so each project picks up its own defaults.
+  const byProject = new Map();
+  for (const l of targetLots) {
+    const pid = String(l.project);
+    if (!byProject.has(pid)) byProject.set(pid, []);
+    byProject.get(pid).push(l._id);
+  }
 
   const queued = [];
   const skipped = [];
   const touched = new Set();
-  if (emailTpl) {
-    const r = await enqueueBroadcast({ lotIds: targetLotIds, templateId: emailTpl._id });
-    queued.push(...r.queued);
-    skipped.push(...r.skipped);
-    for (const id of r.touchedLotIds) touched.add(id);
+  const usedByProject = {};
+  let anyTemplateFound = false;
+
+  for (const [pid, ids] of byProject) {
+    const { emailTpl, smsTpl } = await resolveDefaultsForProject(pid);
+    if (!emailTpl && !smsTpl) continue;
+    anyTemplateFound = true;
+    usedByProject[pid] = {
+      email: emailTpl ? { id: String(emailTpl._id), name: emailTpl.name } : null,
+      sms: smsTpl ? { id: String(smsTpl._id), name: smsTpl.name } : null,
+    };
+    if (emailTpl) {
+      const r = await enqueueBroadcast({ lotIds: ids, templateId: emailTpl._id });
+      queued.push(...r.queued);
+      skipped.push(...r.skipped);
+      for (const id of r.touchedLotIds) touched.add(id);
+    }
+    if (smsTpl) {
+      const r = await enqueueBroadcast({ lotIds: ids, templateId: smsTpl._id });
+      queued.push(...r.queued);
+      skipped.push(...r.skipped);
+      for (const id of r.touchedLotIds) touched.add(id);
+    }
   }
-  if (smsTpl) {
-    const r = await enqueueBroadcast({ lotIds: targetLotIds, templateId: smsTpl._id });
-    queued.push(...r.queued);
-    skipped.push(...r.skipped);
-    for (const id of r.touchedLotIds) touched.add(id);
+
+  if (!anyTemplateFound) {
+    return res
+      .status(400)
+      .json({ error: 'no_default_templates', message: 'Set default email + SMS templates in Settings or on the project first.' });
   }
+
   // Single bump per lot per user action — email + SMS in one click counts as
   // ONE reminder for the lot, not two.
   await bumpReminderCount(Array.from(touched));
@@ -127,8 +142,7 @@ router.post('/send-defaults', async (req, res) => {
     queued,
     skipped,
     touchedLots: touched.size,
-    usedEmail: emailTpl ? { id: String(emailTpl._id), name: emailTpl.name } : null,
-    usedSms: smsTpl ? { id: String(smsTpl._id), name: smsTpl.name } : null,
+    usedByProject,
   });
 });
 
