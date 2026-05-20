@@ -1,20 +1,62 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 
+const DAY_DEFS = [
+  { key: 'monday', label: 'Monday' },
+  { key: 'tuesday', label: 'Tuesday' },
+  { key: 'wednesday', label: 'Wednesday' },
+  { key: 'thursday', label: 'Thursday' },
+  { key: 'friday', label: 'Friday' },
+  { key: 'saturday', label: 'Saturday' },
+  { key: 'sunday', label: 'Sunday' },
+];
+const DEFAULT_WINDOW = { enabled: true, start: '09:00', end: '21:00' };
+
+function normalizeSendWindows(sw) {
+  const out = {};
+  for (const { key } of DAY_DEFS) {
+    out[key] = {
+      enabled: sw?.[key]?.enabled ?? DEFAULT_WINDOW.enabled,
+      start: sw?.[key]?.start || DEFAULT_WINDOW.start,
+      end: sw?.[key]?.end || DEFAULT_WINDOW.end,
+    };
+  }
+  return out;
+}
+
+function nextSevenDays(sendWindows) {
+  const SUN_TO_SAT = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const out = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i);
+    const key = SUN_TO_SAT[d.getDay()];
+    out.push({ date: d, key, window: sendWindows[key] || DEFAULT_WINDOW });
+  }
+  return out;
+}
+
 function ScheduleCard({ schedule, templates, onSaved }) {
   const [form, setForm] = useState({
     reminderIntervalDays: schedule.reminderIntervalDays ?? 14,
     maxReminders: schedule.maxReminders ?? 3,
     pacingMin: schedule.pacing?.minSec ?? 30,
     pacingMax: schedule.pacing?.maxSec ?? 120,
-    quietEnabled: !!schedule.quietHours?.enabled,
-    quietStart: schedule.quietHours?.start || '21:00',
-    quietEnd: schedule.quietHours?.end || '08:00',
     defaultEmailTemplate: schedule.defaultEmailTemplate || '',
     defaultSmsTemplate: schedule.defaultSmsTemplate || '',
+    sendWindows: normalizeSendWindows(schedule.sendWindows),
   });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+
+  function setWindow(day, patch) {
+    setForm((f) => ({
+      ...f,
+      sendWindows: { ...f.sendWindows, [day]: { ...f.sendWindows[day], ...patch } },
+    }));
+  }
 
   async function save() {
     setBusy(true);
@@ -24,7 +66,7 @@ function ScheduleCard({ schedule, templates, onSaved }) {
         reminderIntervalDays: Number(form.reminderIntervalDays),
         maxReminders: Number(form.maxReminders),
         pacing: { minSec: Number(form.pacingMin), maxSec: Number(form.pacingMax) },
-        quietHours: { enabled: form.quietEnabled, start: form.quietStart, end: form.quietEnd },
+        sendWindows: form.sendWindows,
         defaultEmailTemplate: form.defaultEmailTemplate || null,
         defaultSmsTemplate: form.defaultSmsTemplate || null,
       });
@@ -36,6 +78,8 @@ function ScheduleCard({ schedule, templates, onSaved }) {
       setBusy(false);
     }
   }
+
+  const preview = nextSevenDays(form.sendWindows);
 
   return (
     <div className="card">
@@ -114,30 +158,69 @@ function ScheduleCard({ schedule, templates, onSaved }) {
             ))}
           </select>
         </div>
-        <div>
-          <label>
-            <input
-              type="checkbox"
-              checked={form.quietEnabled}
-              onChange={(e) => setForm({ ...form, quietEnabled: e.target.checked })}
-            />{' '}
-            Quiet hours (don't send between)
-          </label>
-          <div className="row">
-            <input
-              value={form.quietStart}
-              onChange={(e) => setForm({ ...form, quietStart: e.target.value })}
-              placeholder="21:00"
-            />
-            <input
-              value={form.quietEnd}
-              onChange={(e) => setForm({ ...form, quietEnd: e.target.value })}
-              placeholder="08:00"
-            />
-          </div>
+      </div>
+
+      <div style={{ marginTop: 18 }}>
+        <h3 style={{ marginBottom: 4 }}>Send windows</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Reminders + queued sends only fire on enabled days, inside the window. Outside the window,
+          messages defer to the next opening rather than dropping.
+        </p>
+        <div className="schedule-grid">
+          {DAY_DEFS.map(({ key, label }) => {
+            const w = form.sendWindows[key];
+            return (
+              <div key={key} className={`schedule-row${w.enabled ? '' : ' is-off'}`}>
+                <label className="schedule-day">
+                  <input
+                    type="checkbox"
+                    checked={w.enabled}
+                    onChange={(e) => setWindow(key, { enabled: e.target.checked })}
+                  />
+                  <span>{label}</span>
+                </label>
+                <input
+                  type="time"
+                  value={w.start}
+                  disabled={!w.enabled}
+                  onChange={(e) => setWindow(key, { start: e.target.value })}
+                />
+                <span className="muted">to</span>
+                <input
+                  type="time"
+                  value={w.end}
+                  disabled={!w.enabled}
+                  onChange={(e) => setWindow(key, { end: e.target.value })}
+                />
+                <span className="muted schedule-summary">
+                  {w.enabled ? `${w.start}–${w.end}` : 'no sending'}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
-      <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center' }}>
+
+      <div style={{ marginTop: 16 }}>
+        <h3 style={{ marginBottom: 4 }}>Next 7 days</h3>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Preview of when the sender worker will be allowed to dispatch.
+        </p>
+        <div className="schedule-preview">
+          {preview.map((d) => (
+            <div key={d.date.toISOString()} className={`schedule-preview-cell${d.window.enabled ? '' : ' is-off'}`}>
+              <div className="schedule-preview-day">
+                {d.date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+              </div>
+              <div className="schedule-preview-time">
+                {d.window.enabled ? `${d.window.start}–${d.window.end}` : '—'}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
         <button onClick={save} disabled={busy}>
           {busy ? 'Saving…' : 'Save schedule'}
         </button>

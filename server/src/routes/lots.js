@@ -1,8 +1,10 @@
 const express = require('express');
 const Lot = require('../models/Lot');
 const MessageLog = require('../models/MessageLog');
+const LotEvent = require('../models/LotEvent');
 const Outbox = require('../models/Outbox');
 const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
+const { logStatusChange } = require('../services/lotEventLogger');
 
 const router = express.Router();
 
@@ -51,14 +53,14 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const lot = await Lot.findById(req.params.id).populate('project');
   if (!lot) return res.status(404).json({ error: 'not_found' });
-  const history = await MessageLog.find({ lot: lot._id })
-    .sort({ createdAt: -1 })
-    .limit(100)
-    .lean();
-  const queued = await Outbox.find({ lot: lot._id, status: { $in: ['pending', 'sending'] } })
-    .sort({ sendAfter: 1 })
-    .lean();
-  res.json({ lot, history, queued });
+  const [history, queued, events] = await Promise.all([
+    MessageLog.find({ lot: lot._id }).sort({ createdAt: -1 }).limit(200).lean(),
+    Outbox.find({ lot: lot._id, status: { $in: ['pending', 'sending'] } })
+      .sort({ sendAfter: 1 })
+      .lean(),
+    LotEvent.find({ lot: lot._id }).sort({ createdAt: -1 }).limit(200).lean(),
+  ]);
+  res.json({ lot, history, queued, events });
 });
 
 router.post('/', async (req, res) => {
@@ -77,8 +79,23 @@ router.patch('/:id', async (req, res) => {
   const allowed = ['lotNumber', 'address', 'buyers', 'status', 'notes', 'reminderCount'];
   const update = {};
   for (const k of allowed) if (k in req.body) update[k] = req.body[k];
+
+  const before = await Lot.findById(req.params.id).select('status').lean();
+  if (!before) return res.status(404).json({ error: 'not_found' });
+
   const lot = await Lot.findByIdAndUpdate(req.params.id, update, { new: true }).populate('project');
   if (!lot) return res.status(404).json({ error: 'not_found' });
+
+  if ('status' in update && update.status !== before.status) {
+    await logStatusChange({
+      lot,
+      project: lot.project._id,
+      fromStatus: before.status,
+      toStatus: lot.status,
+      actor: 'user',
+      message: 'Status changed via lot editor.',
+    });
+  }
 
   // Cancel any pending outbox rows if lot is now stopped
   if (Lot.STOP_STATUSES.includes(lot.status)) {
@@ -93,8 +110,20 @@ router.patch('/:id', async (req, res) => {
 router.post('/:id/status', async (req, res) => {
   const { status } = req.body || {};
   if (!Lot.STATUSES.includes(status)) return res.status(400).json({ error: 'invalid_status' });
+  const before = await Lot.findById(req.params.id).select('status project').lean();
+  if (!before) return res.status(404).json({ error: 'not_found' });
   const lot = await Lot.findByIdAndUpdate(req.params.id, { status }, { new: true });
   if (!lot) return res.status(404).json({ error: 'not_found' });
+  if (status !== before.status) {
+    await logStatusChange({
+      lot,
+      project: before.project,
+      fromStatus: before.status,
+      toStatus: status,
+      actor: 'user',
+      message: 'Quick status change.',
+    });
+  }
   if (Lot.STOP_STATUSES.includes(status)) {
     await Outbox.updateMany(
       { lot: lot._id, status: 'pending' },

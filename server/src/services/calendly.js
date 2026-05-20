@@ -4,6 +4,7 @@ const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
 const MessageLog = require('../models/MessageLog');
 const CalendlyUnmatch = require('../models/CalendlyUnmatch');
+const { logStatusChange } = require('./lotEventLogger');
 
 const API_BASE = 'https://api.calendly.com';
 
@@ -150,6 +151,7 @@ async function syncAll() {
       const alreadyMatchedSameEvent =
         lot.calendlyEventUri && lot.calendlyEventUri === firstHit.eventUri;
 
+      const priorStatus = lot.status;
       if (lot.status !== 'scheduled') lot.status = 'scheduled';
       lot.calendlyEventUri = firstHit.eventUri || lot.calendlyEventUri;
       lot.calendlyWarning = multi
@@ -186,6 +188,16 @@ async function syncAll() {
           providerId: firstHit.eventUri,
           sentAt: new Date(),
         });
+        if (priorStatus !== 'scheduled') {
+          await logStatusChange({
+            lot,
+            project: lot.project,
+            fromStatus: priorStatus,
+            toStatus: 'scheduled',
+            actor: 'calendly_sync',
+            message: `Calendly auto-matched ${hits[0].email} to ${firstHit.eventName || 'event'}.`,
+          });
+        }
         matched.push({ lotId: String(lot._id), email: hits[0].email, multi });
       } else {
         reMatched.push({ lotId: String(lot._id), email: hits[0].email });
@@ -252,6 +264,7 @@ async function handleWebhook(payload) {
 
     const matchedRole = (lot.buyers.find((b) => (b.email || '').toLowerCase() === email) || {}).role || '';
 
+    const priorStatus = lot.status;
     if (lot.status !== 'scheduled') lot.status = 'scheduled';
     lot.calendlyEventUri = eventUri || lot.calendlyEventUri;
     lot.calendlyEvent = {
@@ -282,6 +295,16 @@ async function handleWebhook(payload) {
         providerId: eventUri,
         sentAt: new Date(),
       });
+      if (priorStatus !== 'scheduled') {
+        await logStatusChange({
+          lot,
+          project: lot.project,
+          fromStatus: priorStatus,
+          toStatus: 'scheduled',
+          actor: 'calendly_sync',
+          message: `Calendly webhook matched ${email}.`,
+        });
+      }
     }
   }
 
