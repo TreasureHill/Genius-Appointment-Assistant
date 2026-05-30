@@ -169,6 +169,20 @@ export default function ProjectBoard() {
     });
   }, [lots, filter]);
 
+  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l._id));
+  const someSelected = filtered.some((l) => selected.has(l._id));
+
+  // Drive the tri-state header checkbox: checked when every visible row is
+  // selected, indeterminate when only some are. NOTE: this hook must live
+  // ABOVE the early return below — React requires the same hooks to run on
+  // every render, and the "no projects" early return would otherwise skip it.
+  const selectAllRef = useRef(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = !allSelected && someSelected;
+    }
+  }, [allSelected, someSelected]);
+
   async function changeStatus(lot, status) {
     setBusyLotId(lot._id);
     try {
@@ -323,18 +337,6 @@ export default function ProjectBoard() {
       </div>
     );
   }
-
-  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l._id));
-  const someSelected = filtered.some((l) => selected.has(l._id));
-
-  // Drive the tri-state header checkbox: checked when every visible row is
-  // selected, indeterminate when only some are.
-  const selectAllRef = useRef(null);
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = !allSelected && someSelected;
-    }
-  }, [allSelected, someSelected]);
 
   return (
     <div>
