@@ -68,23 +68,35 @@ export default function ProjectBoard() {
   const [busyLotId, setBusyLotId] = useState(null);
   const [sendMsg, setSendMsg] = useState('');
   const [sending, setSending] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
-    api.get('/api/projects').then((list) => {
-      setProjects(list);
-      // Reconcile any saved selection (URL / localStorage) against the projects
-      // that actually exist. Without this, a deleted or stale project id leaves
-      // the board querying a phantom project — empty table, nothing highlighted,
-      // yet the header still claims "1/N selected".
-      setSelectedProjectIds((prev) => {
-        const valid = new Set(list.map((p) => p._id));
-        const pruned = new Set(Array.from(prev).filter((id) => valid.has(id)));
-        if (pruned.size > 0) return pruned;
-        // Nothing valid selected → default to the first project on a fresh visit.
-        return list.length ? new Set([list[0]._id]) : new Set();
-      });
-    });
-    api.get('/api/settings').then((s) => setMaxReminders(s.schedule?.maxReminders ?? null));
+    api
+      .get('/api/projects')
+      .then((list) => {
+        // Defend against a non-array payload (error envelope, proxy HTML, etc.):
+        // projects.map runs during render, so a bad shape here would otherwise
+        // throw and blank the page.
+        const arr = Array.isArray(list) ? list : [];
+        setProjects(arr);
+        setLoadError('');
+        // Reconcile any saved selection (URL / localStorage) against the projects
+        // that actually exist. Without this, a deleted or stale project id leaves
+        // the board querying a phantom project — empty table, nothing highlighted,
+        // yet the header still claims "1/N selected".
+        setSelectedProjectIds((prev) => {
+          const valid = new Set(arr.map((p) => p._id));
+          const pruned = new Set(Array.from(prev).filter((id) => valid.has(id)));
+          if (pruned.size > 0) return pruned;
+          // Nothing valid selected → default to the first project on a fresh visit.
+          return arr.length ? new Set([arr[0]._id]) : new Set();
+        });
+      })
+      .catch((e) => setLoadError('Could not load projects: ' + e.message));
+    api
+      .get('/api/settings')
+      .then((s) => setMaxReminders(s?.schedule?.maxReminders ?? null))
+      .catch(() => {});
   }, []);
 
   const selectedIdsKey = Array.from(selectedProjectIds).sort().join(',');
@@ -99,10 +111,17 @@ export default function ProjectBoard() {
     }
     localStorage.setItem('board:project', selectedIdsKey);
     setSearchParams({ project: selectedIdsKey }, { replace: true });
-    api.get(`/api/lots?projects=${selectedIdsKey}&limit=1000`).then((l) => {
-      setLots(l);
-      setSelected(new Set());
-    });
+    api
+      .get(`/api/lots?projects=${selectedIdsKey}&limit=1000`)
+      .then((l) => {
+        setLots(Array.isArray(l) ? l : []);
+        setSelected(new Set());
+        setLoadError('');
+      })
+      .catch((e) => {
+        setLots([]);
+        setLoadError('Could not load lots: ' + e.message);
+      });
   }, [selectedIdsKey]);
 
   function toggleProjectId(id) {
@@ -149,6 +168,20 @@ export default function ProjectBoard() {
       return true;
     });
   }, [lots, filter]);
+
+  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l._id));
+  const someSelected = filtered.some((l) => selected.has(l._id));
+
+  // Drive the tri-state header checkbox: checked when every visible row is
+  // selected, indeterminate when only some are. NOTE: this hook must live
+  // ABOVE the early return below — React requires the same hooks to run on
+  // every render, and the "no projects" early return would otherwise skip it.
+  const selectAllRef = useRef(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = !allSelected && someSelected;
+    }
+  }, [allSelected, someSelected]);
 
   async function changeStatus(lot, status) {
     setBusyLotId(lot._id);
@@ -305,18 +338,6 @@ export default function ProjectBoard() {
     );
   }
 
-  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l._id));
-  const someSelected = filtered.some((l) => selected.has(l._id));
-
-  // Drive the tri-state header checkbox: checked when every visible row is
-  // selected, indeterminate when only some are.
-  const selectAllRef = useRef(null);
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = !allSelected && someSelected;
-    }
-  }, [allSelected, someSelected]);
-
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -369,6 +390,12 @@ export default function ProjectBoard() {
           })}
         </div>
       </div>
+
+      {loadError && (
+        <div className="card alert alert-err" style={{ marginTop: 12 }}>
+          {loadError}
+        </div>
+      )}
 
       <div className="tiles" style={{ marginTop: 16 }}>
         <Tile
