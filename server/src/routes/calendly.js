@@ -7,19 +7,44 @@ const { logStatusChange } = require('../services/lotEventLogger');
 const router = express.Router();
 
 router.get('/unmatched', async (req, res) => {
-  const { status = 'unmatched', q, limit = 200 } = req.query;
+  const { status = 'unmatched', q } = req.query;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(200, Math.max(5, Number(req.query.pageSize) || 25));
+
   const filter = {};
   if (status !== 'all') filter.status = status;
   if (q) {
     const r = new RegExp(escapeRegex(q), 'i');
     filter.$or = [{ inviteeEmail: r }, { inviteeName: r }, { eventName: r }];
   }
-  const rows = await CalendlyUnmatch.find(filter)
-    .populate({ path: 'mappedLot', populate: { path: 'project', select: 'name' }, select: 'lotNumber' })
-    .sort({ lastSeenAt: -1 })
-    .limit(Math.min(Number(limit) || 200, 1000))
-    .lean();
-  res.json(rows);
+
+  // Sort by the field that matches what the tab is about: when it was resolved
+  // for mapped/ignored, when it was last seen by a sync for unmatched. (Sorting
+  // everything by lastSeenAt made the Mapped tab look arbitrary.)
+  const sort =
+    status === 'mapped'
+      ? { mappedAt: -1, updatedAt: -1 }
+      : status === 'ignored'
+        ? { updatedAt: -1 }
+        : { lastSeenAt: -1 };
+
+  const [items, total] = await Promise.all([
+    CalendlyUnmatch.find(filter)
+      .populate({ path: 'mappedLot', populate: { path: 'project', select: 'name' }, select: 'lotNumber' })
+      .sort(sort)
+      .skip((page - 1) * pageSize)
+      .limit(pageSize)
+      .lean(),
+    CalendlyUnmatch.countDocuments(filter),
+  ]);
+
+  res.json({
+    items,
+    total,
+    page,
+    pageSize,
+    pages: Math.max(1, Math.ceil(total / pageSize)),
+  });
 });
 
 router.post('/unmatched/:id/map', async (req, res) => {

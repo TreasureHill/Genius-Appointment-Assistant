@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import SearchableSelect from '../components/SearchableSelect.jsx';
+import Pagination from '../components/Pagination.jsx';
 
 function naturalCmp(a, b) {
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
@@ -154,20 +155,42 @@ export default function CalendlyEvents() {
   const [q, setQ] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [pages, setPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
 
   async function load() {
-    const qs = new URLSearchParams({ status: tab });
+    setLoading(true);
+    const qs = new URLSearchParams({ status: tab, page: String(page), pageSize: String(pageSize) });
     if (q) qs.set('q', q);
-    const [list, projs] = await Promise.all([
-      api.get(`/api/calendly/unmatched?${qs.toString()}`),
-      api.get('/api/projects'),
-    ]);
-    setRows(list);
-    setProjects([...projs].sort((a, b) => naturalCmp(a.name, b.name)));
+    try {
+      const [data, projs] = await Promise.all([
+        api.get(`/api/calendly/unmatched?${qs.toString()}`),
+        projects.length ? Promise.resolve(projects) : api.get('/api/projects'),
+      ]);
+      setRows(data.items || []);
+      setTotal(data.total || 0);
+      setPages(data.pages || 1);
+      if (!projects.length) setProjects([...projs].sort((a, b) => naturalCmp(a.name, b.name)));
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => {
     load();
-  }, [tab]);
+  }, [tab, page, pageSize]);
+
+  // Switching tab or searching always returns to page 1.
+  function switchTab(next) {
+    setTab(next);
+    setPage(1);
+  }
+  function search() {
+    if (page !== 1) setPage(1);
+    else load();
+  }
 
   async function syncNow() {
     setSyncing(true);
@@ -209,22 +232,22 @@ export default function CalendlyEvents() {
       </p>
 
       <div className="toolbar">
-        <button onClick={() => setTab('unmatched')} className={tab === 'unmatched' ? '' : 'secondary'}>
+        <button onClick={() => switchTab('unmatched')} className={tab === 'unmatched' ? '' : 'secondary'}>
           Unmatched
         </button>
-        <button onClick={() => setTab('mapped')} className={tab === 'mapped' ? '' : 'secondary'}>
+        <button onClick={() => switchTab('mapped')} className={tab === 'mapped' ? '' : 'secondary'}>
           Mapped
         </button>
-        <button onClick={() => setTab('ignored')} className={tab === 'ignored' ? '' : 'secondary'}>
+        <button onClick={() => switchTab('ignored')} className={tab === 'ignored' ? '' : 'secondary'}>
           Ignored
         </button>
         <input
           placeholder="Search email / name / event"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && load()}
+          onKeyDown={(e) => e.key === 'Enter' && search()}
         />
-        <button className="secondary" onClick={load}>
+        <button className="secondary" onClick={search}>
           Search
         </button>
         <div style={{ flex: 1 }} />
@@ -249,9 +272,11 @@ export default function CalendlyEvents() {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                  {tab === 'unmatched'
-                    ? 'Nothing unmatched right now. Click "Sync Calendly now" to refresh.'
-                    : `No ${tab} entries.`}
+                  {loading
+                    ? 'Loading…'
+                    : tab === 'unmatched'
+                      ? 'Nothing unmatched right now. Click "Sync Calendly now" to refresh.'
+                      : `No ${tab} entries.`}
                 </td>
               </tr>
             )}
@@ -265,6 +290,20 @@ export default function CalendlyEvents() {
           </tbody>
         </table>
       </div>
+
+      <Pagination
+        page={page}
+        pages={pages}
+        total={total}
+        pageSize={pageSize}
+        loading={loading}
+        noun="entries"
+        onPage={setPage}
+        onPageSize={(n) => {
+          setPageSize(n);
+          setPage(1);
+        }}
+      />
     </div>
   );
 }

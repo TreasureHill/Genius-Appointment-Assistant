@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
+import Pagination from '../components/Pagination.jsx';
 
 const STATUSES = ['pending', 'contacted', 'scheduled', 'completed', 'opted_out'];
 const ROLE_LABELS = { buyer: 'Buyer', coBuyer: 'Co-buyer', thirdBuyer: 'Third buyer' };
@@ -69,6 +70,8 @@ export default function ProjectBoard() {
   const [sendMsg, setSendMsg] = useState('');
   const [sending, setSending] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   useEffect(() => {
     api
@@ -169,8 +172,25 @@ export default function ProjectBoard() {
     });
   }, [lots, filter]);
 
-  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l._id));
-  const someSelected = filtered.some((l) => selected.has(l._id));
+  // Paginate the filtered rows client-side. The status tiles and bulk actions
+  // still operate on the full `lots` / `filtered` sets — only the rendered
+  // table is sliced, so big projects don't paint thousands of rows at once.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paged = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, currentPage, pageSize]);
+
+  // Snap back to page 1 whenever the filter or project selection changes, so a
+  // narrower result set never strands the user on an empty high page.
+  useEffect(() => {
+    setPage(1);
+  }, [filter.status, filter.q, selectedIdsKey]);
+
+  // Select-all / indeterminate reflect the CURRENT PAGE's rows.
+  const allSelected = paged.length > 0 && paged.every((l) => selected.has(l._id));
+  const someSelected = paged.some((l) => selected.has(l._id));
 
   // Drive the tri-state header checkbox: checked when every visible row is
   // selected, indeterminate when only some are. NOTE: this hook must live
@@ -234,19 +254,25 @@ export default function ProjectBoard() {
     setSelected(next);
   }
 
-  // Select-all operates on the *currently filtered* rows only, so it never
-  // silently selects (or clears) lots hidden by the active status/search filter.
+  // Header checkbox selects/clears the rows on the CURRENT PAGE only, so it
+  // never silently touches lots hidden by the filter or on another page.
   function toggleAll() {
     setSelected((prev) => {
       const next = new Set(prev);
-      const allVisibleSelected = filtered.length > 0 && filtered.every((l) => next.has(l._id));
+      const allVisibleSelected = paged.length > 0 && paged.every((l) => next.has(l._id));
       if (allVisibleSelected) {
-        for (const l of filtered) next.delete(l._id);
+        for (const l of paged) next.delete(l._id);
       } else {
-        for (const l of filtered) next.add(l._id);
+        for (const l of paged) next.add(l._id);
       }
       return next;
     });
+  }
+
+  // Select every row across all pages that matches the current filter — handy
+  // when paginated but you want the whole filtered set.
+  function selectAllFiltered() {
+    setSelected(new Set(filtered.map((l) => l._id)));
   }
 
   async function sendDefaults({ all = false } = {}) {
@@ -313,7 +339,7 @@ export default function ProjectBoard() {
         if (!key || key !== selectedIdsKey) return;
         try {
           const fresh = await api.get(`/api/lots?projects=${key}&limit=1000`);
-          setLots(fresh);
+          if (Array.isArray(fresh)) setLots(fresh);
         } catch {}
         if (Date.now() - startedAt < 60_000) {
           setTimeout(refresh, 5_000);
@@ -423,7 +449,23 @@ export default function ProjectBoard() {
           style={{ flex: 1, minWidth: 240 }}
         />
         <div className="muted" style={{ fontSize: 12 }}>
-          Showing {filtered.length} of {lots.length} · {selected.size} selected
+          {filtered.length === lots.length
+            ? `${lots.length} lot${lots.length === 1 ? '' : 's'}`
+            : `${filtered.length} of ${lots.length} match`}{' '}
+          · {selected.size} selected
+          {selected.size < filtered.length && filtered.length > paged.length && (
+            <>
+              {' · '}
+              <a
+                role="button"
+                onClick={selectAllFiltered}
+                style={{ cursor: 'pointer' }}
+                title="Select every lot matching the current filter, across all pages"
+              >
+                select all {filtered.length}
+              </a>
+            </>
+          )}
         </div>
         <div style={{ flex: 1 }} />
         <button
@@ -462,7 +504,7 @@ export default function ProjectBoard() {
                   ref={selectAllRef}
                   checked={allSelected}
                   onChange={toggleAll}
-                  title="Select all matching lots"
+                  title="Select all lots on this page"
                 />
               </th>
               {showProjectCol && <th style={{ minWidth: 140 }}>Project</th>}
@@ -478,7 +520,7 @@ export default function ProjectBoard() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((lot) => {
+            {paged.map((lot) => {
               const disabled = busyLotId === lot._id;
               return (
                 <tr key={lot._id}>
@@ -576,6 +618,21 @@ export default function ProjectBoard() {
           </tbody>
         </table>
       </div>
+
+      {filtered.length > 0 && (
+        <Pagination
+          page={currentPage}
+          pages={totalPages}
+          total={filtered.length}
+          pageSize={pageSize}
+          noun="lots"
+          onPage={setPage}
+          onPageSize={(n) => {
+            setPageSize(n);
+            setPage(1);
+          }}
+        />
+      )}
 
       <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
         <strong>How sending works:</strong> Select lots above, pick a template, click <em>Send</em>.

@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
-
-const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+import Pagination from '../components/Pagination.jsx';
 
 export default function History() {
   const [items, setItems] = useState([]);
@@ -48,14 +47,6 @@ export default function History() {
     setFilter((f) => ({ ...f, ...patch }));
     setPage(1);
   }
-
-  function goto(p) {
-    if (p < 1 || p > pages) return;
-    setPage(p);
-  }
-
-  const startRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const endRow = Math.min(total, page * pageSize);
 
   return (
     <div>
@@ -169,44 +160,19 @@ export default function History() {
         </table>
       </div>
 
-      <div className="pagination">
-        <div className="muted" style={{ fontSize: 12 }}>
-          {total === 0 ? 'No results' : `Showing ${startRow}–${endRow} of ${total.toLocaleString()}`}
-        </div>
-        <div style={{ flex: 1 }} />
-        <label className="muted" style={{ fontSize: 12, margin: 0 }}>
-          Per page&nbsp;
-        </label>
-        <select
-          value={pageSize}
-          onChange={(e) => {
-            setPageSize(Number(e.target.value));
-            setPage(1);
-          }}
-          style={{ width: 'auto' }}
-        >
-          {PAGE_SIZE_OPTIONS.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
-        <button className="secondary" disabled={page <= 1 || loading} onClick={() => goto(1)}>
-          « First
-        </button>
-        <button className="secondary" disabled={page <= 1 || loading} onClick={() => goto(page - 1)}>
-          ‹ Prev
-        </button>
-        <span className="muted" style={{ fontSize: 12, padding: '0 6px' }}>
-          Page {page} of {pages}
-        </span>
-        <button className="secondary" disabled={page >= pages || loading} onClick={() => goto(page + 1)}>
-          Next ›
-        </button>
-        <button className="secondary" disabled={page >= pages || loading} onClick={() => goto(pages)}>
-          Last »
-        </button>
-      </div>
+      <Pagination
+        page={page}
+        pages={pages}
+        total={total}
+        pageSize={pageSize}
+        loading={loading}
+        noun="messages"
+        onPage={setPage}
+        onPageSize={(n) => {
+          setPageSize(n);
+          setPage(1);
+        }}
+      />
     </div>
   );
 }
