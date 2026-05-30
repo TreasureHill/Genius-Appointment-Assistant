@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
@@ -72,10 +72,16 @@ export default function ProjectBoard() {
   useEffect(() => {
     api.get('/api/projects').then((list) => {
       setProjects(list);
-      // Default to first project if nothing selected yet (e.g. fresh visit).
+      // Reconcile any saved selection (URL / localStorage) against the projects
+      // that actually exist. Without this, a deleted or stale project id leaves
+      // the board querying a phantom project — empty table, nothing highlighted,
+      // yet the header still claims "1/N selected".
       setSelectedProjectIds((prev) => {
-        if (prev.size > 0) return prev;
-        return list.length ? new Set([list[0]._id]) : prev;
+        const valid = new Set(list.map((p) => p._id));
+        const pruned = new Set(Array.from(prev).filter((id) => valid.has(id)));
+        if (pruned.size > 0) return pruned;
+        // Nothing valid selected → default to the first project on a fresh visit.
+        return list.length ? new Set([list[0]._id]) : new Set();
       });
     });
     api.get('/api/settings').then((s) => setMaxReminders(s.schedule?.maxReminders ?? null));
@@ -195,12 +201,19 @@ export default function ProjectBoard() {
     setSelected(next);
   }
 
+  // Select-all operates on the *currently filtered* rows only, so it never
+  // silently selects (or clears) lots hidden by the active status/search filter.
   function toggleAll() {
-    if (selected.size === filtered.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(filtered.map((l) => l._id)));
-    }
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allVisibleSelected = filtered.length > 0 && filtered.every((l) => next.has(l._id));
+      if (allVisibleSelected) {
+        for (const l of filtered) next.delete(l._id);
+      } else {
+        for (const l of filtered) next.add(l._id);
+      }
+      return next;
+    });
   }
 
   async function sendDefaults({ all = false } = {}) {
@@ -292,7 +305,17 @@ export default function ProjectBoard() {
     );
   }
 
-  const allSelected = filtered.length > 0 && selected.size === filtered.length;
+  const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l._id));
+  const someSelected = filtered.some((l) => selected.has(l._id));
+
+  // Drive the tri-state header checkbox: checked when every visible row is
+  // selected, indeterminate when only some are.
+  const selectAllRef = useRef(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = !allSelected && someSelected;
+    }
+  }, [allSelected, someSelected]);
 
   return (
     <div>
@@ -407,7 +430,13 @@ export default function ProjectBoard() {
           <thead>
             <tr>
               <th style={{ width: 32 }}>
-                <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+                <input
+                  type="checkbox"
+                  ref={selectAllRef}
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  title="Select all matching lots"
+                />
               </th>
               {showProjectCol && <th style={{ minWidth: 140 }}>Project</th>}
               <th style={{ minWidth: 70 }}>Lot #</th>
@@ -509,9 +538,11 @@ export default function ProjectBoard() {
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={showProjectCol ? 11 : 10} className="muted" style={{ textAlign: 'center', padding: 24 }}>
-                  {lots.length === 0
-                    ? 'This project has no lots yet. Import a sheet to add some.'
-                    : 'No lots match your filters.'}
+                  {selectedProjectIds.size === 0
+                    ? 'Select a project above to see its lots.'
+                    : lots.length === 0
+                      ? 'This project has no lots yet. Import a sheet to add some.'
+                      : 'No lots match your filters.'}
                 </td>
               </tr>
             )}
