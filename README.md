@@ -57,13 +57,23 @@ window is 30–120 s — override per project.
 - The UI shows a preview (`created / skipped / warnings`) before you commit.
 
 ## Calendly
-Two ways to stay in sync:
+Three ways to stay in sync:
 1. **Webhook** (`POST /api/webhooks/calendly`) — point Calendly at your URL
-   with the shared secret in `.env`.
-2. **Poll** — if a rep has `calendlyUser` set, a cron job every 30 min pulls
-   scheduled events for that user, matches invitee emails to lot buyers, and
-   flips matched lots to `scheduled`. If the same email shows up in multiple
-   active events, the lot is flagged with a warning on the Dashboard.
+   with the shared secret in `.env`. Handles both `invitee.created` (→ lot
+   `scheduled`) and `invitee.canceled` (→ lot reverts to `contacted` and the
+   appointment card is cleared, so reminders resume).
+2. **Poll** — a cron job every 30 min pulls scheduled events for the owner URI
+   (Settings → Owner, or `CALENDLY_USER_URI`), matches invitee emails to lot
+   buyers, and flips matched lots to `scheduled`. Past appointments are reaped
+   to `completed` by a separate 15-min worker. The poll never overrides a
+   `completed` or `opted_out` lot. If the same email shows up in multiple active
+   events, the lot is flagged with a warning on the Dashboard.
+3. **Reconcile / backfill** — `npm run reconcile:calendly` (from `server/`)
+   sweeps a wide window (default ±12 months) to catch appointments booked while
+   the server was down or before Calendly was wired up. It sets upcoming matches
+   to `scheduled` and already-passed ones to `completed`, and queues unmatched
+   invitees for manual mapping. Use `-- --dry-run` to preview, `-- --months=N`
+   / `-- --future-months=N` to widen the window.
 
 ## Branch
 Work lives on `claude/mern-appointment-booking-app-sxX2C`.

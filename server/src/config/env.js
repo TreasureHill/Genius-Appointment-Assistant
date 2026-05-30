@@ -39,6 +39,10 @@ const env = {
   calendly: {
     token: process.env.CALENDLY_TOKEN || '',
     orgUri: process.env.CALENDLY_ORG_URI || '',
+    // Optional fallback for the owner's Calendly user URI. Normally set in
+    // Settings → Owner, but having an env fallback lets the reconcile script
+    // run headless (e.g. in CI / a cron box) without the DB setting.
+    userUri: process.env.CALENDLY_USER_URI || '',
     webhookSecret: process.env.CALENDLY_WEBHOOK_SECRET || '',
   },
   defaults: {
