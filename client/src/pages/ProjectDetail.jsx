@@ -170,7 +170,7 @@ export default function ProjectDetail() {
 
       <div className="card">
         <p className="muted" style={{ margin: 0 }}>
-          Pacing, reminder interval, max reminders, and quiet hours are configured system-wide on
+          Pacing, reminder interval, max reminders, and send windows are configured system-wide on
           the <Link to="/settings">Settings</Link> page.
         </p>
       </div>

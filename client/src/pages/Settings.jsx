@@ -442,7 +442,10 @@ export default function Settings() {
       const r = await api.post('/api/settings/calendly/sync', {});
       if (r.ok) {
         setMsg(
-          `Calendly sync ok — ${r.reps} reps, ${r.emailsSeen} invitee emails, ${r.matched.length} lots matched`
+          `Calendly sync ok — ${r.events} event${r.events === 1 ? '' : 's'}, ` +
+            `${r.emailsSeen} invitee email${r.emailsSeen === 1 ? '' : 's'}, ` +
+            `${r.matched.length} lot${r.matched.length === 1 ? '' : 's'} matched` +
+            `${r.unmatched ? `, ${r.unmatched} unmatched` : ''}`
         );
       } else {
         setMsg('Calendly sync: ' + (r.message || 'failed'));
