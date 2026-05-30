@@ -1,5 +1,6 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
+import ErrorBoundary from './ErrorBoundary.jsx';
 
 const links = [
   { to: '/', label: 'Dashboard', icon: '◧', end: true },
@@ -16,6 +17,7 @@ const links = [
 export default function Layout() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
+  const location = useLocation();
   async function onLogout() {
     await logout();
     nav('/login', { replace: true });
@@ -48,7 +50,11 @@ export default function Layout() {
         </div>
       </aside>
       <main className="main">
-        <Outlet />
+        {/* Key by path so a crash on one page becomes an inline, recoverable
+            error (sidebar stays usable) and navigating elsewhere resets it. */}
+        <ErrorBoundary key={location.pathname}>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   );
