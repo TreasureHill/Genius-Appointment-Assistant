@@ -81,6 +81,12 @@ function MapRow({ entry, projects, onDone, selected, onToggleSelect }) {
       <td>
         <div><strong>{entry.inviteeName || '—'}</strong></div>
         <div className="muted" style={{ fontSize: 12 }}>{entry.inviteeEmail}</div>
+        {entry.answer && (
+          <div style={{ fontSize: 12, marginTop: 2 }}>
+            <span className="muted">Typed: </span>
+            <strong>{entry.answer}</strong>
+          </div>
+        )}
       </td>
       <td>{entry.eventName}</td>
       <td style={{ minWidth: 420 }}>
@@ -129,6 +135,12 @@ function ResolvedRow({ entry, onUnresolve, onDelete, selected, onToggleSelect })
       <td>
         <div><strong>{entry.inviteeName || '—'}</strong></div>
         <div className="muted" style={{ fontSize: 12 }}>{entry.inviteeEmail}</div>
+        {entry.answer && (
+          <div style={{ fontSize: 12, marginTop: 2 }}>
+            <span className="muted">Typed: </span>
+            <strong>{entry.answer}</strong>
+          </div>
+        )}
       </td>
       <td>{entry.eventName}</td>
       <td>
@@ -212,8 +224,11 @@ export default function CalendlyEvents() {
     try {
       const r = await api.post('/api/settings/calendly/sync', {});
       if (r.ok) {
+        const bySignal = r.bySignal || 0;
         setSyncMsg(
-          `Synced: ${r.events} events, ${r.emailsSeen} invitees, ${r.matched.length} auto-matched, ${r.unmatched || 0} unmatched`
+          `Synced: ${r.events} events, ${r.emailsSeen} invitees, ${r.matched.length} auto-matched` +
+            (bySignal ? ` (${bySignal} by typed project/lot or name)` : '') +
+            `, ${r.unmatched || 0} unmatched`
         );
       } else {
         setSyncMsg('Sync failed: ' + (r.message || 'unknown error'));
@@ -262,9 +277,10 @@ export default function CalendlyEvents() {
     <div>
       <h1>Calendly events</h1>
       <p className="muted">
-        Invitees that Calendly returned whose email didn't match any lot buyer. Map them to a lot
-        here, or ignore them. Mapped entries flip the lot to <span className="badge scheduled">scheduled</span>
-        and optionally add the invitee's email as a buyer so future events auto-match.
+        Invitees Calendly couldn't auto-match to a single lot — not by email, by the project/lot
+        they typed at booking, nor by name. Map them to a lot here, or ignore them. Mapped entries
+        flip the lot to <span className="badge scheduled">scheduled</span> and optionally add the
+        invitee's email as a buyer so future events auto-match.
       </p>
 
       <div className="toolbar">
