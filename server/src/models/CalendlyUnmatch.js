@@ -7,7 +7,13 @@ const CalendlyUnmatchSchema = new mongoose.Schema(
     eventStartTime: { type: Date, default: null },
     inviteeEmail: { type: String, required: true, lowercase: true, trim: true },
     inviteeName: { type: String, default: '' },
+    inviteeFirstName: { type: String, default: '' },
+    inviteeLastName: { type: String, default: '' },
     inviteeStatus: { type: String, default: '' },
+    // What the invitee typed into the booking questions (e.g. "B2 - END Unit 6"
+    // for the "project name and lot number" prompt). Shown in the UI to speed
+    // manual mapping when auto-match can't pin a single lot.
+    answer: { type: String, default: '' },
     rep: { type: mongoose.Schema.Types.ObjectId, ref: 'Rep', default: null },
     repName: { type: String, default: '' },
     status: {

@@ -22,6 +22,33 @@ router.get('/unmatched', async (req, res) => {
   res.json(rows);
 });
 
+// Bulk action on many queue entries at once (drives the "select all" UI).
+// action: 'ignore' | 'unresolve' | 'delete'. Bulk mapping is intentionally
+// omitted — each invitee maps to a different lot, so it can't be one-shot.
+router.post('/unmatched/bulk', async (req, res) => {
+  const { ids, action } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids_required' });
+  }
+  const filter = { _id: { $in: ids } };
+
+  if (action === 'ignore') {
+    const r = await CalendlyUnmatch.updateMany(filter, { $set: { status: 'ignored' } });
+    return res.json({ ok: true, action, modified: r.modifiedCount || 0 });
+  }
+  if (action === 'unresolve') {
+    const r = await CalendlyUnmatch.updateMany(filter, {
+      $set: { status: 'unmatched', mappedLot: null, mappedAt: null },
+    });
+    return res.json({ ok: true, action, modified: r.modifiedCount || 0 });
+  }
+  if (action === 'delete') {
+    const r = await CalendlyUnmatch.deleteMany(filter);
+    return res.json({ ok: true, action, deleted: r.deletedCount || 0 });
+  }
+  return res.status(400).json({ error: 'invalid_action' });
+});
+
 router.post('/unmatched/:id/map', async (req, res) => {
   const { lotId, addAsBuyer = true } = req.body || {};
   if (!lotId) return res.status(400).json({ error: 'lotId_required' });

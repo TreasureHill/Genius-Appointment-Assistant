@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import SearchableSelect from '../components/SearchableSelect.jsx';
@@ -7,7 +7,7 @@ function naturalCmp(a, b) {
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 }
 
-function MapRow({ entry, projects, onDone }) {
+function MapRow({ entry, projects, onDone, selected, onToggleSelect }) {
   const [projectId, setProjectId] = useState('');
   const [lots, setLots] = useState([]);
   const [lotId, setLotId] = useState('');
@@ -72,12 +72,21 @@ function MapRow({ entry, projects, onDone }) {
 
   return (
     <tr>
+      <td style={{ width: 32 }}>
+        <input type="checkbox" checked={selected} onChange={() => onToggleSelect(entry._id)} />
+      </td>
       <td className="nowrap">
         {entry.eventStartTime ? new Date(entry.eventStartTime).toLocaleString() : '—'}
       </td>
       <td>
         <div><strong>{entry.inviteeName || '—'}</strong></div>
         <div className="muted" style={{ fontSize: 12 }}>{entry.inviteeEmail}</div>
+        {entry.answer && (
+          <div style={{ fontSize: 12, marginTop: 2 }}>
+            <span className="muted">Typed: </span>
+            <strong>{entry.answer}</strong>
+          </div>
+        )}
       </td>
       <td>{entry.eventName}</td>
       <td style={{ minWidth: 420 }}>
@@ -114,15 +123,24 @@ function MapRow({ entry, projects, onDone }) {
   );
 }
 
-function ResolvedRow({ entry, onUnresolve, onDelete }) {
+function ResolvedRow({ entry, onUnresolve, onDelete, selected, onToggleSelect }) {
   return (
     <tr>
+      <td style={{ width: 32 }}>
+        <input type="checkbox" checked={selected} onChange={() => onToggleSelect(entry._id)} />
+      </td>
       <td className="nowrap">
         {entry.eventStartTime ? new Date(entry.eventStartTime).toLocaleString() : '—'}
       </td>
       <td>
         <div><strong>{entry.inviteeName || '—'}</strong></div>
         <div className="muted" style={{ fontSize: 12 }}>{entry.inviteeEmail}</div>
+        {entry.answer && (
+          <div style={{ fontSize: 12, marginTop: 2 }}>
+            <span className="muted">Typed: </span>
+            <strong>{entry.answer}</strong>
+          </div>
+        )}
       </td>
       <td>{entry.eventName}</td>
       <td>
@@ -154,6 +172,8 @@ export default function CalendlyEvents() {
   const [q, setQ] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
+  const [selected, setSelected] = useState(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   async function load() {
     const qs = new URLSearchParams({ status: tab });
@@ -163,11 +183,40 @@ export default function CalendlyEvents() {
       api.get('/api/projects'),
     ]);
     setRows(list);
+    // Row set changed — drop any selection so we never act on rows that are no
+    // longer visible (different tab, filtered out, or already resolved).
+    setSelected(new Set());
     setProjects([...projs].sort((a, b) => naturalCmp(a.name, b.name)));
   }
   useEffect(() => {
     load();
   }, [tab]);
+
+  // Tri-state header checkbox: checked when every visible row is selected,
+  // indeterminate when only some are.
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r._id));
+  const someSelected = rows.some((r) => selected.has(r._id));
+  const selectAllRef = useRef(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = !allSelected && someSelected;
+    }
+  }, [allSelected, someSelected]);
+
+  function toggleSelect(id) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected((prev) => {
+      if (rows.length > 0 && rows.every((r) => prev.has(r._id))) return new Set();
+      return new Set(rows.map((r) => r._id));
+    });
+  }
 
   async function syncNow() {
     setSyncing(true);
@@ -175,8 +224,11 @@ export default function CalendlyEvents() {
     try {
       const r = await api.post('/api/settings/calendly/sync', {});
       if (r.ok) {
+        const bySignal = r.bySignal || 0;
         setSyncMsg(
-          `Synced: ${r.events} events, ${r.emailsSeen} invitees, ${r.matched.length} auto-matched, ${r.unmatched || 0} unmatched`
+          `Synced: ${r.events} events, ${r.emailsSeen} invitees, ${r.matched.length} auto-matched` +
+            (bySignal ? ` (${bySignal} by typed project/lot or name)` : '') +
+            `, ${r.unmatched || 0} unmatched`
         );
       } else {
         setSyncMsg('Sync failed: ' + (r.message || 'unknown error'));
@@ -186,6 +238,28 @@ export default function CalendlyEvents() {
       setSyncMsg('Sync error: ' + ex.message);
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function bulkAction(action) {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (
+      action === 'delete' &&
+      !confirm(
+        `Delete ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}? They will reappear if Calendly surfaces the invitee again.`
+      )
+    ) {
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      await api.post('/api/calendly/unmatched/bulk', { ids, action });
+      await load();
+    } catch (ex) {
+      alert('Bulk action failed: ' + ex.message);
+    } finally {
+      setBulkBusy(false);
     }
   }
 
@@ -203,9 +277,10 @@ export default function CalendlyEvents() {
     <div>
       <h1>Calendly events</h1>
       <p className="muted">
-        Invitees that Calendly returned whose email didn't match any lot buyer. Map them to a lot
-        here, or ignore them. Mapped entries flip the lot to <span className="badge scheduled">scheduled</span>
-        and optionally add the invitee's email as a buyer so future events auto-match.
+        Invitees Calendly couldn't auto-match to a single lot — not by email, by the project/lot
+        they typed at booking, nor by name. Map them to a lot here, or ignore them. Mapped entries
+        flip the lot to <span className="badge scheduled">scheduled</span> and optionally add the
+        invitee's email as a buyer so future events auto-match.
       </p>
 
       <div className="toolbar">
@@ -234,10 +309,43 @@ export default function CalendlyEvents() {
       </div>
       {syncMsg && <div className="card">{syncMsg}</div>}
 
+      {selected.size > 0 && (
+        <div className="toolbar">
+          <strong style={{ fontSize: 13 }}>{selected.size} selected</strong>
+          <button className="secondary" onClick={() => setSelected(new Set())} disabled={bulkBusy}>
+            Clear
+          </button>
+          <div style={{ flex: 1 }} />
+          {tab === 'unmatched' && (
+            <button className="secondary" onClick={() => bulkAction('ignore')} disabled={bulkBusy}>
+              Ignore selected
+            </button>
+          )}
+          {tab !== 'unmatched' && (
+            <button className="secondary" onClick={() => bulkAction('unresolve')} disabled={bulkBusy}>
+              Move back to unmatched
+            </button>
+          )}
+          <button className="danger" onClick={() => bulkAction('delete')} disabled={bulkBusy}>
+            Delete selected
+          </button>
+        </div>
+      )}
+
       <div className="card" style={{ padding: 0 }}>
         <table>
           <thead>
             <tr>
+              <th style={{ width: 32 }}>
+                <input
+                  type="checkbox"
+                  ref={selectAllRef}
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  disabled={rows.length === 0}
+                  title="Select all"
+                />
+              </th>
               <th>Event time</th>
               <th>Invitee</th>
               <th>Event</th>
@@ -248,7 +356,7 @@ export default function CalendlyEvents() {
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                   {tab === 'unmatched'
                     ? 'Nothing unmatched right now. Click "Sync Calendly now" to refresh.'
                     : `No ${tab} entries.`}
@@ -257,9 +365,23 @@ export default function CalendlyEvents() {
             )}
             {rows.map((r) =>
               tab === 'unmatched' ? (
-                <MapRow key={r._id} entry={r} projects={projects} onDone={load} />
+                <MapRow
+                  key={r._id}
+                  entry={r}
+                  projects={projects}
+                  onDone={load}
+                  selected={selected.has(r._id)}
+                  onToggleSelect={toggleSelect}
+                />
               ) : (
-                <ResolvedRow key={r._id} entry={r} onUnresolve={unresolve} onDelete={remove} />
+                <ResolvedRow
+                  key={r._id}
+                  entry={r}
+                  onUnresolve={unresolve}
+                  onDelete={remove}
+                  selected={selected.has(r._id)}
+                  onToggleSelect={toggleSelect}
+                />
               )
             )}
           </tbody>

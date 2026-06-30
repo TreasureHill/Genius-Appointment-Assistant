@@ -14,6 +14,10 @@ const {
   reconcileTargetStatus,
   findLotHits,
   buildLotCalendlyEvent,
+  matchLotsByAnswer,
+  matchLotsByName,
+  matchUnmatchedOccurrence,
+  prepLotForMatch,
 } = require('../../services/calendly');
 
 let passed = 0;
@@ -110,6 +114,87 @@ t('maps occurrence + email/role into the lot subdocument shape', () => {
   assert.ok(ev.startTime instanceof Date);
   assert.strictEqual(ev.endTime, null);
   assert.ok(ev.lastSyncedAt instanceof Date);
+});
+
+// A prepared lot, as prepLotForMatch() would produce. `doc.tag` just lets the
+// assertions identify which lot came back.
+const prep = (projectName, lotNumber, buyers = []) => ({
+  doc: { tag: `${projectName}/${lotNumber}` },
+  lotNumber,
+  projectName,
+  buyers,
+});
+
+console.log('matchLotsByAnswer (typed project + lot number)');
+t('matches when project AND lot number both appear (the "B2 - END Unit 6" case)', () => {
+  const lots = [prep('B2', 'END Unit 6'), prep('A1', '12')];
+  const hits = matchLotsByAnswer('B2 - END Unit 6', lots);
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].projectName, 'B2');
+});
+t('requires BOTH signals — project name alone is not enough', () => {
+  assert.deepStrictEqual(matchLotsByAnswer('B2 only', [prep('B2', '99')]), []);
+});
+t('short numeric lot numbers match as a whole token, not a substring', () => {
+  assert.strictEqual(matchLotsByAnswer('B2 - 16', [prep('B2', '6')]).length, 0); // "6" ≠ "16"
+  assert.strictEqual(matchLotsByAnswer('B2 - 6', [prep('B2', '6')]).length, 1);
+});
+t('ignores spacing/punctuation differences', () => {
+  assert.strictEqual(matchLotsByAnswer('project b2, lot 12b', [prep('B2', '12-B')]).length, 1);
+});
+t('empty answer matches nothing', () => {
+  assert.deepStrictEqual(matchLotsByAnswer('', [prep('B2', '6')]), []);
+});
+
+console.log('matchLotsByName (invitee first + last vs buyer names)');
+t('matches a buyer name containing both first and last name', () => {
+  const occ = { inviteeFirstName: 'John', inviteeLastName: 'Smith' };
+  const hits = matchLotsByName(occ, [prep('P', '1', [{ role: 'buyer', name: 'John Smith' }])]);
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].role, 'buyer');
+});
+t('a lone first name is too weak to match', () => {
+  const occ = { inviteeName: 'Azhar' };
+  assert.deepStrictEqual(matchLotsByName(occ, [prep('P', '1', [{ role: 'buyer', name: 'Azhar Ali' }])]), []);
+});
+t('falls back to splitting the full name when first/last are absent', () => {
+  const occ = { inviteeName: 'Jane Doe' };
+  const hits = matchLotsByName(occ, [prep('P', '1', [{ role: 'coBuyer', name: 'JANE DOE and Partner' }])]);
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].role, 'coBuyer');
+});
+
+console.log('matchUnmatchedOccurrence (tiered, unambiguous-only)');
+t('uses the typed answer when it pins exactly one lot', () => {
+  const prepared = [prep('B2', 'END Unit 6'), prep('A1', '12')];
+  const m = matchUnmatchedOccurrence({ answerText: 'B2 - END Unit 6', inviteeName: 'Azhar' }, prepared);
+  assert.ok(m);
+  assert.strictEqual(m.method, 'project/lot answer');
+  assert.strictEqual(m.lot.tag, 'B2/END Unit 6');
+});
+t('returns null when the answer is ambiguous (2+ lots)', () => {
+  const prepared = [prep('B2', '6'), prep('B2', '6')];
+  assert.strictEqual(matchUnmatchedOccurrence({ answerText: 'B2 - 6' }, prepared), null);
+});
+t('falls through to buyer name when the answer matches nothing', () => {
+  const prepared = [prep('Z9', '1', [{ role: 'buyer', name: 'John Smith' }])];
+  const occ = { answerText: 'no idea', inviteeFirstName: 'John', inviteeLastName: 'Smith' };
+  const m = matchUnmatchedOccurrence(occ, prepared);
+  assert.ok(m);
+  assert.strictEqual(m.method, 'buyer name');
+  assert.strictEqual(m.lot.tag, 'Z9/1');
+});
+t('returns null when nothing matches', () => {
+  assert.strictEqual(matchUnmatchedOccurrence({ answerText: 'xyz', inviteeName: 'No One' }, [prep('B2', '6')]), null);
+});
+
+console.log('prepLotForMatch');
+t('flattens a lot doc into the shape the matchers read', () => {
+  const out = prepLotForMatch({ lotNumber: '7', project: { name: 'Maple' }, buyers: [{ name: 'X' }] });
+  assert.strictEqual(out.lotNumber, '7');
+  assert.strictEqual(out.projectName, 'Maple');
+  assert.strictEqual(out.buyers.length, 1);
+  assert.ok(out.doc);
 });
 
 console.log(`\nAll ${passed} assertions passed ✅`);

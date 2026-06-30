@@ -139,6 +139,125 @@ function findLotHits(lot, emailOccurrences) {
   return hits;
 }
 
+// Lowercased, whitespace-collapsed text for loose comparison.
+function normalizeText(s) {
+  return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Strip everything but letters/digits: "END Unit 6" -> "endunit6", "Lot #12-B"
+// -> "lot12b". Lets us compare regardless of spacing/punctuation.
+function compact(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+// Split into alphanumeric tokens: "B2 - END Unit 6" -> ["b2","end","unit","6"].
+function tokenize(s) {
+  return normalizeText(s).split(/[^a-z0-9]+/i).filter(Boolean);
+}
+
+// Pull the free-text the invitee typed into the Calendly booking questions.
+function extractAnswerText(occ) {
+  if (!occ) return '';
+  if (occ.answerText) return occ.answerText;
+  const qa = occ.questionsAndAnswers || occ.questions_and_answers || [];
+  return qa.map((q) => q.answer).filter(Boolean).join(' ');
+}
+
+// Is the lot's project name present in what the invitee typed? Projects are
+// distinctive, so a compact substring match is enough (guard tiny names).
+function answerHasProject(answerCompact, projectName) {
+  const p = compact(projectName);
+  return p.length >= 2 && answerCompact.includes(p);
+}
+
+// Is the lot number present? Short/numeric lot numbers ("6") must appear as a
+// whole token so they don't match "16"/"60"; distinctive ones (>=3 chars) may
+// match as a substring ("endunit6").
+function answerHasLotNumber(answerCompact, answerTokens, lotNumber) {
+  const c = compact(lotNumber);
+  if (!c) return false;
+  if (answerTokens.has(c)) return true;
+  return c.length >= 3 && answerCompact.includes(c);
+}
+
+// Find lots whose project name AND lot number both appear in the invitee's
+// typed answer. Requiring BOTH keeps this high-confidence — the caller only
+// auto-matches when exactly one lot comes back. `lots` items expose
+// { lotNumber, projectName }. Pure.
+function matchLotsByAnswer(answer, lots) {
+  const answerCompact = compact(answer);
+  if (!answerCompact) return [];
+  const answerTokens = new Set(tokenize(answer));
+  const out = [];
+  for (const lot of lots) {
+    if (!lot.lotNumber || !lot.projectName) continue;
+    if (!answerHasProject(answerCompact, lot.projectName)) continue;
+    if (!answerHasLotNumber(answerCompact, answerTokens, lot.lotNumber)) continue;
+    out.push(lot);
+  }
+  return out;
+}
+
+// Significant name tokens for an occurrence — prefer the structured
+// first/last name, fall back to splitting the full name. Drops 1-char initials.
+function nameTokens(occ) {
+  let toks = [occ.inviteeFirstName, occ.inviteeLastName]
+    .flatMap((p) => tokenize(p))
+    .filter((t) => t.length >= 2);
+  if (toks.length < 2) {
+    toks = tokenize(occ.inviteeName || occ.name || '').filter((t) => t.length >= 2);
+  }
+  return toks;
+}
+
+// Find lots that have a buyer whose name contains BOTH the invitee's first and
+// last name. Needs at least a first + last to fire (a lone first name is too
+// weak). Returns [{ lot, role }]. Caller auto-matches only on a unique hit.
+function matchLotsByName(occ, lots) {
+  const toks = nameTokens(occ);
+  if (toks.length < 2) return [];
+  const first = toks[0];
+  const last = toks[toks.length - 1];
+  const out = [];
+  for (const lot of lots) {
+    for (const b of lot.buyers || []) {
+      const bn = compact(b.name);
+      if (bn && bn.includes(first) && bn.includes(last)) {
+        out.push({ lot, role: b.role });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+// Prepare a Mongoose lot doc for the pure matchers above: flatten the bits they
+// read and keep a handle back to the doc so the caller can save it.
+function prepLotForMatch(doc) {
+  return {
+    doc,
+    lotNumber: doc.lotNumber,
+    projectName: doc.project?.name || '',
+    buyers: doc.buyers || [],
+  };
+}
+
+// Pick the single best lot for an unmatched occurrence using the typed
+// project/lot answer first, then the buyer name. Only returns a match when the
+// signal is unambiguous (exactly one candidate). `prepared` is an array of
+// prepLotForMatch() results. Returns { lot, method, role } or null. Pure.
+function matchUnmatchedOccurrence(occ, prepared) {
+  const byAnswer = matchLotsByAnswer(extractAnswerText(occ), prepared);
+  if (byAnswer.length === 1) {
+    return { lot: byAnswer[0].doc, method: 'project/lot answer', role: '' };
+  }
+  const byName = matchLotsByName(occ, prepared);
+  if (byName.length === 1) {
+    return { lot: byName[0].lot.doc, method: 'buyer name', role: byName[0].role };
+  }
+  return null;
+}
+
 // Walk every event, fetch its invitees, and index them by lowercased email →
 // [occurrence]. Shared by syncAll and the reconcile script.
 async function collectOccurrences(events) {
@@ -153,6 +272,9 @@ async function collectOccurrences(events) {
     for (const inv of invitees) {
       const email = normalizeEmail(inv.email);
       if (!email) continue;
+      const qa = Array.isArray(inv.questions_and_answers)
+        ? inv.questions_and_answers.map((q) => ({ question: q.question || '', answer: q.answer || '' }))
+        : [];
       const entry = {
         eventUri: ev.uri,
         eventName: ev.name,
@@ -160,9 +282,16 @@ async function collectOccurrences(events) {
         endTime: ev.end_time,
         location: ev.location?.location || ev.location?.join_url || '',
         inviteeName: inv.name || '',
+        inviteeFirstName: inv.first_name || '',
+        inviteeLastName: inv.last_name || '',
         inviteeStatus: inv.status,
         rescheduleUrl: inv.reschedule_url || '',
         cancelUrl: inv.cancel_url || '',
+        // What the invitee typed into the booking questions (e.g. the
+        // "project name and lot number" prompt). Used as a matching signal when
+        // their email isn't on any lot.
+        questionsAndAnswers: qa,
+        answerText: qa.map((q) => q.answer).filter(Boolean).join(' '),
       };
       const arr = emailOccurrences.get(email) || [];
       arr.push(entry);
@@ -207,6 +336,9 @@ async function syncAll() {
 
   const emails = Array.from(emailOccurrences.keys());
   const matchedEmails = new Set();
+  // email → matched lot _id, across both passes. Used at the end to clear any
+  // stale rows this invitee left in the manual-mapping queue on a prior sync.
+  const matchedEmailToLot = new Map();
   const matched = [];
   const reMatched = [];
 
@@ -222,7 +354,10 @@ async function syncAll() {
       // This invitee is accounted for, so it must never be flagged as
       // "unmatched" below — even when the guards that follow deliberately leave
       // the lot's status untouched.
-      for (const h of hits) matchedEmails.add(h.email.toLowerCase());
+      for (const h of hits) {
+        matchedEmails.add(h.email.toLowerCase());
+        matchedEmailToLot.set(h.email.toLowerCase(), lot._id);
+      }
 
       // Never override a human/terminal decision. A Calendly event that has
       // already happened STILL reports status=active, so without this guard the
@@ -278,6 +413,82 @@ async function syncAll() {
     }
   }
 
+  // Pass 2: invitees whose email isn't on any lot. Auto-schedule a UNIQUE
+  // pending/contacted lot using the project + lot number they typed into the
+  // booking question, then their buyer name. Lower confidence than email, so we
+  // only act on an unambiguous hit and never touch a lot that's already
+  // scheduled / completed / opted_out.
+  let signalMatched = 0;
+  const unresolved = emails.filter((e) => !matchedEmails.has(e));
+  if (unresolved.length) {
+    const candidates = await Lot.find({ status: { $in: ['pending', 'contacted'] } }).populate(
+      'project',
+      'name'
+    );
+    const prepared = candidates.map(prepLotForMatch);
+    // Guard against two different unknown-email invitees both resolving to the
+    // same lot in one run — the first wins; the rest stay unmatched for manual
+    // review rather than silently overwriting each other.
+    const usedLotIds = new Set();
+    for (const email of unresolved) {
+      const occurrences = emailOccurrences.get(email) || [];
+      // Most recent occurrence carries the event we'll attach to the lot.
+      const occ = [...occurrences].sort(
+        (a, b) => new Date(b.startTime || 0) - new Date(a.startTime || 0)
+      )[0];
+      if (!occ) continue;
+      const m = matchUnmatchedOccurrence(occ, prepared);
+      if (!m) continue;
+      const lot = m.lot;
+      if (usedLotIds.has(String(lot._id))) continue;
+      usedLotIds.add(String(lot._id));
+
+      matchedEmails.add(email);
+      matchedEmailToLot.set(email, lot._id);
+
+      const priorStatus = lot.status;
+      lot.status = 'scheduled';
+      lot.calendlyEventUri = occ.eventUri || lot.calendlyEventUri;
+      lot.calendlyWarning = `Auto-matched by ${m.method} (not email) — verify this is the right lot.`;
+      lot.calendlyEvent = buildLotCalendlyEvent(occ, email, m.role);
+      await lot.save();
+
+      const projectId = lot.project?._id || lot.project;
+      await MessageLog.create({
+        project: projectId,
+        lot: lot._id,
+        type: 'calendly',
+        direction: 'in',
+        to: email,
+        subject: occ.eventName || 'Calendly event',
+        body: `Matched invitee ${email} to lot ${lot.lotNumber} by ${m.method} (answer: "${extractAnswerText(occ)}")`,
+        status: 'received',
+        providerId: occ.eventUri,
+        sentAt: new Date(),
+      });
+      await logStatusChange({
+        lot,
+        project: projectId,
+        fromStatus: priorStatus,
+        toStatus: 'scheduled',
+        actor: 'calendly_sync',
+        message: `Calendly matched ${email} to ${occ.eventName || 'event'} by ${m.method}.`,
+      });
+      matched.push({ lotId: String(lot._id), email, method: m.method });
+      signalMatched += 1;
+    }
+  }
+
+  // Anyone we matched (either pass) may still have stale rows in the
+  // manual-mapping queue from an earlier sync — resolve them so the list
+  // reflects reality (they show under "Mapped", linked to the lot).
+  for (const [email, lotId] of matchedEmailToLot) {
+    await CalendlyUnmatch.updateMany(
+      { inviteeEmail: email, status: 'unmatched' },
+      { $set: { status: 'mapped', mappedLot: lotId, mappedAt: new Date() } }
+    );
+  }
+
   // Persist unmatched invitees for manual mapping in the UI
   let unmatchedCount = 0;
   for (const [email, occurrences] of emailOccurrences) {
@@ -286,13 +497,20 @@ async function syncAll() {
       await CalendlyUnmatch.updateOne(
         { eventUri: occ.eventUri, inviteeEmail: email },
         {
-          $set: { lastSeenAt: new Date() },
+          // Refresh the typed answer + name on every sync so existing rows get
+          // backfilled and the UI can show what the invitee entered.
+          $set: {
+            lastSeenAt: new Date(),
+            answer: occ.answerText || '',
+            inviteeName: occ.inviteeName || '',
+            inviteeFirstName: occ.inviteeFirstName || '',
+            inviteeLastName: occ.inviteeLastName || '',
+          },
           $setOnInsert: {
             eventUri: occ.eventUri,
             eventName: occ.eventName || '',
             eventStartTime: occ.startTime ? new Date(occ.startTime) : null,
             inviteeEmail: email,
-            inviteeName: occ.inviteeName || '',
             inviteeStatus: occ.inviteeStatus || '',
             status: 'unmatched',
           },
@@ -316,6 +534,7 @@ async function syncAll() {
     events: events.length,
     emailsSeen: emails.length,
     matched,
+    bySignal: signalMatched,
     reMatched: reMatched.length,
     unmatched: unmatchedCount,
   };
@@ -391,18 +610,88 @@ async function handleWebhook(payload) {
   }
 
   if (lots.length === 0 && eventUri) {
+    // Build an occurrence from the webhook payload so the same matchers used by
+    // the poll can run here.
+    const qa = Array.isArray(invitee.questions_and_answers)
+      ? invitee.questions_and_answers.map((q) => ({ question: q.question || '', answer: q.answer || '' }))
+      : [];
+    const occ = {
+      eventUri,
+      eventName: ev.name || '',
+      startTime: ev.start_time,
+      endTime: ev.end_time,
+      location: ev.location?.location || ev.location?.join_url || '',
+      inviteeName: invitee.name || '',
+      inviteeFirstName: invitee.first_name || '',
+      inviteeLastName: invitee.last_name || '',
+      inviteeStatus: invitee.status || '',
+      rescheduleUrl: invitee.reschedule_url || '',
+      cancelUrl: invitee.cancel_url || '',
+      questionsAndAnswers: qa,
+      answerText: qa.map((q) => q.answer).filter(Boolean).join(' '),
+    };
+
+    // No email match — try the project/lot the invitee typed, then their name.
+    const candidates = await Lot.find({ status: { $in: ['pending', 'contacted'] } }).populate(
+      'project',
+      'name'
+    );
+    const m = matchUnmatchedOccurrence(occ, candidates.map(prepLotForMatch));
+    if (m) {
+      const lot = m.lot;
+      const priorStatus = lot.status;
+      lot.status = 'scheduled';
+      lot.calendlyEventUri = eventUri || lot.calendlyEventUri;
+      lot.calendlyWarning = `Auto-matched by ${m.method} (not email) — verify this is the right lot.`;
+      lot.calendlyEvent = buildLotCalendlyEvent(occ, email, m.role);
+      await lot.save();
+
+      const projectId = lot.project?._id || lot.project;
+      await MessageLog.create({
+        project: projectId,
+        lot: lot._id,
+        type: 'calendly',
+        direction: 'in',
+        to: email,
+        subject: occ.eventName || 'Calendly invitee.created',
+        body: `Webhook matched ${email} to lot ${lot.lotNumber} by ${m.method} (answer: "${extractAnswerText(occ)}")`,
+        status: 'received',
+        providerId: eventUri,
+        sentAt: new Date(),
+      });
+      if (priorStatus !== 'scheduled') {
+        await logStatusChange({
+          lot,
+          project: projectId,
+          fromStatus: priorStatus,
+          toStatus: 'scheduled',
+          actor: 'calendly_sync',
+          message: `Calendly webhook matched ${email} by ${m.method}.`,
+        });
+      }
+      // Clear any stale queue rows for this invitee.
+      await CalendlyUnmatch.updateMany(
+        { inviteeEmail: email, status: 'unmatched' },
+        { $set: { status: 'mapped', mappedLot: lot._id, mappedAt: new Date() } }
+      );
+      return { matched: 1, method: m.method };
+    }
+
     await CalendlyUnmatch.updateOne(
       { eventUri, inviteeEmail: email },
       {
-        $set: { lastSeenAt: new Date() },
+        $set: {
+          lastSeenAt: new Date(),
+          answer: occ.answerText || '',
+          inviteeName: invitee.name || '',
+          inviteeFirstName: invitee.first_name || '',
+          inviteeLastName: invitee.last_name || '',
+        },
         $setOnInsert: {
           eventUri,
-          eventName: payload?.payload?.scheduled_event?.name || '',
-          eventStartTime: payload?.payload?.scheduled_event?.start_time
-            ? new Date(payload.payload.scheduled_event.start_time)
-            : null,
+          eventName: occ.eventName || '',
+          eventStartTime: ev.start_time ? new Date(ev.start_time) : null,
           inviteeEmail: email,
-          inviteeName: invitee.name || '',
           inviteeStatus: invitee.status || '',
           status: 'unmatched',
         },
@@ -483,4 +772,13 @@ module.exports = {
   eventHasEnded,
   reconcileTargetStatus,
   normalizeEmail,
+  // matching helpers (project/lot answer + buyer name)
+  normalizeText,
+  compact,
+  tokenize,
+  extractAnswerText,
+  matchLotsByAnswer,
+  matchLotsByName,
+  matchUnmatchedOccurrence,
+  prepLotForMatch,
 };
