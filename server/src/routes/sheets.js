@@ -38,14 +38,23 @@ router.post('/preview', upload.single('file'), async (req, res) => {
 router.post('/import', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'file_required' });
   const updateExisting = req.query.update === 'true' || req.body?.update === 'true';
+  let marketingNames = {};
+  if (req.body?.marketingNames) {
+    try {
+      marketingNames = JSON.parse(req.body.marketingNames);
+    } catch {
+      /* ignore malformed — validation below will require them */
+    }
+  }
   try {
     const result = await sheetParser.commit(req.file.buffer, {
       updateExisting,
       filename: req.file.originalname || '',
+      marketingNames,
     });
     res.json(result);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(400).json({ error: err.message, code: err.code, projects: err.projects });
   }
 });
 

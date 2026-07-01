@@ -95,6 +95,11 @@ const SettingSchema = new mongoose.Schema(
       calendlyEventTypeUri: { type: String, default: '' },
       // IANA timezone used to speak/label slot times to the homeowner.
       timezone: { type: String, default: 'America/New_York' },
+      // Optional Calendly location kind for bookings, only needed when the
+      // event type requires a location choice (e.g. 'physical',
+      // 'outbound_call', 'zoom_conference', 'ask_invitee'). Blank = use the
+      // event type's own default.
+      calendlyLocationKind: { type: String, default: '' },
       // Optional per-call overrides pushed to ElevenLabs. Support {first_name},
       // {project_name}, {available_slots}, etc. (substituted server-side).
       firstMessage: { type: String, default: '' },

@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
+import MultiSelect from '../components/MultiSelect.jsx';
+
+const BOARD_PAGE_SIZES = [25, 50, 100, 200];
 
 const STATUSES = ['pending', 'contacted', 'scheduled', 'completed', 'opted_out'];
 const ROLE_LABELS = { buyer: 'Buyer', coBuyer: 'Co-buyer', thirdBuyer: 'Third buyer' };
@@ -10,8 +13,10 @@ function BuyerCell({ buyer }) {
   if (!buyer || (!buyer.name && !buyer.email && !buyer.phone)) {
     return <span className="muted">—</span>;
   }
+  // Concise: name on top, email + phone on one compact line.
+  const contact = [buyer.email, buyer.phone].filter(Boolean).join(' · ');
   return (
-    <div>
+    <div style={{ lineHeight: 1.3 }}>
       <div>
         <strong>{buyer.name || <span className="muted">(no name)</span>}</strong>
         {buyer.optedOut && (
@@ -20,14 +25,13 @@ function BuyerCell({ buyer }) {
           </span>
         )}
       </div>
-      {buyer.email && (
-        <div className="muted" style={{ fontSize: 12 }}>
-          <a href={`mailto:${buyer.email}`}>{buyer.email}</a>
-        </div>
-      )}
-      {buyer.phone && (
-        <div className="muted" style={{ fontSize: 12 }}>
-          {buyer.phone}
+      {contact && (
+        <div
+          className="muted"
+          style={{ fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 220 }}
+          title={contact}
+        >
+          {contact}
         </div>
       )}
     </div>
@@ -226,6 +230,8 @@ export default function ProjectBoard() {
   const [loadError, setLoadError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [queue, setQueue] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
 
   useEffect(() => {
     api
@@ -325,6 +331,21 @@ export default function ProjectBoard() {
       return true;
     });
   }, [lots, filter]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paged = useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize]
+  );
+
+  // Reset to page 1 when the filter / project selection changes.
+  useEffect(() => {
+    setPage(1);
+  }, [filter.status, filter.q, selectedIdsKey]);
+  // Clamp page if the result set shrank.
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [totalPages, page]);
 
   const allSelected = filtered.length > 0 && filtered.every((l) => selected.has(l._id));
   const someSelected = filtered.some((l) => selected.has(l._id));
@@ -624,40 +645,18 @@ export default function ProjectBoard() {
       )}
 
       <div className="card" style={{ marginTop: 12 }}>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 13 }}>Projects ({selectedProjectIds.size}/{projects.length}):</strong>
-          <button
-            className="secondary"
-            style={{ padding: '4px 10px', fontSize: 12 }}
-            onClick={selectAllProjects}
-            disabled={selectedProjectIds.size === projects.length}
-          >
-            Select all
-          </button>
-          <button
-            className="secondary"
-            style={{ padding: '4px 10px', fontSize: 12 }}
-            onClick={clearProjects}
-            disabled={selectedProjectIds.size === 0}
-          >
-            Clear
-          </button>
-          <div style={{ width: 1, height: 18, background: 'var(--border)' }} />
-          {projects.map((p) => {
-            const active = selectedProjectIds.has(p._id);
-            return (
-              <button
-                key={p._id}
-                className={active ? '' : 'secondary'}
-                style={{ padding: '4px 10px', fontSize: 12 }}
-                onClick={() => toggleProjectId(p._id)}
-                title={active ? 'Click to remove' : 'Click to add'}
-              >
-                {active ? '✓ ' : ''}
-                {p.name}
-              </button>
-            );
-          })}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong style={{ fontSize: 13 }}>Projects:</strong>
+          <MultiSelect
+            options={projects.map((p) => ({ value: p._id, label: p.name }))}
+            value={Array.from(selectedProjectIds)}
+            onChange={(vals) => setSelectedProjectIds(new Set(vals))}
+            placeholder="Select projects…"
+            allLabel="All projects"
+          />
+          <span className="muted" style={{ fontSize: 12 }}>
+            {selectedProjectIds.size} of {projects.length} selected
+          </span>
         </div>
       </div>
 
@@ -759,7 +758,7 @@ export default function ProjectBoard() {
       )}
 
       <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-        <table>
+        <table className="compact-table">
           <thead>
             <tr>
               <th style={{ width: 32 }}>
@@ -784,7 +783,7 @@ export default function ProjectBoard() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((lot) => {
+            {paged.map((lot) => {
               const disabled = busyLotId === lot._id;
               return (
                 <tr key={lot._id}>
@@ -898,6 +897,52 @@ export default function ProjectBoard() {
           </tbody>
         </table>
       </div>
+
+      {filtered.length > 0 && (
+        <div className="pagination">
+          <div className="muted" style={{ fontSize: 12 }}>
+            Showing {(page - 1) * pageSize + 1}–{Math.min(filtered.length, page * pageSize)} of{' '}
+            {filtered.length}
+          </div>
+          <div style={{ flex: 1 }} />
+          <label className="muted" style={{ fontSize: 12, margin: 0 }}>
+            Per page&nbsp;
+          </label>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(Number(e.target.value));
+              setPage(1);
+            }}
+            style={{ width: 'auto' }}
+          >
+            {BOARD_PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+          <button className="secondary" disabled={page <= 1} onClick={() => setPage(1)}>
+            « First
+          </button>
+          <button className="secondary" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+            ‹ Prev
+          </button>
+          <span className="muted" style={{ fontSize: 12, padding: '0 6px' }}>
+            Page {page} of {totalPages}
+          </span>
+          <button className="secondary" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+            Next ›
+          </button>
+          <button
+            className="secondary"
+            disabled={page >= totalPages}
+            onClick={() => setPage(totalPages)}
+          >
+            Last »
+          </button>
+        </div>
+      )}
 
       <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
         <strong>How sending works:</strong> Select lots above, pick a template, click <em>Send</em>.
