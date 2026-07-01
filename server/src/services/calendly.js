@@ -244,12 +244,17 @@ function buildLocation(cfgs, kindOverride, phone) {
   else cfg = list[0] || null;
   if (!cfg || !cfg.kind) return null;
   const kind = cfg.kind;
-  const detail = cfg.location || cfg.additional_info || cfg.phone_number || cfg.address || '';
+  // Calendly's field is misspelled "additonal_info" in some responses — probe both.
+  const detail = cfg.location || cfg.additional_info || cfg.additonal_info || cfg.phone_number || cfg.address || '';
+  const multiplePhysical = list.filter((c) => c.kind === 'physical').length > 1;
   const loc = { kind };
-  // Kinds that need the invitee to supply the detail.
+  // Only send location.location when the kind actually needs invitee-supplied
+  // detail. A single fixed location (physical/conference) is booked with just
+  // the kind — Calendly fills in its configured address/link.
   if (kind === 'outbound_call') loc.location = phone || detail || '';
   else if (kind === 'ask_invitee') loc.location = detail || phone || 'To be confirmed on the call';
-  else if (detail) loc.location = detail; // physical / custom / inbound_call with a fixed value
+  else if (kind === 'custom' && detail) loc.location = detail;
+  else if (kind === 'physical' && multiplePhysical && detail) loc.location = detail;
   return loc;
 }
 
