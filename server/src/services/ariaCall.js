@@ -21,8 +21,6 @@ const Setting = require('../models/Setting');
 const elevenlabs = require('./elevenlabs');
 const calendly = require('./calendly');
 const { logStatusChange } = require('./lotEventLogger');
-const { sendSms } = require('./sms');
-const { sendEmail } = require('./mailer');
 const { enqueueBroadcast, bumpReminderCount } = require('./enqueue');
 const { resolveDefaultsForProject } = require('./templateResolver');
 
@@ -249,65 +247,11 @@ async function getAvailability({ limit = 6 } = {}) {
   };
 }
 
-// Best-effort delivery of the confirmation link to the homeowner. Never throws.
-// `contact` is the resolved { name, email, phone } — prefers what the agent
-// captured on the call, falling back to the lot buyer.
-async function sendConfirmation({ lot, contact, label, schedulingUrl }) {
-  const results = { sms: null, email: null };
-  if (!schedulingUrl) return results;
-  const projectName = lot.project?.name || 'your appointment';
-  const firstName = contact.name ? ` ${contact.name.split(/\s+/)[0]}` : '';
-  const smsBody =
-    `Hi${firstName}! This confirms ${label} for ${projectName}. ` +
-    `Tap to lock it in: ${schedulingUrl}`;
-  if (env.twilio.configured && contact.phone) {
-    try {
-      const r = await sendSms({ to: contact.phone, body: smsBody });
-      results.sms = r.messageId || 'sent';
-      await logChannel(lot, 'sms', contact.phone, smsBody, r.messageId);
-    } catch (e) {
-      results.sms = `error: ${e.message}`;
-    }
-  }
-  if (env.smtp.configured && contact.email) {
-    try {
-      const subject = `Confirm your ${projectName} appointment (${label})`;
-      const html =
-        `<p>Hi ${contact.name || 'there'},</p>` +
-        `<p>This confirms your appointment for <strong>${label}</strong>.</p>` +
-        `<p><a href="${schedulingUrl}">Click here to confirm and add it to your calendar</a>.</p>`;
-      const r = await sendEmail({ to: contact.email, subject, html, text: `${subject}\n\n${schedulingUrl}` });
-      results.email = r.messageId || 'sent';
-      await logChannel(lot, 'email', contact.email, subject, r.messageId);
-    } catch (e) {
-      results.email = `error: ${e.message}`;
-    }
-  }
-  return results;
-}
-
-async function logChannel(lot, type, to, body, providerId) {
-  try {
-    await MessageLog.create({
-      project: lot.project?._id || lot.project,
-      lot: lot._id,
-      type,
-      direction: 'out',
-      to,
-      subject: type === 'email' ? body : '',
-      body: type === 'sms' ? body : '',
-      status: 'sent',
-      providerId: providerId || '',
-      sentAt: new Date(),
-    });
-  } catch {
-    /* logging is never fatal */
-  }
-}
-
-// Answer the book_appointment tool: record the chosen slot on the lot, flip it
-// to `scheduled`, and fire off the confirmation link. Returns a shape whose
-// `message` Aria can read back to the homeowner verbatim.
+// Answer the book_appointment tool: actually book the chosen slot on Calendly
+// (Create Event Invitee), then flip the lot to `scheduled`. Calendly sends its
+// own calendar invite/notifications; the project's template email + SMS already
+// went out when the call was placed, so we don't send anything extra here.
+// Returns a shape whose `message` Aria reads back to the homeowner.
 async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerPhone }) {
   if (!lotId) return { booked: false, message: 'I couldn’t find your record to book against.' };
   const lot = await Lot.findById(lotId).populate('project', 'name');
@@ -319,35 +263,9 @@ async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerP
     return { booked: false, message: 'Which time would you like? I need a specific slot to book.' };
   }
 
-  const tz = await calendly.resolveTimezone();
-  const eventTypeUri = await calendly.resolveEventTypeUri();
-
-  // Try to match the requested time to a real open slot so we can use its
-  // exact scheduling URL. Tolerate small differences by comparing to the
-  // minute.
-  let schedulingUrl = '';
-  let matchedIso = startTime;
-  let label = calendly.formatSlotLabel(startTime, tz);
-  try {
-    const avail = await calendly.listAvailableTimes({ limit: 50, days: 60 });
-    const wanted = new Date(startTime).getTime();
-    const match = (avail.slots || []).find(
-      (s) => Math.abs(new Date(s.startTime).getTime() - wanted) < 60 * 1000
-    );
-    if (match) {
-      schedulingUrl = match.schedulingUrl;
-      matchedIso = match.startTime;
-      label = match.label;
-    }
-  } catch {
-    /* fall through to a freshly minted link */
-  }
-  if (!schedulingUrl) schedulingUrl = await calendly.createSchedulingLink(eventTypeUri);
-
-  // The agent is told to pass an ISO start_time (from the availability tool),
-  // but guard against free-text ("Tuesday at 2pm") so a bad value can't throw a
-  // Mongoose cast error mid-booking.
-  const startDate = new Date(matchedIso);
+  // Guard against free-text ("Tuesday at 2pm") — the agent should pass the exact
+  // ISO start_time returned by get_availability.
+  const startDate = new Date(startTime);
   if (!Number.isFinite(startDate.getTime())) {
     return {
       booked: false,
@@ -355,30 +273,82 @@ async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerP
     };
   }
 
+  const setting = await Setting.getSingleton();
+  const aria = (setting.aria && setting.aria.toObject?.()) || setting.aria || {};
+  const tz = aria.timezone || 'America/New_York';
+  const eventTypeUri = aria.calendlyEventTypeUri || env.calendly.eventTypeUri || '';
+  const label = calendly.formatSlotLabel(startDate.toISOString(), tz);
+
   const buyer =
     matchBuyer(lot, { phone: buyerPhone, email: buyerEmail, name: buyerName }) ||
     (lot.buyers || []).find((b) => b.role === lot.call?.toBuyerRole) ||
     (lot.buyers || [])[0] ||
     null;
+  const name = buyerName || buyer?.name || '';
+  const email = (buyerEmail || buyer?.email || '').trim().toLowerCase();
+
+  // Calendly requires an invitee email to create the booking.
+  if (!email) {
+    return {
+      booked: false,
+      needsEmail: true,
+      message: 'I just need an email address to send the calendar invite — what’s the best email for you?',
+    };
+  }
+
+  // Actually book it on Calendly.
+  const result = await calendly.bookOnCalendly({
+    eventTypeUri,
+    startTimeIso: startDate.toISOString(),
+    name,
+    email,
+    timezone: tz,
+    locationKind: aria.calendlyLocationKind || '',
+  });
+
+  if (!result.ok) {
+    await MessageLog.create({
+      project: lot.project?._id || lot.project,
+      lot: lot._id,
+      type: 'calendly',
+      direction: 'in',
+      to: email,
+      subject: 'Aria booking failed',
+      body: `Aria tried to book ${label} on Calendly but it failed: ${result.message || 'unknown error'}`,
+      status: 'failed',
+      error: result.message || '',
+      sentAt: new Date(),
+    }).catch(() => {});
+    // A taken slot is the common recoverable case — nudge the agent to re-offer.
+    const taken = /already|taken|no longer|unavailable|conflict/i.test(result.message || '');
+    return {
+      booked: false,
+      message: taken
+        ? 'It looks like that time was just taken — let me check what else is open.'
+        : 'I wasn’t able to lock that in just now. Let me try another time or have someone follow up.',
+      error: result.message,
+    };
+  }
 
   const priorStatus = lot.status;
   const now = new Date();
   lot.status = 'scheduled';
   lot.calendlyWarning = '';
+  lot.calendlyEventUri = result.eventUri || lot.calendlyEventUri;
   lot.calendlyEvent = {
     name: `${lot.project?.name || 'Appointment'} — booked by Aria`,
     startTime: startDate,
     endTime: null,
-    inviteeName: buyerName || buyer?.name || '',
-    inviteeEmail: (buyerEmail || buyer?.email || '').toLowerCase(),
+    inviteeName: name,
+    inviteeEmail: email,
     inviteeStatus: 'active',
     matchedBuyerRole: buyer?.role || lot.call?.toBuyerRole || '',
-    location: 'Phone booking',
-    rescheduleUrl: '',
-    cancelUrl: '',
+    location: '',
+    rescheduleUrl: result.rescheduleUrl || '',
+    cancelUrl: result.cancelUrl || '',
     lastSyncedAt: now,
     bookedByAria: true,
-    schedulingUrl,
+    schedulingUrl: '',
   };
   if (lot.call) lot.call.booked = true;
   lot.markModified('calendlyEvent');
@@ -396,11 +366,11 @@ async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerP
     lot: lot._id,
     type: 'calendly',
     direction: 'in',
-    to: buyerEmail || buyer?.email || buyer?.phone || '',
-    subject: 'Aria booked appointment',
-    body: `Aria booked ${label} over the phone. Confirmation link: ${schedulingUrl || '(none available)'}`,
+    to: email,
+    subject: 'Aria booked appointment on Calendly',
+    body: `Aria booked ${label} on Calendly for ${name || email}.`,
     status: 'received',
-    providerId: '',
+    providerId: result.eventUri || '',
     sentAt: now,
   });
   await logStatusChange({
@@ -409,32 +379,41 @@ async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerP
     fromStatus: priorStatus,
     toStatus: 'scheduled',
     actor: 'aria_call',
-    message: `Aria booked ${label} over the phone.`,
+    message: `Aria booked ${label} on Calendly.`,
   });
-
-  // Prefer the contact details the agent captured on the call; fall back to the
-  // lot buyer (and to the number we actually dialed for the phone).
-  const contact = {
-    name: buyerName || buyer?.name || '',
-    email: (buyerEmail || buyer?.email || '').trim(),
-    phone: buyerPhone || buyer?.phone || lot.call?.toNumber || '',
-  };
-  const delivery = await sendConfirmation({ lot, contact, label, schedulingUrl });
-
-  const sentBits = [];
-  if (delivery.sms && !String(delivery.sms).startsWith('error')) sentBits.push('a text');
-  if (delivery.email && !String(delivery.email).startsWith('error')) sentBits.push('an email');
-  const sentPhrase = sentBits.length
-    ? ` I’ve sent ${sentBits.join(' and ')} with the confirmation link.`
-    : '';
 
   return {
     booked: true,
-    start_time: matchedIso,
+    start_time: startDate.toISOString(),
     label,
-    scheduling_url: schedulingUrl,
-    message: `Perfect — you’re booked for ${label}.${sentPhrase}`,
+    message: `Perfect — you’re all booked for ${label}. You’ll get a calendar invite by email shortly.`,
   };
+}
+
+// Poll fallback: fold any call still marked 'calling' onto its lot by asking
+// ElevenLabs for the finished conversation. Covers BOTH manual and queued calls
+// for when the post-call webhook isn't configured or was dropped. Bounded per
+// tick. Idempotent via applyPostCall.
+async function reconcileCallingLots({ limit = 15 } = {}) {
+  const lots = await Lot.find({ 'call.status': 'calling', 'call.conversationId': { $ne: '' } })
+    .select('call project')
+    .limit(limit)
+    .lean();
+  let applied = 0;
+  for (const lot of lots) {
+    const cid = lot.call?.conversationId;
+    if (!cid) continue;
+    const conv = await elevenlabs.fetchConversation(cid);
+    if (!conv) continue;
+    const st = String(conv.status || '').toLowerCase();
+    if (!['done', 'completed', 'failed', 'processed'].includes(st)) continue;
+    const normalised = elevenlabs.normalisePostCallPayload(conv);
+    normalised.lotId = String(lot._id);
+    if (!normalised.conversationId) normalised.conversationId = cid;
+    await applyPostCall(normalised);
+    applied += 1;
+  }
+  return { applied };
 }
 
 module.exports = {
@@ -442,6 +421,7 @@ module.exports = {
   applyPostCall,
   getAvailability,
   bookAppointment,
+  reconcileCallingLots,
   // exported for tests
   pickBuyer,
   matchBuyer,

@@ -222,6 +222,56 @@ async function listEventTypes() {
   }
 }
 
+// Actually book a slot on Calendly via the Scheduling API (Create Event
+// Invitee). This creates a real scheduled event and triggers Calendly's own
+// confirmations/calendar invite. Requires a paid plan + a token whose account
+// can schedule (host/admin PAT or OAuth). `locationKind` is only needed when
+// the event type requires a location choice (e.g. 'physical', 'outbound_call',
+// 'zoom_conference', 'ask_invitee'); leave blank to use the event type default.
+// Returns { ok, eventUri, resource } or { ok:false, message, status }.
+async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, locationKind }) {
+  const c = client();
+  if (!c) return { ok: false, message: 'Calendly is not connected.' };
+  const uri = eventTypeUri || (await resolveEventTypeUri());
+  if (!uri) return { ok: false, message: 'No Calendly event type is configured for phone booking.' };
+  if (!email) return { ok: false, message: 'An email address is required to book.' };
+  const start = new Date(startTimeIso);
+  if (!Number.isFinite(start.getTime())) return { ok: false, message: 'Invalid start time.' };
+
+  const payload = {
+    event_type: uri,
+    start_time: start.toISOString(), // ISO 8601 UTC with trailing Z
+    invitee: {
+      name: name || email,
+      email,
+      timezone: timezone || 'America/New_York',
+    },
+  };
+  if (locationKind) payload.location = { kind: locationKind };
+
+  try {
+    const { data } = await c.post('/invitees', payload);
+    const resource = data?.resource || data || {};
+    return {
+      ok: true,
+      resource,
+      eventUri: resource.event || resource.scheduled_event?.uri || resource.uri || '',
+      rescheduleUrl: resource.reschedule_url || '',
+      cancelUrl: resource.cancel_url || '',
+    };
+  } catch (err) {
+    const body = err.response?.data || {};
+    const detailMsg = Array.isArray(body.details) && body.details.length
+      ? body.details.map((d) => `${d.parameter || ''} ${d.message || ''}`.trim()).join('; ')
+      : '';
+    return {
+      ok: false,
+      status: err.response?.status,
+      message: detailMsg || body.message || body.title || err.message,
+    };
+  }
+}
+
 // Mint a single-use scheduling link for the event type. Used as the fallback
 // confirmation link when a matched slot didn't carry its own scheduling_url.
 // Returns the booking URL or ''.
@@ -929,6 +979,7 @@ module.exports = {
   formatSlotLabel,
   listAvailableTimes,
   createSchedulingLink,
+  bookOnCalendly,
   listEventTypes,
   // exported for the reconcile script + unit tests
   listEvents,

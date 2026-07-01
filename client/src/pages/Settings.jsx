@@ -319,6 +319,7 @@ function AriaCard({ aria, onSaved }) {
   const [form, setForm] = useState({
     calendlyEventTypeUri: aria.calendlyEventTypeUri || '',
     timezone: aria.timezone || 'America/New_York',
+    calendlyLocationKind: aria.calendlyLocationKind || '',
     firstMessage: aria.firstMessage || '',
     systemPrompt: aria.systemPrompt || '',
   });
@@ -430,6 +431,17 @@ function AriaCard({ aria, onSaved }) {
             placeholder="America/New_York"
           />
         </div>
+      </div>
+
+      <label>Calendly location kind (only if your event type requires one)</label>
+      <input
+        value={form.calendlyLocationKind}
+        onChange={(e) => setForm({ ...form, calendlyLocationKind: e.target.value })}
+        placeholder="e.g. physical, outbound_call, zoom_conference, ask_invitee — leave blank for the event type default"
+      />
+      <div className="muted" style={{ fontSize: 12, marginTop: 2, marginBottom: 6 }}>
+        Aria books the slot directly on Calendly (Create Event Invitee). If booking fails with a
+        location error, set the kind that matches your event type here.
       </div>
 
       <label>First message (optional — {'{first_name}'}, {'{project_name}'}, {'{available_slots}'} supported)</label>

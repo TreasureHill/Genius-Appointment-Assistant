@@ -35,6 +35,7 @@ router.get('/', async (req, res) => {
       // editable in the UI
       calendlyEventTypeUri: s.aria?.calendlyEventTypeUri || env.calendly.eventTypeUri || '',
       timezone: s.aria?.timezone || 'America/New_York',
+      calendlyLocationKind: s.aria?.calendlyLocationKind || '',
       firstMessage: s.aria?.firstMessage || '',
       systemPrompt: s.aria?.systemPrompt || '',
     },
@@ -177,11 +178,12 @@ router.post('/calendly/sync', async (req, res) => {
 
 // Aria (voice agent) — event type, timezone, and optional prompt overrides.
 router.patch('/aria', async (req, res) => {
-  const { calendlyEventTypeUri, timezone, firstMessage, systemPrompt } = req.body || {};
+  const { calendlyEventTypeUri, timezone, calendlyLocationKind, firstMessage, systemPrompt } = req.body || {};
   const s = await Setting.getSingleton();
   s.aria = s.aria || {};
   if (calendlyEventTypeUri != null) s.aria.calendlyEventTypeUri = String(calendlyEventTypeUri).trim();
   if (timezone != null) s.aria.timezone = String(timezone).trim() || 'America/New_York';
+  if (calendlyLocationKind != null) s.aria.calendlyLocationKind = String(calendlyLocationKind).trim();
   if (firstMessage != null) s.aria.firstMessage = String(firstMessage);
   if (systemPrompt != null) s.aria.systemPrompt = String(systemPrompt);
   await s.save();
