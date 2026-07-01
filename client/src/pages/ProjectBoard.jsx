@@ -193,6 +193,30 @@ export default function ProjectBoard() {
     }
   }
 
+  async function callLot(lot) {
+    const hasPhone = (lot.buyers || []).some((b) => b.phone && !b.optedOut);
+    if (!hasPhone) {
+      setSendMsg(`Lot ${lot.lotNumber} has no buyer phone number to call.`);
+      return;
+    }
+    setBusyLotId(lot._id);
+    setSendMsg('');
+    try {
+      const r = await api.post(`/api/lots/${lot._id}/call`, {});
+      setLots((prev) =>
+        prev.map((l) => (l._id === lot._id ? { ...l, call: { ...(l.call || {}), status: 'calling' } } : l))
+      );
+      setSendMsg(
+        `Aria is calling ${r.to || 'the buyer'} for lot ${lot.lotNumber}. ` +
+          'The transcript, recording, and any booking will appear on the lot page when the call ends.'
+      );
+    } catch (ex) {
+      setSendMsg('Call failed: ' + ex.message);
+    } finally {
+      setBusyLotId(null);
+    }
+  }
+
   async function deleteLot(lot) {
     if (!confirm(`Delete lot ${lot.lotNumber}? This removes the lot and any pending messages for it. Cannot be undone.`)) return;
     setBusyLotId(lot._id);
@@ -550,6 +574,18 @@ export default function ProjectBoard() {
                     <Link to={`/lots/${lot._id}`}>
                       <button className="secondary">Open</button>
                     </Link>{' '}
+                    {(lot.buyers || []).some((b) => b.phone && !b.optedOut) && (
+                      <>
+                        <button
+                          className="secondary"
+                          onClick={() => callLot(lot)}
+                          disabled={disabled || lot.call?.status === 'calling'}
+                          title="Call this buyer with Aria (offers Calendly times & books on the call)"
+                        >
+                          {lot.call?.status === 'calling' ? '📞 …' : '📞 Call'}
+                        </button>{' '}
+                      </>
+                    )}
                     <button
                       className="danger"
                       onClick={() => deleteLot(lot)}

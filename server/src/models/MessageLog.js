@@ -6,7 +6,7 @@ const MessageLogSchema = new mongoose.Schema(
     lot: { type: mongoose.Schema.Types.ObjectId, ref: 'Lot', index: true },
     rep: { type: mongoose.Schema.Types.ObjectId, ref: 'Rep', default: null },
     buyerIndex: { type: Number, default: null },
-    type: { type: String, enum: ['email', 'sms', 'calendly'], required: true, index: true },
+    type: { type: String, enum: ['email', 'sms', 'calendly', 'call'], required: true, index: true },
     direction: { type: String, enum: ['out', 'in'], default: 'out', index: true },
     to: { type: String, default: '' },
     subject: { type: String, default: '' },

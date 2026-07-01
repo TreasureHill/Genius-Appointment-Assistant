@@ -82,6 +82,123 @@ async function listInvitees(eventUri) {
   return out;
 }
 
+// ---- Availability + booking (used by Aria's phone tools) ----
+
+// Resolve the Event Type URI Aria offers over the phone: Settings → Aria
+// first, then the env fallback. Returns '' when unset.
+async function resolveEventTypeUri() {
+  try {
+    const setting = await Setting.getSingleton();
+    if (setting.aria?.calendlyEventTypeUri) return setting.aria.calendlyEventTypeUri;
+  } catch {
+    /* fall through to env */
+  }
+  return env.calendly.eventTypeUri || '';
+}
+
+async function resolveTimezone() {
+  try {
+    const setting = await Setting.getSingleton();
+    if (setting.aria?.timezone) return setting.aria.timezone;
+  } catch {
+    /* ignore */
+  }
+  return 'America/New_York';
+}
+
+// Human-friendly label for a slot, e.g. "Tue, Jul 8 at 2:00 PM EDT".
+function formatSlotLabel(startTimeIso, timeZone = 'America/New_York') {
+  const d = new Date(startTimeIso);
+  if (!Number.isFinite(d.getTime())) return String(startTimeIso || '');
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short',
+      timeZone,
+    }).format(d);
+  } catch {
+    return d.toISOString();
+  }
+}
+
+// Pull real open slots from Calendly's event_type_available_times endpoint.
+// That endpoint only accepts a window of <= 7 days starting in the future, so
+// we chunk `days` into <=7-day requests and stop once we have `limit` slots.
+// Returns { ok, message, slots: [{ startTime, label, schedulingUrl }] }.
+async function listAvailableTimes({ eventTypeUri, days = 7, limit = 6, timeZone } = {}) {
+  const c = client();
+  if (!c) return { ok: false, message: 'Calendly is not connected yet.', slots: [] };
+  const uri = eventTypeUri || (await resolveEventTypeUri());
+  if (!uri) {
+    return {
+      ok: false,
+      message: 'No Calendly event type is configured for phone booking.',
+      slots: [],
+    };
+  }
+  const tz = timeZone || (await resolveTimezone());
+  const slots = [];
+  const CHUNK_DAYS = 7;
+  // Start 2 minutes out — Calendly rejects a start_time that isn't in the future.
+  let windowStart = new Date(Date.now() + 2 * 60 * 1000);
+  const hardEnd = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+  try {
+    while (windowStart < hardEnd && slots.length < limit) {
+      const windowEnd = new Date(
+        Math.min(windowStart.getTime() + CHUNK_DAYS * 24 * 60 * 60 * 1000, hardEnd.getTime())
+      );
+      const params = new URLSearchParams({
+        event_type: uri,
+        start_time: windowStart.toISOString(),
+        end_time: windowEnd.toISOString(),
+      });
+      const { data } = await c.get(`/event_type_available_times?${params.toString()}`);
+      for (const s of data.collection || []) {
+        if (s.status && s.status !== 'available') continue;
+        slots.push({
+          startTime: s.start_time,
+          label: formatSlotLabel(s.start_time, tz),
+          schedulingUrl: s.scheduling_url || '',
+        });
+        if (slots.length >= limit) break;
+      }
+      windowStart = windowEnd;
+    }
+    return { ok: true, slots };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err.response?.data?.message || err.message || 'Could not read Calendly availability.',
+      slots,
+    };
+  }
+}
+
+// Mint a single-use scheduling link for the event type. Used as the fallback
+// confirmation link when a matched slot didn't carry its own scheduling_url.
+// Returns the booking URL or ''.
+async function createSchedulingLink(eventTypeUri) {
+  const c = client();
+  if (!c) return '';
+  const uri = eventTypeUri || (await resolveEventTypeUri());
+  if (!uri) return '';
+  try {
+    const { data } = await c.post('/scheduling_links', {
+      owner: uri,
+      owner_type: 'EventType',
+      max_event_count: 1,
+    });
+    return data?.resource?.booking_url || '';
+  } catch {
+    return '';
+  }
+}
+
 // ---- Pure helpers (no I/O — unit-tested in scripts/__tests__) ----
 
 function normalizeEmail(s) {
@@ -763,6 +880,12 @@ module.exports = {
   verifyCalendly,
   syncAll,
   handleWebhook,
+  // availability + booking (Aria phone tools)
+  resolveEventTypeUri,
+  resolveTimezone,
+  formatSlotLabel,
+  listAvailableTimes,
+  createSchedulingLink,
   // exported for the reconcile script + unit tests
   listEvents,
   listInvitees,

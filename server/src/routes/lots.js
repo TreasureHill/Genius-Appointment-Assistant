@@ -5,6 +5,8 @@ const LotEvent = require('../models/LotEvent');
 const Outbox = require('../models/Outbox');
 const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
 const { logStatusChange } = require('../services/lotEventLogger');
+const elevenlabs = require('../services/elevenlabs');
+const ariaCall = require('../services/ariaCall');
 
 const router = express.Router();
 
@@ -166,6 +168,67 @@ router.post('/:id/send', async (req, res) => {
   const result = await enqueueBroadcast({ lotIds: [req.params.id], templateId });
   await bumpReminderCount(result.touchedLotIds);
   res.json(result);
+});
+
+// Place an outbound Aria call to this lot's buyer. The transcript, summary,
+// duration, and outcome arrive later via /api/webhooks/elevenlabs; any booking
+// Aria makes mid-call comes in through /api/aria/tools/book.
+const CALL_ERROR_HTTP = {
+  lot_not_found: [404, 'Lot not found.'],
+  lot_opted_out: [409, 'This lot has opted out — calling is disabled.'],
+  no_callable_buyer: [400, 'No buyer on this lot has a phone number to call.'],
+  not_dispatchable: [
+    503,
+    'Aria calling isn’t configured. Set ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID, and ELEVENLABS_AGENT_PHONE_NUMBER_ID.',
+  ],
+  buyer_missing_phone: [400, 'That buyer has no phone number.'],
+  agent_not_configured: [503, 'Set ELEVENLABS_AGENT_ID before calling.'],
+  agent_phone_number_not_configured: [503, 'Set ELEVENLABS_AGENT_PHONE_NUMBER_ID before calling.'],
+};
+
+router.post('/:id/call', async (req, res) => {
+  const { buyerRole } = req.body || {};
+  try {
+    const result = await ariaCall.dispatchCall({ lotId: req.params.id, buyerRole });
+    const lot = await Lot.findById(req.params.id).populate('project');
+    res.json({ ...result, lot });
+  } catch (err) {
+    const mapped = CALL_ERROR_HTTP[err.code];
+    if (mapped) return res.status(mapped[0]).json({ error: err.code, message: mapped[1] });
+    // Upstream ElevenLabs failure (bad number, quota, etc.)
+    const status = err.response?.status || 502;
+    return res.status(status).json({
+      error: 'call_dispatch_failed',
+      message: err.response?.data?.detail || err.response?.data?.message || err.message,
+    });
+  }
+});
+
+// Stream the recording for this lot's most recent call. Proxied through the
+// server because the ElevenLabs audio endpoint needs the API key — we never
+// expose that to the browser.
+router.get('/:id/recording', async (req, res) => {
+  const lot = await Lot.findById(req.params.id).select('call').lean();
+  if (!lot) return res.status(404).json({ error: 'not_found' });
+  const cid = lot.call?.conversationId;
+  if (!cid) return res.status(404).json({ error: 'no_recording' });
+  try {
+    const { stream, contentType, contentLength } = await elevenlabs.fetchConversationAudio(cid);
+    res.setHeader('Content-Type', contentType);
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    stream.pipe(res);
+    stream.on('error', () => {
+      if (!res.headersSent) res.status(502).json({ error: 'recording_stream_failed' });
+      else res.destroy();
+    });
+  } catch (err) {
+    const code = err.upstreamStatus === 404 ? 404 : 502;
+    return res.status(code).json({
+      error: err.code || 'recording_unavailable',
+      message: err.upstreamStatus === 404 ? 'No recording is available for this call yet.' : err.message,
+    });
+  }
 });
 
 function escapeRegex(s) {

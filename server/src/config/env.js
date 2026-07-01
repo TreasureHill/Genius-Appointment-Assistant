@@ -44,6 +44,27 @@ const env = {
     // run headless (e.g. in CI / a cron box) without the DB setting.
     userUri: process.env.CALENDLY_USER_URI || '',
     webhookSecret: process.env.CALENDLY_WEBHOOK_SECRET || '',
+    // The Calendly Event Type Aria offers over the phone. Used to look up
+    // real availability (event_type_available_times) and to mint the
+    // scheduling link we text/email the homeowner to confirm. Normally set
+    // in Settings → Aria; env is a fallback for headless runs.
+    eventTypeUri: process.env.CALENDLY_EVENT_TYPE_URI || '',
+  },
+  // ElevenLabs Conversational AI ("Aria"). ElevenLabs places the outbound
+  // call through their managed Twilio integration, so we don't need the
+  // Twilio SDK for voice dispatch. The post-call webhook (transcript,
+  // summary, recording) is HMAC-verified with webhookSecret.
+  elevenlabs: {
+    apiKey: process.env.ELEVENLABS_API_KEY || '',
+    agentId: process.env.ELEVENLABS_AGENT_ID || '',
+    agentPhoneNumberId: process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID || '',
+    webhookSecret: process.env.ELEVENLABS_WEBHOOK_SECRET || '',
+  },
+  // Shared secret the ElevenLabs agent presents (x-aria-secret header) when
+  // it calls our server tools mid-conversation to read Calendly availability
+  // and book a slot. Leave blank to accept unsigned tool calls (dev only).
+  aria: {
+    toolSecret: process.env.ARIA_TOOL_SECRET || '',
   },
   defaults: {
     pacingMin: toInt(process.env.DEFAULT_PACING_MIN_SEC, 30),
@@ -56,5 +77,11 @@ const env = {
 env.smtp.configured = Boolean(env.smtp.host && env.smtp.from);
 env.twilio.configured = Boolean(env.twilio.sid && env.twilio.token && env.twilio.from);
 env.calendly.configured = Boolean(env.calendly.token);
+// `configured` = we can talk to the API at all (used for health display).
+// `dispatchable` = we have everything needed to actually place a call.
+env.elevenlabs.configured = Boolean(env.elevenlabs.apiKey);
+env.elevenlabs.dispatchable = Boolean(
+  env.elevenlabs.apiKey && env.elevenlabs.agentId && env.elevenlabs.agentPhoneNumberId
+);
 
 module.exports = env;

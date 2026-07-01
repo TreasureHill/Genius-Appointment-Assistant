@@ -306,6 +306,150 @@ function OwnerCard({ owner, onSaved }) {
   );
 }
 
+function StatusDot({ ok, label }) {
+  return (
+    <span style={{ marginRight: 12, whiteSpace: 'nowrap' }}>
+      <span className={`badge ${ok ? 'ok' : 'err'}`}>{ok ? '✓' : '✗'}</span>{' '}
+      <span className="muted" style={{ fontSize: 12 }}>{label}</span>
+    </span>
+  );
+}
+
+function AriaCard({ aria, onSaved }) {
+  const [form, setForm] = useState({
+    calendlyEventTypeUri: aria.calendlyEventTypeUri || '',
+    timezone: aria.timezone || 'America/New_York',
+    firstMessage: aria.firstMessage || '',
+    systemPrompt: aria.systemPrompt || '',
+  });
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
+  async function save() {
+    setBusy(true);
+    setMsg('');
+    try {
+      await api.patch('/api/settings/aria', form);
+      setMsg('Saved.');
+      onSaved && onSaved();
+    } catch (ex) {
+      setMsg('Error: ' + ex.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function previewAvailability() {
+    setMsg('');
+    setPreview({ loading: true });
+    try {
+      const r = await api.post('/api/settings/aria/availability-preview', { limit: 6 });
+      setPreview(r);
+    } catch (ex) {
+      setPreview({ available: false, message: ex.message, slots: [] });
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2 style={{ marginTop: 0 }}>📞 Aria voice calling (ElevenLabs)</h2>
+      <p className="muted" style={{ marginTop: 0 }}>
+        Aria calls homeowners, offers open Calendly times, and books the appointment on the call.
+        Secrets (API key, agent id, phone-number id) live in <span className="kbd">.env</span>; the
+        Calendly event type and prompts are set here.
+      </p>
+
+      <div style={{ marginBottom: 12 }}>
+        <StatusDot ok={aria.apiKeySet} label="API key" />
+        <StatusDot ok={aria.agentIdSet} label="Agent id" />
+        <StatusDot ok={aria.agentPhoneSet} label="Agent phone id" />
+        <StatusDot ok={aria.dispatchable} label="Ready to call" />
+        <StatusDot ok={aria.webhookSecretSet} label="Webhook secret" />
+        <StatusDot ok={aria.toolSecretSet} label="Tool secret" />
+      </div>
+
+      <div className="row">
+        <div style={{ flex: 3 }}>
+          <label>Calendly event type URI (what Aria books)</label>
+          <input
+            value={form.calendlyEventTypeUri}
+            onChange={(e) => setForm({ ...form, calendlyEventTypeUri: e.target.value })}
+            placeholder="https://api.calendly.com/event_types/…"
+          />
+        </div>
+        <div>
+          <label>Timezone (for spoken times)</label>
+          <input
+            value={form.timezone}
+            onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+            placeholder="America/New_York"
+          />
+        </div>
+      </div>
+
+      <label>First message (optional — {'{first_name}'}, {'{project_name}'}, {'{available_slots}'} supported)</label>
+      <textarea
+        value={form.firstMessage}
+        onChange={(e) => setForm({ ...form, firstMessage: e.target.value })}
+        placeholder="Hi {first_name}, this is Aria calling about lot {lot_number} at {project_name}…"
+        rows={2}
+      />
+      <label>System prompt override (optional)</label>
+      <textarea
+        value={form.systemPrompt}
+        onChange={(e) => setForm({ ...form, systemPrompt: e.target.value })}
+        placeholder="Leave blank to use the prompt configured on the ElevenLabs agent."
+        rows={3}
+      />
+
+      <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={save} disabled={busy}>
+          {busy ? 'Saving…' : 'Save Aria settings'}
+        </button>
+        <button className="secondary" onClick={previewAvailability}>
+          Preview availability
+        </button>
+        {msg && <span className={msg.startsWith('Error') ? 'error' : 'success'}>{msg}</span>}
+      </div>
+
+      {preview && (
+        <div style={{ marginTop: 10, fontSize: 13 }}>
+          {preview.loading ? (
+            <span className="muted">Checking Calendly…</span>
+          ) : preview.available ? (
+            <div>
+              <div className="muted" style={{ marginBottom: 4 }}>Next open slots:</div>
+              <ul style={{ margin: 0 }}>
+                {preview.slots.map((s) => (
+                  <li key={s.start_time}>{s.label}</li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="error">{preview.message}</div>
+          )}
+        </div>
+      )}
+
+      <div
+        className="muted"
+        style={{ fontSize: 12, marginTop: 12, border: '1px dashed var(--border)', padding: 8, borderRadius: 6 }}
+      >
+        <strong>Configure these URLs on the ElevenLabs agent:</strong>
+        <div>Post-call webhook: <span className="kbd">{origin}/api/webhooks/elevenlabs</span></div>
+        <div>Tool — get availability: <span className="kbd">{origin}/api/aria/tools/availability</span></div>
+        <div>Tool — book appointment: <span className="kbd">{origin}/api/aria/tools/book</span></div>
+        <div style={{ marginTop: 4 }}>
+          Send the <span className="kbd">x-aria-secret</span> header (= ARIA_TOOL_SECRET) on both
+          tools, and set the same webhook secret (= ELEVENLABS_WEBHOOK_SECRET) on the agent.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Health({ h }) {
   if (!h) return <span className="muted">—</span>;
   return (
@@ -591,6 +735,8 @@ export default function Settings() {
           <button onClick={syncCalendly}>Sync now</button>
         </div>
       </div>
+
+      <AriaCard aria={s.aria || {}} onSaved={load} />
 
       <DangerZone onDone={load} />
 

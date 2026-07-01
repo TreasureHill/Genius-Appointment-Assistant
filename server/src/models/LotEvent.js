@@ -13,7 +13,15 @@ const LotEventSchema = new mongoose.Schema(
     // the rest are background workers / system events.
     actor: {
       type: String,
-      enum: ['user', 'sender_worker', 'completion_worker', 'calendly_sync', 'calendly_map', 'system'],
+      enum: [
+        'user',
+        'sender_worker',
+        'completion_worker',
+        'calendly_sync',
+        'calendly_map',
+        'aria_call',
+        'system',
+      ],
       default: 'system',
       index: true,
     },

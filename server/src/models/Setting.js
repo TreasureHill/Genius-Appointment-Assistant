@@ -85,6 +85,21 @@ const SettingSchema = new mongoose.Schema(
       checkedAt: { type: Date, default: null },
       message: { type: String, default: '' },
     },
+    // Aria — the ElevenLabs voice agent that calls homeowners. Agent id /
+    // phone-number id / API key live in .env (secrets); everything editable
+    // in the UI lives here.
+    aria: {
+      // Calendly Event Type URI Aria offers over the phone
+      // (https://api.calendly.com/event_types/XXXX). Falls back to
+      // CALENDLY_EVENT_TYPE_URI when blank.
+      calendlyEventTypeUri: { type: String, default: '' },
+      // IANA timezone used to speak/label slot times to the homeowner.
+      timezone: { type: String, default: 'America/New_York' },
+      // Optional per-call overrides pushed to ElevenLabs. Support {first_name},
+      // {project_name}, {available_slots}, etc. (substituted server-side).
+      firstMessage: { type: String, default: '' },
+      systemPrompt: { type: String, default: '' },
+    },
     lastCalendlySync: { type: Date, default: null },
     senderPaused: { type: Boolean, default: false },
     remindersPaused: { type: Boolean, default: false },

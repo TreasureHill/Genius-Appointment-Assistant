@@ -39,6 +39,40 @@ const LotSchema = new mongoose.Schema(
       rescheduleUrl: { type: String, default: '' },
       cancelUrl: { type: String, default: '' },
       lastSyncedAt: { type: Date, default: null },
+      // Set when Aria booked this slot over the phone (see services/ariaCall).
+      // The lot flips to 'scheduled' immediately; `schedulingUrl` is the
+      // Calendly link we text/email the homeowner to lock in a real event,
+      // which the normal webhook/poller then reconciles. `calendlyEventUri`
+      // stays empty until that happens, so the cancellation handler (which
+      // keys off the event URI) never touches an Aria-held slot.
+      bookedByAria: { type: Boolean, default: false },
+      schedulingUrl: { type: String, default: '' },
+    },
+    // Latest outbound voice call placed by Aria (ElevenLabs Conversational
+    // AI). Dispatch sets status='calling' + conversationId; the post-call
+    // webhook fills in duration, summary, transcript, and outcome. The
+    // recording itself is streamed on demand from ElevenLabs via
+    // GET /api/lots/:id/recording (most agents don't ship a public URL).
+    call: {
+      status: {
+        type: String,
+        enum: ['idle', 'calling', 'completed', 'voicemail', 'no_answer', 'failed'],
+        default: 'idle',
+      },
+      conversationId: { type: String, default: '' },
+      toNumber: { type: String, default: '' },
+      toBuyerRole: { type: String, default: '' },
+      startedAt: { type: Date, default: null },
+      endedAt: { type: Date, default: null },
+      durationSec: { type: Number, default: 0 },
+      summary: { type: String, default: '' },
+      transcript: { type: String, default: '' },
+      recordingUrl: { type: String, default: '' },
+      // Outcome as classified from the transcript / ElevenLabs analysis.
+      outcome: { type: String, default: '' },
+      // Set true once the agent's book_appointment tool fired during the call.
+      booked: { type: Boolean, default: false },
+      attempts: { type: Number, default: 0 },
     },
     bounceCount: { type: Number, default: 0 },
     lastBounceAt: { type: Date, default: null },

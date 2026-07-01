@@ -1,10 +1,46 @@
 const express = require('express');
 const env = require('../config/env');
 const { handleWebhook } = require('../services/calendly');
+const elevenlabs = require('../services/elevenlabs');
+const ariaCall = require('../services/ariaCall');
 const Lot = require('../models/Lot');
 const MessageLog = require('../models/MessageLog');
 
 const router = express.Router();
+
+// ElevenLabs post-call webhook — fires when an Aria conversation finishes and
+// carries the transcript, summary, duration, and (sometimes) a recording URL.
+// Verified via HMAC when ELEVENLABS_WEBHOOK_SECRET is set; in dev an unsigned
+// payload is accepted with a logged warning. We capture the raw body (verify
+// hook) because the signature is computed over the exact bytes. Idempotent per
+// conversation_id inside ariaCall.applyPostCall.
+router.post(
+  '/elevenlabs',
+  express.json({ limit: '3mb', verify: (req, _res, buf) => { req.rawBody = buf; } }),
+  async (req, res) => {
+    const secret = env.elevenlabs.webhookSecret;
+    const verification = elevenlabs.verifyWebhookSignature({
+      rawBody: req.rawBody ? req.rawBody.toString('utf8') : JSON.stringify(req.body || {}),
+      header: req.get('elevenlabs-signature'),
+      secret,
+    });
+    if (!verification.ok) {
+      return res.status(401).json({ error: 'invalid_signature', reason: verification.reason });
+    }
+    if (!secret) {
+      console.warn('[elevenlabs] webhook accepted unsigned — set ELEVENLABS_WEBHOOK_SECRET in production');
+    }
+    try {
+      const normalised = elevenlabs.normalisePostCallPayload(req.body || {});
+      const result = await ariaCall.applyPostCall(normalised);
+      // Always 200 so ElevenLabs doesn't retry a payload we intentionally
+      // ignored (unknown lot, dedup, etc.).
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(500).json({ ok: false, message: err.message });
+    }
+  }
+);
 
 // Calendly sends a JSON payload. Verify the shared secret via a header we ask
 // the user to configure on the webhook subscription (or query param fallback).
