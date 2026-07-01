@@ -127,9 +127,13 @@ function formatSlotLabel(startTimeIso, timeZone = 'America/New_York') {
 
 // Pull real open slots from Calendly's event_type_available_times endpoint.
 // That endpoint only accepts a window of <= 7 days starting in the future, so
-// we chunk `days` into <=7-day requests and stop once we have `limit` slots.
+// we chunk `days` into <=7-day requests, walking forward until we've collected
+// `limit` slots or run out the horizon. Default horizon is 60 days so an empty
+// next week doesn't hide the next actual opening (Calendly caps this at the
+// event type's own rolling scheduling window anyway). Chunks are chronological,
+// so the soonest slots always come first.
 // Returns { ok, message, slots: [{ startTime, label, schedulingUrl }] }.
-async function listAvailableTimes({ eventTypeUri, days = 7, limit = 6, timeZone } = {}) {
+async function listAvailableTimes({ eventTypeUri, days = 60, limit = 6, timeZone } = {}) {
   const c = client();
   if (!c) return { ok: false, message: 'Calendly is not connected yet.', slots: [] };
   const uri = eventTypeUri || (await resolveEventTypeUri());

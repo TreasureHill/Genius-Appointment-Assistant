@@ -238,7 +238,7 @@ async function getAvailability({ limit = 6 } = {}) {
   if (!avail.slots.length) {
     return {
       available: false,
-      message: 'I don’t see any open times in the next week.',
+      message: 'I don’t see any open times on the calendar right now.',
       slots: [],
     };
   }
@@ -329,7 +329,7 @@ async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerP
   let matchedIso = startTime;
   let label = calendly.formatSlotLabel(startTime, tz);
   try {
-    const avail = await calendly.listAvailableTimes({ limit: 50, days: 14 });
+    const avail = await calendly.listAvailableTimes({ limit: 50, days: 60 });
     const wanted = new Date(startTime).getTime();
     const match = (avail.slots || []).find(
       (s) => Math.abs(new Date(s.startTime).getTime() - wanted) < 60 * 1000
