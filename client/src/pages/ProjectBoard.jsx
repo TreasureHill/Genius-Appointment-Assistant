@@ -225,6 +225,7 @@ export default function ProjectBoard() {
   const [sending, setSending] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
+  const [queue, setQueue] = useState(null);
 
   useEffect(() => {
     api
@@ -374,6 +375,72 @@ export default function ProjectBoard() {
       setSendMsg('Call failed: ' + ex.message);
     } finally {
       setBusyLotId(null);
+    }
+  }
+
+  async function refreshQueue() {
+    try {
+      setQueue(await api.get('/api/calls/queue'));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // Load any existing queue on mount.
+  useEffect(() => {
+    refreshQueue();
+  }, []);
+
+  // While the queue has anything active/pending, poll it (and refresh lots so
+  // the per-row call badges track calling → completed) every 5s.
+  const queueActive = !!queue && (queue.activeCount > 0 || queue.queuedCount > 0);
+  useEffect(() => {
+    if (!queueActive) return undefined;
+    const t = setInterval(async () => {
+      await refreshQueue();
+      if (selectedIdsKey) {
+        try {
+          setLots(await api.get(`/api/lots?projects=${selectedIdsKey}&limit=1000`));
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [queueActive, selectedIdsKey]);
+
+  async function queueSelected() {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setSendMsg('');
+    try {
+      const r = await api.post('/api/calls/queue', { lotIds: ids });
+      setQueue(r.status);
+      setSelected(new Set());
+      const skips = (r.skipped || []).length;
+      setSendMsg(
+        `Queued ${r.queued.length} lot${r.queued.length === 1 ? '' : 's'} for Aria to call one by one` +
+          (skips ? ` (skipped ${skips} — opted out / no phone / already queued)` : '') +
+          '. They dial sequentially; each call starts when the previous one ends.'
+      );
+      // Reflect the "queued" badge immediately.
+      const idSet = new Set(r.queued);
+      setLots((prev) =>
+        prev.map((l) => (idSet.has(String(l._id)) ? { ...l, call: { ...(l.call || {}), status: 'queued' } } : l))
+      );
+    } catch (ex) {
+      setSendMsg('Could not queue calls: ' + ex.message);
+    }
+  }
+
+  async function clearQueue() {
+    try {
+      const r = await api.del('/api/calls/queue');
+      setQueue(r.status);
+      setSendMsg(`Cleared ${r.cancelled} queued call${r.cancelled === 1 ? '' : 's'} (any in-progress call finishes).`);
+      if (selectedIdsKey) setLots(await api.get(`/api/lots?projects=${selectedIdsKey}&limit=1000`));
+    } catch (ex) {
+      setSendMsg('Could not clear queue: ' + ex.message);
     }
   }
 
@@ -641,6 +708,13 @@ export default function ProjectBoard() {
           Send to {selected.size} selected
         </button>
         <button
+          onClick={queueSelected}
+          disabled={selected.size === 0}
+          title="Call the selected lots one by one with Aria — each call starts when the previous ends"
+        >
+          📞 Call {selected.size} selected
+        </button>
+        <button
           className="danger"
           onClick={deleteSelected}
           disabled={selected.size === 0}
@@ -649,6 +723,35 @@ export default function ProjectBoard() {
           Delete {selected.size} selected
         </button>
       </div>
+
+      {queue && (queue.activeCount > 0 || queue.queuedCount > 0) && (
+        <div className="card" style={{ marginBottom: 10, borderColor: 'var(--primary)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <strong>📞 Aria call queue</strong>
+            {queue.active ? (
+              <span className="badge pending">
+                calling Lot {queue.active.lot?.lotNumber || '—'}…
+              </span>
+            ) : (
+              <span className="muted">starting…</span>
+            )}
+            <span className="muted" style={{ fontSize: 12 }}>
+              {queue.queuedCount} waiting
+            </span>
+            <div style={{ flex: 1 }} />
+            <button className="secondary" onClick={clearQueue} disabled={queue.queuedCount === 0}>
+              Clear queue
+            </button>
+          </div>
+          {queue.pending && queue.pending.length > 0 && (
+            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+              Up next:{' '}
+              {queue.pending.slice(0, 12).map((p) => p.lot?.lotNumber || '?').join(', ')}
+              {queue.pending.length > 12 ? '…' : ''}
+            </div>
+          )}
+        </div>
+      )}
       {sendMsg && (
         <div className={sendMsg.startsWith('Error') ? 'error' : 'card'} style={{ marginBottom: 10 }}>
           {sendMsg}
@@ -758,10 +861,14 @@ export default function ProjectBoard() {
                         <button
                           className="secondary"
                           onClick={() => callLot(lot)}
-                          disabled={disabled || lot.call?.status === 'calling'}
+                          disabled={disabled || lot.call?.status === 'calling' || lot.call?.status === 'queued'}
                           title="Call this buyer with Aria (offers Calendly times & books on the call)"
                         >
-                          {lot.call?.status === 'calling' ? '📞 …' : '📞 Call'}
+                          {lot.call?.status === 'calling'
+                            ? '📞 …'
+                            : lot.call?.status === 'queued'
+                              ? '📞 queued'
+                              : '📞 Call'}
                         </button>{' '}
                       </>
                     )}

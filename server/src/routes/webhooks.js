@@ -3,6 +3,7 @@ const env = require('../config/env');
 const { handleWebhook } = require('../services/calendly');
 const elevenlabs = require('../services/elevenlabs');
 const ariaCall = require('../services/ariaCall');
+const callQueue = require('../services/callQueue');
 const Lot = require('../models/Lot');
 const MessageLog = require('../models/MessageLog');
 
@@ -33,6 +34,9 @@ router.post(
     try {
       const normalised = elevenlabs.normalisePostCallPayload(req.body || {});
       const result = await ariaCall.applyPostCall(normalised);
+      // Nudge the sequential call queue so the next call starts right away
+      // instead of waiting for the worker's poll tick. Best-effort.
+      callQueue.advance().catch(() => {});
       // Always 200 so ElevenLabs doesn't retry a payload we intentionally
       // ignored (unknown lot, dedup, etc.).
       res.json({ ok: true, ...result });
