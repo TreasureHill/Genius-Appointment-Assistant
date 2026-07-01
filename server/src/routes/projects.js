@@ -36,7 +36,7 @@ router.get('/:id', async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-  const allowed = ['name', 'description', 'active', 'defaultEmailTemplate', 'defaultSmsTemplate'];
+  const allowed = ['name', 'marketingName', 'description', 'active', 'defaultEmailTemplate', 'defaultSmsTemplate'];
   const update = {};
   for (const k of allowed) if (k in req.body) {
     const v = req.body[k];

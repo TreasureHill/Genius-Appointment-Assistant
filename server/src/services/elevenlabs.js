@@ -60,13 +60,15 @@ function substituteVariables(template, vars) {
 // human-readable list of the next open Calendly slots so Aria can offer
 // times immediately, even before it calls the get_availability tool.
 function buildDynamicVariables({ lot, buyer, owner = {}, slotsText = '' }) {
-  const projectName = lot?.project?.name || '';
+  // Prefer the customer-facing marketing name; fall back to the internal name.
+  const projectName = lot?.project?.marketingName || lot?.project?.name || '';
   const buyerName = buyer?.name || '';
   const firstName = buyerName.split(/\s+/)[0] || '';
   return {
     lot_id: lot?._id ? String(lot._id) : '',
     lot_number: lot?.lotNumber || '',
     project_name: projectName,
+    marketing_name: projectName,
     address: lot?.address || '',
     // Homeowner / buyer we're calling
     homeowner_name: buyerName,

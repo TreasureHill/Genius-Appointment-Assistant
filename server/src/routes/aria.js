@@ -16,14 +16,21 @@ const ariaCall = require('../services/ariaCall');
 const router = express.Router();
 
 function checkSecret(req, res, next) {
-  const secret = env.aria.toolSecret;
+  // Trim both sides — a trailing newline/space from copy-paste is a common
+  // cause of a silent 401 that otherwise looks like a broken tool.
+  const secret = (env.aria.toolSecret || '').trim();
   if (!secret) {
     // Dev / not-yet-configured: accept but make the risk visible in logs.
     console.warn('[aria] tool call accepted without ARIA_TOOL_SECRET set — set it in production');
     return next();
   }
-  const provided = req.get('x-aria-secret') || req.query.secret;
-  if (provided !== secret) return res.status(401).json({ error: 'bad_secret' });
+  const provided = (req.get('x-aria-secret') || req.query.secret || '').trim();
+  if (provided !== secret) {
+    console.warn(
+      `[aria] tool call rejected (${req.path}): x-aria-secret ${provided ? 'does not match ARIA_TOOL_SECRET' : 'missing'}`
+    );
+    return res.status(401).json({ error: 'bad_secret' });
+  }
   return next();
 }
 

@@ -100,7 +100,7 @@ async function triggerProjectOutreach(lot) {
 // Place an outbound call to a lot's buyer. Returns { ok, conversationId } or
 // throws an Error with a `.code` the route maps to an HTTP status.
 async function dispatchCall({ lotId, buyerRole }) {
-  const lot = await Lot.findById(lotId).populate('project', 'name');
+  const lot = await Lot.findById(lotId).populate('project', 'name marketingName');
   if (!lot) {
     const err = new Error('lot_not_found');
     err.code = 'lot_not_found';
