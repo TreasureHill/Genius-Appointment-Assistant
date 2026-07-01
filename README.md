@@ -10,6 +10,7 @@ Calendly confirms the invitee.
 - **Express 4** on Node 20
 - **React 18 + Vite 5** (plain JSX), React Router 6
 - `nodemailer`, `twilio`, `xlsx` (SheetJS), `node-cron`, `handlebars`, `react-quill-new`
+- **ElevenLabs Conversational AI** ("Aria") for outbound voice calls that book over the phone
 
 ## Quick start
 ```bash
@@ -41,6 +42,7 @@ npm start         # Express serves the SPA + API on $PORT
 | Paced sender (random jitter) | `server/src/workers/senderWorker.js` + `Outbox` collection |
 | Scheduled reminders | `server/src/workers/reminderScheduler.js` |
 | Calendly webhook + poll (multi-event warning) | `server/src/services/calendly.js`, `server/src/workers/calendlyPoller.js`, `server/src/routes/webhooks.js` |
+| **Aria voice calls (ElevenLabs) + transcript/recording/booking** | `server/src/services/elevenlabs.js`, `server/src/services/ariaCall.js`, `server/src/routes/aria.js`, `client/src/pages/LotDetail.jsx` |
 | Dashboard + message history | `server/src/routes/dashboard.js`, `client/src/pages/Dashboard.jsx`, `History.jsx` |
 
 ## How messages are paced (anti-junk)
@@ -74,6 +76,63 @@ Three ways to stay in sync:
    to `scheduled` and already-passed ones to `completed`, and queues unmatched
    invitees for manual mapping. Use `-- --dry-run` to preview, `-- --months=N`
    / `-- --future-months=N` to widen the window.
+
+## Voice calls with Aria (ElevenLabs)
+
+Every lot with a buyer phone number gets a **📞 Call** button — on the Board
+rows and on the lot page. Clicking it dials the buyer with **Aria**, an
+ElevenLabs Conversational AI agent, who introduces the project, offers open
+Calendly times, and can **book the appointment right on the call**.
+
+**What you get per call** (on the lot page, filled in automatically when the
+call ends):
+- **Outcome** (completed / voicemail / no answer / failed) and **duration**
+- **Summary** and full **transcript**
+- **Recording** playback (streamed through the server so the ElevenLabs API
+  key never reaches the browser)
+
+**How it flows**
+1. `POST /api/lots/:id/call` dispatches through
+   `/convai/twilio/outbound-call` (ElevenLabs runs the Twilio leg). We pass the
+   buyer, project, and the next few open Calendly slots as dynamic variables,
+   and tag the conversation `user_id: lot_<id>`.
+2. **During** the call Aria calls two server tools:
+   - `POST /api/aria/tools/availability` → real open slots from Calendly's
+     `event_type_available_times`.
+   - `POST /api/aria/tools/book` → records the chosen slot, flips the lot to
+     **scheduled**, and texts/emails the homeowner the Calendly link for that
+     exact slot to confirm.
+   Both are public (ElevenLabs calls them directly) and guarded by the
+   `x-aria-secret` header (`ARIA_TOOL_SECRET`).
+3. **After** the call ElevenLabs POSTs `/api/webhooks/elevenlabs`
+   (HMAC-verified with `ELEVENLABS_WEBHOOK_SECRET`, idempotent per
+   `conversation_id`) with the transcript, summary, duration, and recording.
+
+**Booking + Calendly, honestly:** Calendly's API can't create a confirmed
+event server-side, so "booked on the call" means the lot is marked
+`scheduled` immediately *and* the homeowner is sent the scheduling link for
+that slot. When they tap it and finish on Calendly, the existing webhook/poll
+reconciles the lot against the real event (`calendlyEventUri` gets filled in).
+Aria-held slots keep an empty `calendlyEventUri`, so the cancellation handler
+(which keys off the event URI) never disturbs them. A stuck-call janitor
+force-fails any call left "calling" for 30 min (dropped webhook safety net).
+
+**Setup** (Settings → *Aria voice calling*, plus `.env`):
+- `.env`: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`,
+  `ELEVENLABS_AGENT_PHONE_NUMBER_ID`, `ELEVENLABS_WEBHOOK_SECRET`,
+  `ARIA_TOOL_SECRET` (and a `CALENDLY_EVENT_TYPE_URI` fallback).
+- Settings UI: the Calendly **event type URI** Aria books, the timezone used
+  to speak times, and optional first-message / system-prompt overrides. The
+  card also shows the exact webhook + tool URLs to paste into the ElevenLabs
+  agent, and a **Preview availability** button to sanity-check the wiring.
+- On the ElevenLabs agent, point the post-call webhook at
+  `/api/webhooks/elevenlabs`, and add two server tools pointing at the
+  `/api/aria/tools/*` URLs (sending the `x-aria-secret` header). The tool the
+  agent uses to book takes `lot_id`, `start_time`, and optional
+  `buyer_name` / `buyer_email`.
+
+Everything degrades gracefully: with no ElevenLabs keys the Call button is
+disabled and the rest of the app is unaffected.
 
 ## Branch
 Work lives on `claude/mern-appointment-booking-app-sxX2C`.

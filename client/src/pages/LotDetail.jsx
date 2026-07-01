@@ -16,6 +16,7 @@ const ACTOR_LABELS = {
   completion_worker: 'Auto-complete',
   calendly_sync: 'Calendly sync',
   calendly_map: 'Calendly mapping',
+  aria_call: 'Aria (call)',
   system: 'System',
 };
 
@@ -41,6 +42,11 @@ function buildTimeline(history, events) {
       kind = 'calendly';
       icon = '📅';
       title = h.subject || 'Calendly event';
+      subtitle = h.body ? String(h.body).slice(0, 200) : '';
+    } else if (h.type === 'call') {
+      kind = 'call';
+      icon = '📞';
+      title = h.subject || (h.direction === 'in' ? 'Aria call result' : 'Aria call');
       subtitle = h.body ? String(h.body).slice(0, 200) : '';
     } else {
       kind = 'msg';
@@ -78,12 +84,164 @@ function buildTimeline(history, events) {
   return items;
 }
 
+const CALL_STATUS_META = {
+  calling: { label: 'calling…', badge: 'pending' },
+  completed: { label: 'completed', badge: 'ok' },
+  voicemail: { label: 'voicemail', badge: 'contacted' },
+  no_answer: { label: 'no answer', badge: 'err' },
+  failed: { label: 'failed', badge: 'err' },
+};
+
+function fmtDuration(secs) {
+  const s = Number(secs) || 0;
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}m ${r}s`;
+}
+
+function CallWithAria({ lot, ariaCfg, calling, callMsg, onCall }) {
+  const callable = (lot.buyers || []).filter((b) => b.phone && !b.optedOut);
+  const [role, setRole] = useState(callable[0]?.role || '');
+  const call = lot.call || {};
+  const inProgress = call.status === 'calling';
+  const hasResult = call.status && call.status !== 'idle' && call.status !== 'calling';
+  const meta = CALL_STATUS_META[call.status];
+  const notConfigured = ariaCfg && ariaCfg.dispatchable === false;
+
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0 }}>📞 Call with Aria</h2>
+        {meta && <span className={`badge ${meta.badge}`}>{meta.label}</span>}
+        {call.booked && <span className="badge scheduled">booked on call</span>}
+        <div style={{ flex: 1 }} />
+        {callable.length > 1 && (
+          <select value={role} onChange={(e) => setRole(e.target.value)} disabled={calling || inProgress}>
+            {callable.map((b) => (
+              <option key={b.role} value={b.role}>
+                {ROLES.find((r) => r.key === b.role)?.label || b.role}: {b.name || b.phone}
+              </option>
+            ))}
+          </select>
+        )}
+        <button onClick={() => onCall(role)} disabled={calling || inProgress || callable.length === 0}>
+          {inProgress ? 'Call in progress…' : calling ? 'Dialing…' : 'Call now'}
+        </button>
+      </div>
+
+      <p className="muted" style={{ fontSize: 13, marginBottom: 6 }}>
+        Aria dials the buyer, offers open Calendly times, and can book the appointment right on the
+        call. The transcript, recording, and outcome land here automatically when the call ends.
+      </p>
+
+      {callable.length === 0 && (
+        <div className="error" style={{ fontSize: 13 }}>
+          No buyer on this lot has a phone number — add one above to enable calling.
+        </div>
+      )}
+      {notConfigured && (
+        <div className="error" style={{ fontSize: 13 }}>
+          Aria calling isn’t configured yet. Add your ElevenLabs keys in <Link to="/settings">Settings</Link>.
+        </div>
+      )}
+      {callMsg && (
+        <div className={callMsg.startsWith('Error') ? 'error' : 'success'} style={{ marginTop: 4 }}>
+          {callMsg}
+        </div>
+      )}
+
+      {inProgress && (
+        <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
+          Aria is on the phone with {call.toNumber || 'the buyer'}…
+        </div>
+      )}
+
+      {hasResult && (
+        <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+          <div className="cal-grid" style={{ marginBottom: 8 }}>
+            <div>
+              <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                Outcome
+              </div>
+              <div>{call.outcome || call.status}</div>
+            </div>
+            <div>
+              <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                Duration
+              </div>
+              <div>{fmtDuration(call.durationSec)}</div>
+            </div>
+            {call.endedAt && (
+              <div>
+                <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                  Ended
+                </div>
+                <div>{new Date(call.endedAt).toLocaleString()}</div>
+              </div>
+            )}
+          </div>
+
+          {call.summary && (
+            <div style={{ marginBottom: 8 }}>
+              <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                Summary
+              </div>
+              <div style={{ fontSize: 14 }}>{call.summary}</div>
+            </div>
+          )}
+
+          {call.conversationId && (
+            <div style={{ marginBottom: 8 }}>
+              <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
+                Recording
+              </div>
+              <audio
+                controls
+                preload="none"
+                src={`/api/lots/${lot._id}/recording`}
+                style={{ width: '100%', maxWidth: 420 }}
+              >
+                Your browser can’t play this recording.
+              </audio>
+            </div>
+          )}
+
+          {call.transcript && (
+            <details>
+              <summary style={{ cursor: 'pointer', fontSize: 13 }}>Transcript</summary>
+              <pre
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontSize: 13,
+                  maxHeight: 320,
+                  overflow: 'auto',
+                  background: 'var(--bg, #f8f8f8)',
+                  padding: 10,
+                  borderRadius: 6,
+                  marginTop: 6,
+                }}
+              >
+                {call.transcript}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function LotDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [templates, setTemplates] = useState([]);
+  const [ariaCfg, setAriaCfg] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [calling, setCalling] = useState(false);
+  const [callMsg, setCallMsg] = useState('');
 
   async function load() {
     const [d, t] = await Promise.all([api.get(`/api/lots/${id}`), api.get('/api/templates')]);
@@ -94,7 +252,46 @@ export default function LotDetail() {
 
   useEffect(() => {
     load();
+    // Aria config is only needed to explain why the Call button is disabled.
+    api.get('/api/settings').then((s) => setAriaCfg(s?.aria || null)).catch(() => {});
   }, [id]);
+
+  // After dispatching a call, the transcript/summary/recording land later via
+  // the ElevenLabs webhook — poll for ~3 minutes so they appear without a
+  // manual refresh.
+  async function pollForCallResult() {
+    const startedAt = Date.now();
+    async function tick() {
+      try {
+        const d = await api.get(`/api/lots/${id}`);
+        const buyers = ROLES.map(({ key }) => d.lot.buyers.find((b) => b.role === key) || emptyBuyer(key));
+        setData((prev) => ({ ...(prev || {}), ...d, lot: { ...d.lot, buyers } }));
+        if (d.lot?.call?.status && d.lot.call.status !== 'calling') return; // done
+      } catch {
+        /* keep polling */
+      }
+      if (Date.now() - startedAt < 180_000) setTimeout(tick, 5_000);
+    }
+    setTimeout(tick, 4_000);
+  }
+
+  async function callWithAria(buyerRole) {
+    setCalling(true);
+    setCallMsg('');
+    try {
+      const r = await api.post(`/api/lots/${id}/call`, buyerRole ? { buyerRole } : {});
+      setCallMsg(`Calling ${r.to || 'the buyer'}… the transcript and recording will appear here when Aria finishes.`);
+      if (r.lot) {
+        const buyers = ROLES.map(({ key }) => (r.lot.buyers || []).find((b) => b.role === key) || emptyBuyer(key));
+        setData((prev) => ({ ...(prev || {}), lot: { ...prev.lot, ...r.lot, buyers } }));
+      }
+      pollForCallResult();
+    } catch (ex) {
+      setCallMsg('Error: ' + ex.message);
+    } finally {
+      setCalling(false);
+    }
+  }
 
   function setBuyer(idx, patch) {
     setData((prev) => {
@@ -282,6 +479,14 @@ export default function LotDetail() {
           </div>
         </div>
       )}
+
+      <CallWithAria
+        lot={lot}
+        ariaCfg={ariaCfg}
+        calling={calling}
+        callMsg={callMsg}
+        onCall={callWithAria}
+      />
 
       <div className="card">
         <div className="row">

@@ -21,6 +21,7 @@ const messagesRoutes = require('./routes/messages');
 const dashboardRoutes = require('./routes/dashboard');
 const settingsRoutes = require('./routes/settings');
 const webhooksRoutes = require('./routes/webhooks');
+const ariaRoutes = require('./routes/aria');
 const calendlyRoutes = require('./routes/calendly');
 const reportsRoutes = require('./routes/reports');
 const adminRoutes = require('./routes/admin');
@@ -39,6 +40,11 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
 app.use('/api/auth', authRoutes);
+
+// Aria's live server tools (Calendly availability + booking) are called by
+// ElevenLabs' servers mid-call, so they sit OUTSIDE the auth wall — guarded by
+// the shared ARIA_TOOL_SECRET instead. Must be mounted before requireAuth.
+app.use('/api/aria', ariaRoutes);
 
 // Everything under /api below this line requires auth
 app.use('/api', requireAuth);

@@ -3,6 +3,7 @@ const Setting = require('../models/Setting');
 const { verifySmtp, sendEmail } = require('../services/mailer');
 const { verifyTwilio, sendSms } = require('../services/sms');
 const { verifyCalendly, syncAll } = require('../services/calendly');
+const ariaCall = require('../services/ariaCall');
 const env = require('../config/env');
 
 const router = express.Router();
@@ -23,6 +24,20 @@ router.get('/', async (req, res) => {
     smtp: { configured: env.smtp.configured, from: env.smtp.from, host: env.smtp.host, health: s.smtpHealth },
     twilio: { configured: env.twilio.configured, from: env.twilio.from, health: s.twilioHealth },
     calendly: { configured: env.calendly.configured, health: s.calendlyHealth, lastSync: s.lastCalendlySync },
+    aria: {
+      // .env-provided (secrets) — reported as booleans only, never echoed back
+      apiKeySet: env.elevenlabs.configured,
+      agentIdSet: Boolean(env.elevenlabs.agentId),
+      agentPhoneSet: Boolean(env.elevenlabs.agentPhoneNumberId),
+      dispatchable: env.elevenlabs.dispatchable,
+      webhookSecretSet: Boolean(env.elevenlabs.webhookSecret),
+      toolSecretSet: Boolean(env.aria.toolSecret),
+      // editable in the UI
+      calendlyEventTypeUri: s.aria?.calendlyEventTypeUri || env.calendly.eventTypeUri || '',
+      timezone: s.aria?.timezone || 'America/New_York',
+      firstMessage: s.aria?.firstMessage || '',
+      systemPrompt: s.aria?.systemPrompt || '',
+    },
     senderPaused: s.senderPaused,
     remindersPaused: !!s.remindersPaused,
     emailHighImportance: !!s.emailHighImportance,
@@ -157,6 +172,30 @@ router.post('/calendly/sync', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+// Aria (voice agent) — event type, timezone, and optional prompt overrides.
+router.patch('/aria', async (req, res) => {
+  const { calendlyEventTypeUri, timezone, firstMessage, systemPrompt } = req.body || {};
+  const s = await Setting.getSingleton();
+  s.aria = s.aria || {};
+  if (calendlyEventTypeUri != null) s.aria.calendlyEventTypeUri = String(calendlyEventTypeUri).trim();
+  if (timezone != null) s.aria.timezone = String(timezone).trim() || 'America/New_York';
+  if (firstMessage != null) s.aria.firstMessage = String(firstMessage);
+  if (systemPrompt != null) s.aria.systemPrompt = String(systemPrompt);
+  await s.save();
+  res.json(s.aria);
+});
+
+// Preview the slots Aria would offer — sanity-checks the Calendly event type
+// URI + token without placing a call.
+router.post('/aria/availability-preview', async (req, res) => {
+  try {
+    const result = await ariaCall.getAvailability({ limit: Number(req.body?.limit) || 6 });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ available: false, slots: [], message: err.message });
   }
 });
 
