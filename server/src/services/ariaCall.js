@@ -23,6 +23,8 @@ const calendly = require('./calendly');
 const { logStatusChange } = require('./lotEventLogger');
 const { sendSms } = require('./sms');
 const { sendEmail } = require('./mailer');
+const { enqueueBroadcast, bumpReminderCount } = require('./enqueue');
+const { resolveDefaultsForProject } = require('./templateResolver');
 
 function digitsOnly(s) {
   return String(s || '').replace(/\D/g, '');
@@ -60,6 +62,39 @@ function matchBuyer(lot, { phone, email, name }) {
     if (b) return b;
   }
   return null;
+}
+
+// Fire the project's default email + SMS at a single lot (best-effort). Reuses
+// the exact resolution + queueing the "Send defaults" button uses, so the
+// templates are the ones "set for that project" (project default → system
+// default → reminder fallback). enqueueBroadcast already skips scheduled /
+// completed / opted-out lots, opted-out buyers, and lots over the reminder cap,
+// so it's safe to call unconditionally. Never throws.
+async function triggerProjectOutreach(lot) {
+  try {
+    const projectId = lot.project?._id || lot.project;
+    const { emailTpl, smsTpl } = await resolveDefaultsForProject(projectId);
+    if (!emailTpl && !smsTpl) return { queued: 0, skipped: 0, note: 'no_default_templates' };
+
+    const queued = [];
+    const skipped = [];
+    const touched = new Set();
+    const used = {};
+    for (const tpl of [emailTpl, smsTpl]) {
+      if (!tpl) continue;
+      const r = await enqueueBroadcast({ lotIds: [lot._id], templateId: tpl._id });
+      queued.push(...r.queued);
+      skipped.push(...r.skipped);
+      r.touchedLotIds.forEach((id) => touched.add(id));
+      used[tpl.type] = tpl.name;
+    }
+    // One reminder bump per call (email + SMS together = one touch), matching
+    // the Send-defaults semantics.
+    if (touched.size) await bumpReminderCount(Array.from(touched));
+    return { queued: queued.length, skipped: skipped.length, used };
+  } catch (e) {
+    return { queued: 0, skipped: 0, error: e.message };
+  }
 }
 
 // Place an outbound call to a lot's buyer. Returns { ok, conversationId } or
@@ -139,7 +174,10 @@ async function dispatchCall({ lotId, buyerRole }) {
     sentAt: now,
   });
 
-  return { ok: true, conversationId, buyerRole: buyer.role, to: buyer.phone };
+  // Auto-send the project's default email + SMS alongside the call.
+  const outreach = await triggerProjectOutreach(lot);
+
+  return { ok: true, conversationId, buyerRole: buyer.role, to: buyer.phone, outreach };
 }
 
 // Fold an ElevenLabs post-call webhook (already normalised) onto the lot.

@@ -362,9 +362,13 @@ export default function ProjectBoard() {
       setLots((prev) =>
         prev.map((l) => (l._id === lot._id ? { ...l, call: { ...(l.call || {}), status: 'calling' } } : l))
       );
+      const ch = [];
+      if (r.outreach?.used?.email) ch.push('email');
+      if (r.outreach?.used?.sms) ch.push('SMS');
       setSendMsg(
-        `Aria is calling ${r.to || 'the buyer'} for lot ${lot.lotNumber}. ` +
-          'The transcript, recording, and any booking will appear on the lot page when the call ends.'
+        `Aria is calling ${r.to || 'the buyer'} for lot ${lot.lotNumber}.` +
+          (ch.length ? ` Also queued the project's ${ch.join(' + ')}.` : '') +
+          ' The transcript, recording, and any booking will appear on the lot page when the call ends.'
       );
     } catch (ex) {
       setSendMsg('Call failed: ' + ex.message);

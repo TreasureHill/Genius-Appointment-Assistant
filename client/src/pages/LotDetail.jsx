@@ -280,7 +280,14 @@ export default function LotDetail() {
     setCallMsg('');
     try {
       const r = await api.post(`/api/lots/${id}/call`, buyerRole ? { buyerRole } : {});
-      setCallMsg(`Calling ${r.to || 'the buyer'}… the transcript and recording will appear here when Aria finishes.`);
+      const ch = [];
+      if (r.outreach?.used?.email) ch.push('email');
+      if (r.outreach?.used?.sms) ch.push('SMS');
+      setCallMsg(
+        `Calling ${r.to || 'the buyer'}…` +
+          (ch.length ? ` Also queued the project's ${ch.join(' + ')}.` : '') +
+          ' The transcript and recording will appear here when Aria finishes.'
+      );
       if (r.lot) {
         const buyers = ROLES.map(({ key }) => (r.lot.buyers || []).find((b) => b.role === key) || emptyBuyer(key));
         setData((prev) => ({ ...(prev || {}), lot: { ...prev.lot, ...r.lot, buyers } }));
