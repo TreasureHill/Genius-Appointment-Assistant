@@ -1,6 +1,86 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
+import { ActivityRow } from './Activity.jsx';
+
+function RecentActivity() {
+  const [items, setItems] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const pageSize = 10;
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    api
+      .get(`/api/activity?page=${page}&pageSize=${pageSize}`)
+      .then((r) => {
+        if (!live) return;
+        setItems(r.items || []);
+        setPages(r.pages || 1);
+        setTotal(r.total || 0);
+      })
+      .catch(() => {})
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [page]);
+
+  return (
+    <>
+      <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        Recent activity
+        <Link to="/activity" style={{ fontSize: 13, fontWeight: 400 }}>
+          full log →
+        </Link>
+      </h2>
+      <div className="card" style={{ padding: 0 }}>
+        <table className="compact-table">
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Type</th>
+              <th>Project</th>
+              <th>Lot</th>
+              <th>To</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it) => (
+              <ActivityRow key={it._id} item={it} />
+            ))}
+            {!loading && items.length === 0 && (
+              <tr>
+                <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>
+                  No activity yet.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="pagination">
+        <div className="muted" style={{ fontSize: 12 }}>
+          {total.toLocaleString()} total
+        </div>
+        <div style={{ flex: 1 }} />
+        <button className="secondary" disabled={page <= 1 || loading} onClick={() => setPage(page - 1)}>
+          ‹ Prev
+        </button>
+        <span className="muted" style={{ fontSize: 12, padding: '0 6px' }}>
+          Page {page} of {pages}
+        </span>
+        <button className="secondary" disabled={page >= pages || loading} onClick={() => setPage(page + 1)}>
+          Next ›
+        </button>
+      </div>
+    </>
+  );
+}
 
 function Tile({ label, value, hint, accent }) {
   return (
@@ -246,51 +326,7 @@ export default function Dashboard() {
         </table>
       </div>
 
-      <h2>Recent activity</h2>
-      <div className="card" style={{ padding: 0 }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Type</th>
-              <th>Dir</th>
-              <th>Project</th>
-              <th>Lot</th>
-              <th>To</th>
-              <th>Status</th>
-              <th>Subject / body</th>
-            </tr>
-          </thead>
-          <tbody>
-            {d.recent.map((r) => (
-              <tr key={r._id}>
-                <td className="nowrap">{new Date(r.createdAt).toLocaleString()}</td>
-                <td>{r.type}</td>
-                <td>{r.direction}</td>
-                <td>{r.project?.name || ''}</td>
-                <td>
-                  {r.lot?._id ? <Link to={`/lots/${r.lot._id}`}>{r.lot.lotNumber}</Link> : ''}
-                </td>
-                <td>{r.to}</td>
-                <td>
-                  <span
-                    className={`badge ${
-                      r.status === 'sent' || r.status === 'received'
-                        ? 'ok'
-                        : r.status === 'failed'
-                          ? 'err'
-                          : 'pending'
-                    }`}
-                  >
-                    {r.status}
-                  </span>
-                </td>
-                <td>{r.subject || r.body?.slice(0, 80)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <RecentActivity />
     </div>
   );
 }

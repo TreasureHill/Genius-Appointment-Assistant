@@ -9,6 +9,7 @@ export default function SheetImport() {
   const [result, setResult] = useState(null);
   const [updateExisting, setUpdate] = useState(false);
   const [imports, setImports] = useState([]);
+  const [marketingNames, setMarketingNames] = useState({});
 
   async function loadImports() {
     try {
@@ -50,10 +51,19 @@ export default function SheetImport() {
 
   async function commit() {
     if (!file) return;
+    // Force a marketing name for every new project before committing.
+    const newProjects = (preview?.projects || []).filter((p) => p.isNew);
+    const missing = newProjects.filter((p) => !(marketingNames[p.name] || '').trim());
+    if (missing.length) {
+      setErr(`Enter a marketing name for new project${missing.length === 1 ? '' : 's'}: ${missing.map((p) => p.name).join(', ')}`);
+      return;
+    }
     setBusy(true);
+    setErr('');
     try {
       const fd = new FormData();
       fd.append('file', file);
+      fd.append('marketingNames', JSON.stringify(marketingNames));
       const r = await api.upload(
         `/api/sheets/import${updateExisting ? '?update=true' : ''}`,
         fd
@@ -174,6 +184,26 @@ export default function SheetImport() {
                   <span className="badge ok">existing project</span>
                 )}
               </h3>
+              {p.isNew && (
+                <div style={{ margin: '4px 0 10px', maxWidth: 460 }}>
+                  <label style={{ fontSize: 12 }}>
+                    Marketing name <span style={{ color: 'var(--danger)' }}>*</span> — the
+                    customer-facing name Aria speaks on calls
+                  </label>
+                  <input
+                    value={marketingNames[p.name] || ''}
+                    onChange={(e) =>
+                      setMarketingNames((m) => ({ ...m, [p.name]: e.target.value }))
+                    }
+                    placeholder="e.g. Union Village"
+                    style={
+                      !(marketingNames[p.name] || '').trim()
+                        ? { borderColor: 'var(--danger)' }
+                        : undefined
+                    }
+                  />
+                </div>
+              )}
               <div className="muted" style={{ fontSize: 12 }}>
                 {p.toCreate.length} new lot{p.toCreate.length === 1 ? '' : 's'} ·{' '}
                 {p.toSkip.length} existing (skipped)

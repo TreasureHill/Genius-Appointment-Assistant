@@ -142,10 +142,40 @@ async function preview(buffer) {
 
 // Actually write changes. Every insert/update is recorded on an ImportBatch
 // row so the user can revert the whole upload.
-async function commit(buffer, { updateExisting = false, filename = '' } = {}) {
+async function commit(buffer, { updateExisting = false, filename = '', marketingNames = {} } = {}) {
   const { headerMap, dataRows } = parseRows(buffer);
   const missing = ['project', 'lotNumber'].filter((k) => headerMap[k] == null);
   if (missing.length) throw new Error(`Missing required columns: ${missing.join(', ')}`);
+
+  // Normalize the supplied marketing names to a lowercased lookup.
+  const mktMap = new Map();
+  for (const [k, v] of Object.entries(marketingNames || {})) {
+    mktMap.set(String(k).trim().toLowerCase(), String(v || '').trim());
+  }
+
+  // Every project the sheet references that doesn't already exist is "new" and
+  // must carry a marketing name. Validate up front so we never write a partial
+  // import before failing.
+  const sheetProjectNames = new Map(); // lowercased -> original
+  for (const row of dataRows) {
+    const name = cell(row, headerMap.project);
+    if (name) sheetProjectNames.set(name.toLowerCase(), name);
+  }
+  const existing = await Project.find({}).select('name').lean();
+  const existingLower = new Set(existing.map((p) => p.name.toLowerCase()));
+  const missingMarketing = [];
+  for (const [lower, original] of sheetProjectNames) {
+    if (existingLower.has(lower)) continue; // existing project — not required
+    if (!mktMap.get(lower)) missingMarketing.push(original);
+  }
+  if (missingMarketing.length) {
+    const err = new Error(
+      `Marketing name required for new project${missingMarketing.length === 1 ? '' : 's'}: ${missingMarketing.join(', ')}`
+    );
+    err.code = 'marketing_name_required';
+    err.projects = missingMarketing;
+    throw err;
+  }
 
   const batch = await ImportBatch.create({
     filename,
@@ -172,7 +202,7 @@ async function commit(buffer, { updateExisting = false, filename = '' } = {}) {
     let p = await Project.findOne({ name });
     let created = false;
     if (!p) {
-      p = await Project.create({ name });
+      p = await Project.create({ name, marketingName: mktMap.get(key) || '' });
       created = true;
       result.createdProjects += 1;
       batch.createdProjects.push(p._id);

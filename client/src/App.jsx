@@ -11,6 +11,7 @@ import Templates from './pages/Templates.jsx';
 import TemplateEditor from './pages/TemplateEditor.jsx';
 import SheetImport from './pages/SheetImport.jsx';
 import History from './pages/History.jsx';
+import Activity from './pages/Activity.jsx';
 import Settings from './pages/Settings.jsx';
 import CalendlyEvents from './pages/CalendlyEvents.jsx';
 import Reports from './pages/Reports.jsx';
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/templates/new" element={<TemplateEditor />} />
         <Route path="/templates/:id" element={<TemplateEditor />} />
         <Route path="/import" element={<SheetImport />} />
+        <Route path="/activity" element={<Activity />} />
         <Route path="/history" element={<History />} />
         <Route path="/calendly" element={<CalendlyEvents />} />
         <Route path="/reports" element={<Reports />} />
