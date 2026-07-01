@@ -56,7 +56,7 @@ const LotSchema = new mongoose.Schema(
     call: {
       status: {
         type: String,
-        enum: ['idle', 'calling', 'completed', 'voicemail', 'no_answer', 'failed'],
+        enum: ['idle', 'queued', 'calling', 'completed', 'voicemail', 'no_answer', 'failed'],
         default: 'idle',
       },
       conversationId: { type: String, default: '' },

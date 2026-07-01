@@ -277,6 +277,22 @@ function normalisePostCallPayload(payload) {
   };
 }
 
+// Fetch the full conversation object (status + transcript + analysis + metadata)
+// from the Convai API. Used as a fallback by the call-queue worker to detect
+// when a call ended even if the post-call webhook isn't configured yet — the
+// returned object feeds straight into normalisePostCallPayload. Returns null on
+// any failure so the poll is best-effort.
+async function fetchConversation(conversationId) {
+  if (!conversationId || !isConfigured()) return null;
+  try {
+    const c = client();
+    const { data } = await c.get(`/convai/conversations/${encodeURIComponent(conversationId)}`);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 // Stream a finished conversation's audio from the Convai API. Most agents
 // don't ship a public recording URL in the webhook; the audio lives behind
 // this authenticated endpoint instead. Returns { stream, contentType,
@@ -318,5 +334,6 @@ module.exports = {
   startOutboundCall,
   verifyWebhookSignature,
   normalisePostCallPayload,
+  fetchConversation,
   fetchConversationAudio,
 };
