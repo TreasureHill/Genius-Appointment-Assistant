@@ -325,7 +325,28 @@ function AriaCard({ aria, onSaved }) {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [eventTypes, setEventTypes] = useState(null);
+  const [loadingTypes, setLoadingTypes] = useState(false);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
+
+  async function loadEventTypes() {
+    setLoadingTypes(true);
+    setMsg('');
+    try {
+      const r = await api.get('/api/settings/aria/event-types');
+      if (r.ok) {
+        setEventTypes(r.eventTypes || []);
+        if (!r.eventTypes?.length) setMsg('No event types found on your Calendly account.');
+      } else {
+        setMsg('Calendly: ' + (r.message || 'could not load event types'));
+        setEventTypes([]);
+      }
+    } catch (ex) {
+      setMsg('Error loading event types: ' + ex.message);
+    } finally {
+      setLoadingTypes(false);
+    }
+  }
 
   async function save() {
     setBusy(true);
@@ -373,11 +394,33 @@ function AriaCard({ aria, onSaved }) {
       <div className="row">
         <div style={{ flex: 3 }}>
           <label>Calendly event type URI (what Aria books)</label>
-          <input
-            value={form.calendlyEventTypeUri}
-            onChange={(e) => setForm({ ...form, calendlyEventTypeUri: e.target.value })}
-            placeholder="https://api.calendly.com/event_types/…"
-          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              style={{ flex: 1 }}
+              value={form.calendlyEventTypeUri}
+              onChange={(e) => setForm({ ...form, calendlyEventTypeUri: e.target.value })}
+              placeholder="https://api.calendly.com/event_types/…"
+            />
+            <button type="button" className="secondary" onClick={loadEventTypes} disabled={loadingTypes}>
+              {loadingTypes ? 'Loading…' : 'Load my event types'}
+            </button>
+          </div>
+          {eventTypes && eventTypes.length > 0 && (
+            <select
+              style={{ marginTop: 6 }}
+              value={form.calendlyEventTypeUri}
+              onChange={(e) => setForm({ ...form, calendlyEventTypeUri: e.target.value })}
+            >
+              <option value="">— pick an event type —</option>
+              {eventTypes.map((et) => (
+                <option key={et.uri} value={et.uri}>
+                  {et.name}
+                  {et.duration ? ` (${et.duration} min)` : ''}
+                  {et.active ? '' : ' — inactive'}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         <div>
           <label>Timezone (for spoken times)</label>

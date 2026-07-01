@@ -179,6 +179,45 @@ async function listAvailableTimes({ eventTypeUri, days = 7, limit = 6, timeZone 
   }
 }
 
+// List the owner's Calendly event types so the UI can offer a picker instead
+// of making the operator paste an API URI by hand. Resolves the user URI from
+// Settings → Owner, the env fallback, or /users/me. Returns
+// { ok, eventTypes: [{ uri, name, active, schedulingUrl, duration }] }.
+async function listEventTypes() {
+  const c = client();
+  if (!c) return { ok: false, message: 'Calendly is not connected (missing CALENDLY_TOKEN).', eventTypes: [] };
+  try {
+    const setting = await Setting.getSingleton();
+    let userUri = setting.owner?.calendlyUri || env.calendly.userUri;
+    if (!userUri) {
+      const me = await c.get('/users/me');
+      userUri = me.data?.resource?.uri;
+    }
+    if (!userUri) {
+      return { ok: false, message: 'Could not resolve your Calendly user. Set the Owner Calendly URI first.', eventTypes: [] };
+    }
+    const params = new URLSearchParams({ user: userUri, count: '100' });
+    const out = [];
+    let url = `/event_types?${params.toString()}`;
+    while (url) {
+      const { data } = await c.get(url);
+      for (const e of data.collection || []) {
+        out.push({
+          uri: e.uri,
+          name: e.name,
+          active: e.active,
+          schedulingUrl: e.scheduling_url || '',
+          duration: e.duration || null,
+        });
+      }
+      url = data.pagination?.next_page ? data.pagination.next_page.replace(API_BASE, '') : null;
+    }
+    return { ok: true, eventTypes: out };
+  } catch (err) {
+    return { ok: false, message: err.response?.data?.message || err.message, eventTypes: [] };
+  }
+}
+
 // Mint a single-use scheduling link for the event type. Used as the fallback
 // confirmation link when a matched slot didn't carry its own scheduling_url.
 // Returns the booking URL or ''.
@@ -886,6 +925,7 @@ module.exports = {
   formatSlotLabel,
   listAvailableTimes,
   createSchedulingLink,
+  listEventTypes,
   // exported for the reconcile script + unit tests
   listEvents,
   listInvitees,

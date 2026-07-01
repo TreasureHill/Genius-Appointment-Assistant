@@ -2,7 +2,7 @@ const express = require('express');
 const Setting = require('../models/Setting');
 const { verifySmtp, sendEmail } = require('../services/mailer');
 const { verifyTwilio, sendSms } = require('../services/sms');
-const { verifyCalendly, syncAll } = require('../services/calendly');
+const { verifyCalendly, syncAll, listEventTypes } = require('../services/calendly');
 const ariaCall = require('../services/ariaCall');
 const env = require('../config/env');
 
@@ -186,6 +186,16 @@ router.patch('/aria', async (req, res) => {
   if (systemPrompt != null) s.aria.systemPrompt = String(systemPrompt);
   await s.save();
   res.json(s.aria);
+});
+
+// List the owner's Calendly event types so the Aria card can offer a picker.
+router.get('/aria/event-types', async (req, res) => {
+  try {
+    const result = await listEventTypes();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ ok: false, message: err.message, eventTypes: [] });
+  }
 });
 
 // Preview the slots Aria would offer — sanity-checks the Calendly event type
