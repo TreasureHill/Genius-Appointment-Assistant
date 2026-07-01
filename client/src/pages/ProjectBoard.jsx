@@ -56,6 +56,161 @@ function parseIds(str) {
   return String(str).split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+const ADD_ROLES = [
+  { key: 'buyer', label: 'Buyer' },
+  { key: 'coBuyer', label: 'Co-buyer' },
+  { key: 'thirdBuyer', label: 'Third buyer' },
+];
+
+function AddLotModal({ projects, defaultProjectId, onClose, onCreated }) {
+  const [form, setForm] = useState({
+    project: defaultProjectId || projects[0]?._id || '',
+    lotNumber: '',
+    address: '',
+    status: 'pending',
+    notes: '',
+  });
+  const [buyers, setBuyers] = useState(
+    ADD_ROLES.map(({ key }) => ({ role: key, name: '', email: '', phone: '', optedOut: false }))
+  );
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  function setBuyer(i, patch) {
+    setBuyers((prev) => prev.map((b, idx) => (idx === i ? { ...b, ...patch } : b)));
+  }
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!form.project) return setErr('Pick a project.');
+    if (!form.lotNumber.trim()) return setErr('Lot number is required.');
+    setBusy(true);
+    setErr('');
+    try {
+      const cleanBuyers = buyers.filter((b) => b.name || b.email || b.phone);
+      const lot = await api.post('/api/lots', {
+        project: form.project,
+        lotNumber: form.lotNumber.trim(),
+        address: form.address.trim(),
+        status: form.status,
+        notes: form.notes,
+        buyers: cleanBuyers,
+      });
+      onCreated(lot);
+    } catch (ex) {
+      setErr(
+        ex.status === 409
+          ? 'A lot with that number already exists in this project.'
+          : ex.message || 'Failed to create lot.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15,23,42,0.45)',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        padding: '5vh 16px',
+        zIndex: 1000,
+        overflowY: 'auto',
+      }}
+    >
+      <form
+        className="card"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={submit}
+        style={{ width: '100%', maxWidth: 640, margin: 0 }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+          <h2 style={{ margin: 0 }}>Add lot</h2>
+          <div style={{ flex: 1 }} />
+          <button type="button" className="secondary" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+
+        <div className="row">
+          <div style={{ flex: 2 }}>
+            <label>Project *</label>
+            <select value={form.project} onChange={(e) => setForm({ ...form, project: e.target.value })}>
+              {projects.map((p) => (
+                <option key={p._id} value={p._id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label>Lot # *</label>
+            <input
+              value={form.lotNumber}
+              onChange={(e) => setForm({ ...form, lotNumber: e.target.value })}
+              autoFocus
+            />
+          </div>
+          <div>
+            <label>Status</label>
+            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              {STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s.replace('_', ' ')}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <label>Address</label>
+        <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+
+        <h3 style={{ marginBottom: 4 }}>Buyers</h3>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+          Add at least a phone number if you want to call this lot with Aria. Leave rows blank to skip.
+        </div>
+        {buyers.map((b, i) => (
+          <div key={b.role} className="row" style={{ marginBottom: 8 }}>
+            <div style={{ minWidth: 96, alignSelf: 'end', paddingBottom: 8 }}>{ADD_ROLES[i].label}</div>
+            <div>
+              <label>Name</label>
+              <input value={b.name} onChange={(e) => setBuyer(i, { name: e.target.value })} />
+            </div>
+            <div>
+              <label>Email</label>
+              <input value={b.email} onChange={(e) => setBuyer(i, { email: e.target.value })} />
+            </div>
+            <div>
+              <label>Phone</label>
+              <input value={b.phone} onChange={(e) => setBuyer(i, { phone: e.target.value })} />
+            </div>
+          </div>
+        ))}
+
+        <label>Notes</label>
+        <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+
+        {err && <div className="error" style={{ marginTop: 8 }}>{err}</div>}
+
+        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+          <button type="submit" disabled={busy}>
+            {busy ? 'Adding…' : 'Add lot'}
+          </button>
+          <button type="button" className="secondary" onClick={onClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function ProjectBoard() {
   const [searchParams, setSearchParams] = useSearchParams();
   const initialIds = parseIds(searchParams.get('project') || localStorage.getItem('board:project') || '');
@@ -69,6 +224,7 @@ export default function ProjectBoard() {
   const [sendMsg, setSendMsg] = useState('');
   const [sending, setSending] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
 
   useEffect(() => {
     api
@@ -372,10 +528,29 @@ export default function ProjectBoard() {
           </Link>
         )}
         <div style={{ flex: 1 }} />
+        <button onClick={() => setShowAdd(true)}>+ Add lot</button>
         <div className="muted" style={{ fontSize: 12 }}>
           Sending schedule lives in <Link to="/settings">Settings</Link>.
         </div>
       </div>
+
+      {showAdd && (
+        <AddLotModal
+          projects={projects}
+          defaultProjectId={Array.from(selectedProjectIds)[0] || projects[0]?._id}
+          onClose={() => setShowAdd(false)}
+          onCreated={(lot) => {
+            setShowAdd(false);
+            setSendMsg(`Added lot ${lot.lotNumber}.`);
+            if (selectedProjectIds.has(String(lot.project))) {
+              setLots((prev) => [lot, ...prev]);
+            } else {
+              // Surface the new lot by selecting its project (triggers a reload).
+              setSelectedProjectIds((prev) => new Set([...prev, String(lot.project)]));
+            }
+          }}
+        />
+      )}
 
       <div className="card" style={{ marginTop: 12 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
