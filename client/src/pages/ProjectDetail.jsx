@@ -40,6 +40,7 @@ export default function ProjectDetail() {
       const fd = new FormData(e.target);
       const updated = await api.patch(`/api/projects/${id}`, {
         name: fd.get('name'),
+        marketingName: fd.get('marketingName'),
         description: fd.get('description'),
       });
       setProject(updated);
@@ -110,10 +111,22 @@ export default function ProjectDetail() {
               <label>Name</label>
               <input name="name" defaultValue={project.name} required />
             </div>
+            <div style={{ flex: 2 }}>
+              <label>Marketing name</label>
+              <input
+                name="marketingName"
+                defaultValue={project.marketingName || ''}
+                placeholder={project.name}
+              />
+            </div>
             <div style={{ flex: 3 }}>
               <label>Description</label>
               <input name="description" defaultValue={project.description || ''} />
             </div>
+          </div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            The customer-facing name Aria speaks on calls (the <span className="kbd">{'{project_name}'}</span>{' '}
+            variable in the Aria prompt). Leave blank to use the internal name above.
           </div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
             <button type="submit">Save</button>
