@@ -283,9 +283,19 @@ export default function LotDetail() {
       const ch = [];
       if (r.outreach?.used?.email) ch.push('email');
       if (r.outreach?.used?.sms) ch.push('SMS');
+      const skipLabels = {
+        no_default_templates: 'no default email/SMS templates set',
+        smtp_not_configured: 'SMTP not configured',
+        twilio_not_configured: 'Twilio not configured',
+        email_failed: 'email send failed',
+        sms_failed: 'SMS send failed',
+      };
+      const skipNote = ch.length
+        ? ''
+        : (r.outreach?.skipped || []).map((s) => skipLabels[s] || s).join('; ');
       setCallMsg(
         `Calling ${r.to || 'the buyer'}…` +
-          (ch.length ? ` Also queued the project's ${ch.join(' + ')}.` : '') +
+          (ch.length ? ` Sent the project's ${ch.join(' + ')}.` : skipNote ? ` (No auto email/SMS — ${skipNote}.)` : '') +
           ' The transcript and recording will appear here when Aria finishes.'
       );
       if (r.lot) {
