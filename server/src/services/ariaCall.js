@@ -21,8 +21,11 @@ const Setting = require('../models/Setting');
 const elevenlabs = require('./elevenlabs');
 const calendly = require('./calendly');
 const { logStatusChange } = require('./lotEventLogger');
-const { enqueueBroadcast, bumpReminderCount } = require('./enqueue');
+const { bumpReminderCount } = require('./enqueue');
 const { resolveDefaultsForProject } = require('./templateResolver');
+const { renderContext, renderTemplate } = require('./templateRender');
+const { sendEmail } = require('./mailer');
+const { sendSms } = require('./sms');
 
 function digitsOnly(s) {
   return String(s || '').replace(/\D/g, '');
@@ -62,36 +65,105 @@ function matchBuyer(lot, { phone, email, name }) {
   return null;
 }
 
-// Fire the project's default email + SMS at a single lot (best-effort). Reuses
-// the exact resolution + queueing the "Send defaults" button uses, so the
-// templates are the ones "set for that project" (project default → system
-// default → reminder fallback). enqueueBroadcast already skips scheduled /
-// completed / opted-out lots, opted-out buyers, and lots over the reminder cap,
-// so it's safe to call unconditionally. Never throws.
+// Fire the project's default email + SMS at a single lot the moment the call is
+// placed. Unlike the "Send defaults" button (which queues into the paced outbox
+// and only sends inside the configured send window), this sends IMMEDIATELY and
+// bypasses the send window — the homeowner is being called right now, so the
+// accompanying email/SMS should go out now, not defer to 9am. Templates resolve
+// the same way ("set for that project": project default → system default →
+// reminder fallback). Best-effort; never throws. Returns { sent, used, skipped }.
 async function triggerProjectOutreach(lot) {
   try {
     const projectId = lot.project?._id || lot.project;
     const { emailTpl, smsTpl } = await resolveDefaultsForProject(projectId);
-    if (!emailTpl && !smsTpl) return { queued: 0, skipped: 0, note: 'no_default_templates' };
+    if (!emailTpl && !smsTpl) return { sent: 0, used: {}, skipped: ['no_default_templates'] };
 
-    const queued = [];
-    const skipped = [];
-    const touched = new Set();
+    const setting = await Setting.getSingleton();
+    const owner = (setting.owner && setting.owner.toObject?.()) || setting.owner || {};
     const used = {};
-    for (const tpl of [emailTpl, smsTpl]) {
-      if (!tpl) continue;
-      const r = await enqueueBroadcast({ lotIds: [lot._id], templateId: tpl._id });
-      queued.push(...r.queued);
-      skipped.push(...r.skipped);
-      r.touchedLotIds.forEach((id) => touched.add(id));
-      used[tpl.type] = tpl.name;
+    const skipped = [];
+    let sent = 0;
+    const doneAddrs = new Set();
+
+    for (const buyer of lot.buyers || []) {
+      if (buyer.optedOut) continue;
+      // Email
+      if (emailTpl && buyer.email) {
+        const key = `e:${String(buyer.email).toLowerCase()}`;
+        if (!doneAddrs.has(key)) {
+          doneAddrs.add(key);
+          if (!env.smtp.configured) {
+            if (!skipped.includes('smtp_not_configured')) skipped.push('smtp_not_configured');
+          } else {
+            try {
+              const ctx = renderContext({ project: lot.project, lot, buyer, owner });
+              const r = renderTemplate(emailTpl, ctx);
+              const info = await sendEmail({
+                to: buyer.email,
+                subject: r.subject,
+                html: r.html,
+                text: r.text,
+                highImportance: !!setting.emailHighImportance,
+              });
+              await logOutreach(lot, 'email', buyer, r.subject, r.html, info.messageId);
+              used.email = emailTpl.name;
+              sent += 1;
+            } catch (e) {
+              await logOutreach(lot, 'email', buyer, emailTpl.name, '', '', e.message);
+              if (!skipped.includes('email_failed')) skipped.push('email_failed');
+            }
+          }
+        }
+      }
+      // SMS
+      if (smsTpl && buyer.phone) {
+        const key = `s:${String(buyer.phone).replace(/\D/g, '')}`;
+        if (!doneAddrs.has(key)) {
+          doneAddrs.add(key);
+          if (!env.twilio.configured) {
+            if (!skipped.includes('twilio_not_configured')) skipped.push('twilio_not_configured');
+          } else {
+            try {
+              const ctx = renderContext({ project: lot.project, lot, buyer, owner });
+              const r = renderTemplate(smsTpl, ctx);
+              const body = r.text || r.html;
+              const info = await sendSms({ to: buyer.phone, body });
+              await logOutreach(lot, 'sms', buyer, '', body, info.messageId);
+              used.sms = smsTpl.name;
+              sent += 1;
+            } catch (e) {
+              await logOutreach(lot, 'sms', buyer, '', smsTpl.name, '', e.message);
+              if (!skipped.includes('sms_failed')) skipped.push('sms_failed');
+            }
+          }
+        }
+      }
     }
-    // One reminder bump per call (email + SMS together = one touch), matching
-    // the Send-defaults semantics.
-    if (touched.size) await bumpReminderCount(Array.from(touched));
-    return { queued: queued.length, skipped: skipped.length, used };
+
+    if (sent > 0) await bumpReminderCount([lot._id]);
+    return { sent, used, skipped };
   } catch (e) {
-    return { queued: 0, skipped: 0, error: e.message };
+    return { sent: 0, used: {}, skipped: [], error: e.message };
+  }
+}
+
+async function logOutreach(lot, type, buyer, subject, body, providerId, error) {
+  try {
+    await MessageLog.create({
+      project: lot.project?._id || lot.project,
+      lot: lot._id,
+      type,
+      direction: 'out',
+      to: type === 'email' ? buyer.email : buyer.phone,
+      subject: subject || '',
+      body: body || '',
+      status: error ? 'failed' : 'sent',
+      error: error || '',
+      providerId: providerId || '',
+      sentAt: new Date(),
+    });
+  } catch {
+    /* logging never fatal */
   }
 }
 
@@ -303,6 +375,7 @@ async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerP
     name,
     email,
     timezone: tz,
+    phone: buyerPhone || buyer?.phone || lot.call?.toNumber || '',
     locationKind: aria.calendlyLocationKind || '',
   });
 

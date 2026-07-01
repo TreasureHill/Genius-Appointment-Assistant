@@ -222,14 +222,44 @@ async function listEventTypes() {
   }
 }
 
+// Fetch a single event type resource (includes its location_configurations).
+async function getEventType(uri) {
+  const c = client();
+  if (!c || !uri) return null;
+  try {
+    const { data } = await c.get(uri.replace(API_BASE, ''));
+    return data?.resource || null;
+  } catch {
+    return null;
+  }
+}
+
+// Build the Create-Event-Invitee `location` object from the event type's
+// configured locations. `kindOverride` (Settings → Aria) wins when set.
+// Returns null when the event type needs no location (so we omit the field).
+function buildLocation(cfgs, kindOverride, phone) {
+  const list = Array.isArray(cfgs) ? cfgs : [];
+  let cfg = null;
+  if (kindOverride) cfg = list.find((c) => c.kind === kindOverride) || { kind: kindOverride };
+  else cfg = list[0] || null;
+  if (!cfg || !cfg.kind) return null;
+  const kind = cfg.kind;
+  const detail = cfg.location || cfg.additional_info || cfg.phone_number || cfg.address || '';
+  const loc = { kind };
+  // Kinds that need the invitee to supply the detail.
+  if (kind === 'outbound_call') loc.location = phone || detail || '';
+  else if (kind === 'ask_invitee') loc.location = detail || phone || 'To be confirmed on the call';
+  else if (detail) loc.location = detail; // physical / custom / inbound_call with a fixed value
+  return loc;
+}
+
 // Actually book a slot on Calendly via the Scheduling API (Create Event
-// Invitee). This creates a real scheduled event and triggers Calendly's own
-// confirmations/calendar invite. Requires a paid plan + a token whose account
-// can schedule (host/admin PAT or OAuth). `locationKind` is only needed when
-// the event type requires a location choice (e.g. 'physical', 'outbound_call',
-// 'zoom_conference', 'ask_invitee'); leave blank to use the event type default.
-// Returns { ok, eventUri, resource } or { ok:false, message, status }.
-async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, locationKind }) {
+// Invitee). Creates a real scheduled event and triggers Calendly's own
+// calendar invite/notifications. Requires a paid plan + a token whose account
+// can schedule (host/admin PAT or OAuth). The location is derived from the
+// event type automatically; `locationKind` overrides it. Returns
+// { ok, eventUri, resource } or { ok:false, message, status }.
+async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, phone, locationKind }) {
   const c = client();
   if (!c) return { ok: false, message: 'Calendly is not connected.' };
   const uri = eventTypeUri || (await resolveEventTypeUri());
@@ -237,6 +267,11 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
   if (!email) return { ok: false, message: 'An email address is required to book.' };
   const start = new Date(startTimeIso);
   if (!Number.isFinite(start.getTime())) return { ok: false, message: 'Invalid start time.' };
+
+  // Resolve the event type's configured location so location.kind matches.
+  const et = await getEventType(uri);
+  const cfgs = et?.location_configurations || et?.locationConfigurations || [];
+  const location = buildLocation(cfgs, locationKind, phone);
 
   const payload = {
     event_type: uri,
@@ -247,7 +282,7 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
       timezone: timezone || 'America/New_York',
     },
   };
-  if (locationKind) payload.location = { kind: locationKind };
+  if (location) payload.location = location;
 
   try {
     const { data } = await c.post('/invitees', payload);
@@ -264,11 +299,13 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
     const detailMsg = Array.isArray(body.details) && body.details.length
       ? body.details.map((d) => `${d.parameter || ''} ${d.message || ''}`.trim()).join('; ')
       : '';
-    return {
-      ok: false,
-      status: err.response?.status,
-      message: detailMsg || body.message || body.title || err.message,
-    };
+    let message = detailMsg || body.message || body.title || err.message;
+    // Make a location mismatch actionable by listing the event type's kinds.
+    if (/location/i.test(message)) {
+      const kinds = cfgs.map((cc) => cc.kind).filter(Boolean);
+      if (kinds.length) message += ` (event type location kind${kinds.length === 1 ? '' : 's'}: ${kinds.join(', ')})`;
+    }
+    return { ok: false, status: err.response?.status, message };
   }
 }
 
@@ -980,6 +1017,7 @@ module.exports = {
   listAvailableTimes,
   createSchedulingLink,
   bookOnCalendly,
+  getEventType,
   listEventTypes,
   // exported for the reconcile script + unit tests
   listEvents,
