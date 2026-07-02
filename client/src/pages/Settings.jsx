@@ -433,15 +433,18 @@ function AriaCard({ aria, onSaved }) {
         </div>
       </div>
 
-      <label>Calendly location kind (only if your event type requires one)</label>
+      <label>Calendly location kind (usually auto-detected — set only if booking fails)</label>
       <input
         value={form.calendlyLocationKind}
         onChange={(e) => setForm({ ...form, calendlyLocationKind: e.target.value })}
-        placeholder="e.g. physical, outbound_call, zoom_conference, ask_invitee — leave blank for the event type default"
+        placeholder="leave blank to auto-detect from the event type"
       />
       <div className="muted" style={{ fontSize: 12, marginTop: 2, marginBottom: 6 }}>
-        Aria books the slot directly on Calendly (Create Event Invitee). If booking fails with a
-        location error, set the kind that matches your event type here.
+        Aria books directly on Calendly and normally detects this from your event type. Only set it
+        if booking fails with a location error. Map: <span className="kbd">In-person → physical</span>,{' '}
+        <span className="kbd">Phone call → outbound_call</span>,{' '}
+        <span className="kbd">Zoom → zoom_conference</span>,{' '}
+        <span className="kbd">Google Meet → google_conference</span>. (Casing/labels are normalized.)
       </div>
 
       <label>First message (optional — {'{first_name}'}, {'{project_name}'}, {'{available_slots}'} supported)</label>

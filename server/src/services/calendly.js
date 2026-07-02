@@ -234,13 +234,47 @@ async function getEventType(uri) {
   }
 }
 
+// Calendly location kinds are lowercase snake_case. Normalize operator input
+// (Settings → Aria) so "Physical", "In-person", "Phone call", etc. still map to
+// a valid kind — case/label mistakes are the #1 cause of "invalid location
+// choice".
+function normalizeKind(k) {
+  const s = String(k || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const map = {
+    physical: 'physical',
+    in_person: 'physical',
+    inperson: 'physical',
+    phone: 'outbound_call',
+    phone_call: 'outbound_call',
+    call: 'outbound_call',
+    outbound: 'outbound_call',
+    outbound_call: 'outbound_call',
+    inbound_call: 'inbound_call',
+    zoom: 'zoom_conference',
+    zoom_conference: 'zoom_conference',
+    google_meet: 'google_conference',
+    google_conference: 'google_conference',
+    meet: 'google_conference',
+    teams: 'microsoft_teams_conference',
+    microsoft_teams: 'microsoft_teams_conference',
+    microsoft_teams_conference: 'microsoft_teams_conference',
+    webex: 'webex_conference',
+    gotomeeting: 'gotomeeting',
+    ask: 'ask_invitee',
+    ask_invitee: 'ask_invitee',
+    custom: 'custom',
+  };
+  return map[s] || s;
+}
+
 // Build the Create-Event-Invitee `location` object from the event type's
 // configured locations. `kindOverride` (Settings → Aria) wins when set.
 // Returns null when the event type needs no location (so we omit the field).
 function buildLocation(cfgs, kindOverride, phone) {
   const list = Array.isArray(cfgs) ? cfgs : [];
+  const overrideKind = kindOverride ? normalizeKind(kindOverride) : '';
   let cfg = null;
-  if (kindOverride) cfg = list.find((c) => c.kind === kindOverride) || { kind: kindOverride };
+  if (overrideKind) cfg = list.find((c) => c.kind === overrideKind) || { kind: overrideKind };
   else cfg = list[0] || null;
   if (!cfg || !cfg.kind) return null;
   const kind = cfg.kind;
