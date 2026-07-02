@@ -100,6 +100,10 @@ const SettingSchema = new mongoose.Schema(
       // 'outbound_call', 'zoom_conference', 'ask_invitee'). Blank = use the
       // event type's own default.
       calendlyLocationKind: { type: String, default: '' },
+      // Location detail sent with the booking when the kind requires it (the
+      // in-person address, custom location text, etc.). Auto-filled from the
+      // event type when Calendly exposes it; set here otherwise.
+      calendlyLocationDetail: { type: String, default: '' },
       // Optional per-call overrides pushed to ElevenLabs. Support {first_name},
       // {project_name}, {available_slots}, etc. (substituted server-side).
       firstMessage: { type: String, default: '' },

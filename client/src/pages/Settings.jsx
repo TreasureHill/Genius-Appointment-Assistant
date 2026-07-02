@@ -320,6 +320,7 @@ function AriaCard({ aria, onSaved }) {
     calendlyEventTypeUri: aria.calendlyEventTypeUri || '',
     timezone: aria.timezone || 'America/New_York',
     calendlyLocationKind: aria.calendlyLocationKind || '',
+    calendlyLocationDetail: aria.calendlyLocationDetail || '',
     firstMessage: aria.firstMessage || '',
     systemPrompt: aria.systemPrompt || '',
   });
@@ -433,15 +434,30 @@ function AriaCard({ aria, onSaved }) {
         </div>
       </div>
 
-      <label>Calendly location kind (only if your event type requires one)</label>
+      <label>Calendly location kind (usually auto-detected — set only if booking fails)</label>
       <input
         value={form.calendlyLocationKind}
         onChange={(e) => setForm({ ...form, calendlyLocationKind: e.target.value })}
-        placeholder="e.g. physical, outbound_call, zoom_conference, ask_invitee — leave blank for the event type default"
+        placeholder="leave blank to auto-detect from the event type"
       />
       <div className="muted" style={{ fontSize: 12, marginTop: 2, marginBottom: 6 }}>
-        Aria books the slot directly on Calendly (Create Event Invitee). If booking fails with a
-        location error, set the kind that matches your event type here.
+        Aria books directly on Calendly and normally detects this from your event type. Only set it
+        if booking fails with a location error. Map: <span className="kbd">In-person → physical</span>,{' '}
+        <span className="kbd">Phone call → outbound_call</span>,{' '}
+        <span className="kbd">Zoom → zoom_conference</span>,{' '}
+        <span className="kbd">Google Meet → google_conference</span>. (Casing/labels are normalized.)
+      </div>
+
+      <label>Location detail (address / phone / note — required for in-person, phone & custom)</label>
+      <input
+        value={form.calendlyLocationDetail}
+        onChange={(e) => setForm({ ...form, calendlyLocationDetail: e.target.value })}
+        placeholder="e.g. 1621 Major Mackenzie Dr E, Richmond Hill, ON"
+      />
+      <div className="muted" style={{ fontSize: 12, marginTop: 2, marginBottom: 6 }}>
+        Calendly requires the location text when the kind is <span className="kbd">physical</span>,{' '}
+        <span className="kbd">custom</span>, or <span className="kbd">ask_invitee</span>. For an
+        in-person event, put the address here (auto-used from the event type when Calendly exposes it).
       </div>
 
       <label>First message (optional — {'{first_name}'}, {'{project_name}'}, {'{available_slots}'} supported)</label>
