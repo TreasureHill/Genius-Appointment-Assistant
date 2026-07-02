@@ -377,6 +377,7 @@ async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerP
     timezone: tz,
     phone: buyerPhone || buyer?.phone || lot.call?.toNumber || '',
     locationKind: aria.calendlyLocationKind || '',
+    locationDetail: aria.calendlyLocationDetail || '',
   });
 
   if (!result.ok) {

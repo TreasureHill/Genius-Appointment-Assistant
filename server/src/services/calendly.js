@@ -267,10 +267,15 @@ function normalizeKind(k) {
   return map[s] || s;
 }
 
+// Kinds where Calendly's Create Event Invitee requires location.location.
+const KINDS_NEEDING_DETAIL = ['outbound_call', 'inbound_call', 'ask_invitee', 'physical', 'custom'];
+
 // Build the Create-Event-Invitee `location` object from the event type's
-// configured locations. `kindOverride` (Settings → Aria) wins when set.
-// Returns null when the event type needs no location (so we omit the field).
-function buildLocation(cfgs, kindOverride, phone) {
+// configured locations. `kindOverride` (Settings → Aria) wins when set;
+// `detailOverride` supplies the address/detail when the event type's config
+// isn't exposed. Returns null when the event type needs no location (so we omit
+// the field).
+function buildLocation(cfgs, kindOverride, phone, detailOverride) {
   const list = Array.isArray(cfgs) ? cfgs : [];
   const overrideKind = kindOverride ? normalizeKind(kindOverride) : '';
   let cfg = null;
@@ -279,16 +284,15 @@ function buildLocation(cfgs, kindOverride, phone) {
   if (!cfg || !cfg.kind) return null;
   const kind = cfg.kind;
   // Calendly's field is misspelled "additonal_info" in some responses — probe both.
-  const detail = cfg.location || cfg.additional_info || cfg.additonal_info || cfg.phone_number || cfg.address || '';
-  const multiplePhysical = list.filter((c) => c.kind === 'physical').length > 1;
+  const cfgDetail =
+    cfg.location || cfg.additional_info || cfg.additonal_info || cfg.phone_number || cfg.address || '';
+  const detail = cfgDetail || detailOverride || '';
   const loc = { kind };
-  // Only send location.location when the kind actually needs invitee-supplied
-  // detail. A single fixed location (physical/conference) is booked with just
-  // the kind — Calendly fills in its configured address/link.
   if (kind === 'outbound_call') loc.location = phone || detail || '';
-  else if (kind === 'ask_invitee') loc.location = detail || phone || 'To be confirmed on the call';
-  else if (kind === 'custom' && detail) loc.location = detail;
-  else if (kind === 'physical' && multiplePhysical && detail) loc.location = detail;
+  else if (KINDS_NEEDING_DETAIL.includes(kind)) {
+    // physical / custom / inbound_call / ask_invitee all require a detail.
+    loc.location = detail || (kind === 'ask_invitee' ? 'To be confirmed on the call' : '');
+  }
   return loc;
 }
 
@@ -298,7 +302,7 @@ function buildLocation(cfgs, kindOverride, phone) {
 // can schedule (host/admin PAT or OAuth). The location is derived from the
 // event type automatically; `locationKind` overrides it. Returns
 // { ok, eventUri, resource } or { ok:false, message, status }.
-async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, phone, locationKind }) {
+async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, phone, locationKind, locationDetail }) {
   const c = client();
   if (!c) return { ok: false, message: 'Calendly is not connected.' };
   const uri = eventTypeUri || (await resolveEventTypeUri());
@@ -310,7 +314,7 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
   // Resolve the event type's configured location so location.kind matches.
   const et = await getEventType(uri);
   const cfgs = et?.location_configurations || et?.locationConfigurations || [];
-  const location = buildLocation(cfgs, locationKind, phone);
+  const location = buildLocation(cfgs, locationKind, phone, locationDetail);
 
   const payload = {
     event_type: uri,
