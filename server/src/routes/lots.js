@@ -47,6 +47,21 @@ router.get('/', async (req, res) => {
     ]);
     const map = new Map(counts.map((c) => [String(c._id), c.n]));
     for (const l of lots) l.pendingMessages = map.get(String(l._id)) || 0;
+
+    // Per-lot communication breakdown (by MessageLog type) so the board can
+    // show which channels have been used with small icons.
+    const commsRows = await MessageLog.aggregate([
+      { $match: { lot: { $in: lotIds } } },
+      { $group: { _id: { lot: '$lot', type: '$type' }, n: { $sum: 1 } } },
+    ]);
+    const commsMap = new Map();
+    for (const r of commsRows) {
+      const lid = String(r._id.lot);
+      const entry = commsMap.get(lid) || {};
+      entry[r._id.type] = r.n;
+      commsMap.set(lid, entry);
+    }
+    for (const l of lots) l.comms = commsMap.get(String(l._id)) || {};
   }
 
   res.json(lots);

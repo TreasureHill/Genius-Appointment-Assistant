@@ -378,6 +378,8 @@ async function bookAppointment({ lotId, startTime, buyerName, buyerEmail, buyerP
     phone: buyerPhone || buyer?.phone || lot.call?.toNumber || '',
     locationKind: aria.calendlyLocationKind || '',
     locationDetail: aria.calendlyLocationDetail || '',
+    projectName: lot.project?.marketingName || lot.project?.name || '',
+    lotNumber: lot.lotNumber || '',
   });
 
   if (!result.ok) {

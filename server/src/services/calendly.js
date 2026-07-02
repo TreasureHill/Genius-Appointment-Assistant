@@ -307,7 +307,26 @@ function buildLocation(cfgs, kindOverride, phone, detailOverride) {
 // can schedule (host/admin PAT or OAuth). The location is derived from the
 // event type automatically; `locationKind` overrides it. Returns
 // { ok, eventUri, resource } or { ok:false, message, status }.
-async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, phone, locationKind, locationDetail }) {
+// Answer the event type's required custom questions from the lot context. The
+// project/lot question gets "<project> Lot <n>"; a phone question gets the
+// number; anything else required gets the project/lot string as a safe default.
+function buildQuestionsAndAnswers(customQuestions, { projectName, lotNumber, phone }) {
+  const projectLot = [projectName, lotNumber ? `Lot ${lotNumber}` : ''].filter(Boolean).join(' ').trim();
+  const qa = [];
+  for (const q of customQuestions || []) {
+    if (q.enabled === false || !q.required) continue;
+    const qName = q.name || q.question || '';
+    const lname = qName.toLowerCase();
+    let answer = '';
+    if (/lot|project|community/.test(lname)) answer = projectLot;
+    else if (/phone|text|mobile|cell|number/.test(lname)) answer = phone || projectLot;
+    if (!answer) answer = projectLot || 'Provided during the call';
+    qa.push({ question: qName, answer, position: q.position });
+  }
+  return qa;
+}
+
+async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, phone, locationKind, locationDetail, projectName, lotNumber }) {
   const c = client();
   if (!c) return { ok: false, message: 'Calendly is not connected.' };
   const uri = eventTypeUri || (await resolveEventTypeUri());
@@ -316,10 +335,15 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
   const start = new Date(startTimeIso);
   if (!Number.isFinite(start.getTime())) return { ok: false, message: 'Invalid start time.' };
 
-  // Resolve the event type's configured location so location.kind matches.
+  // Resolve the event type so location.kind matches and required questions get answered.
   const et = await getEventType(uri);
   const cfgs = et?.location_configurations || et?.locationConfigurations || [];
   const location = buildLocation(cfgs, locationKind, phone, locationDetail);
+  const qa = buildQuestionsAndAnswers(et?.custom_questions || et?.customQuestions || [], {
+    projectName,
+    lotNumber,
+    phone,
+  });
 
   const payload = {
     event_type: uri,
@@ -331,6 +355,7 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
     },
   };
   if (location) payload.location = location;
+  if (qa.length) payload.questions_and_answers = qa;
 
   try {
     const { data } = await c.post('/invitees', payload);
