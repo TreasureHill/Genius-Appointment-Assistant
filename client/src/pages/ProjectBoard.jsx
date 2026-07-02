@@ -51,6 +51,61 @@ function BuyerCell({ buyer }) {
   );
 }
 
+const COMMS_ICON_PATHS = {
+  email: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 7l9 6 9-6" />
+    </>
+  ),
+  sms: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  call: (
+    <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z" />
+  ),
+  calendly: (
+    <>
+      <rect x="3" y="4" width="18" height="17" rx="2" />
+      <path d="M3 9h18M8 2v4M16 2v4" />
+    </>
+  ),
+};
+const COMMS_LABELS = { email: 'email', sms: 'SMS', call: 'call', calendly: 'Calendly match' };
+
+function CommsIcons({ comms }) {
+  const order = ['email', 'sms', 'call', 'calendly'];
+  const present = order.filter((t) => (comms?.[t] || 0) > 0);
+  if (!present.length) return <span className="muted">—</span>;
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {present.map((t) => {
+        const n = comms[t];
+        return (
+          <span
+            key={t}
+            title={`${n} ${COMMS_LABELS[t]}${n === 1 ? '' : 's'}`}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: 'var(--muted)' }}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="15"
+              height="15"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              {COMMS_ICON_PATHS[t]}
+            </svg>
+            {n > 1 && <span style={{ fontSize: 10 }}>{n}</span>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function Tile({ label, value, active, onClick }) {
   return (
     <div
@@ -792,6 +847,7 @@ export default function ProjectBoard() {
               <th style={{ minWidth: 200 }}>{ROLE_LABELS.thirdBuyer}</th>
               <th style={{ minWidth: 140 }}>Status</th>
               <th style={{ minWidth: 100 }}>Reminders</th>
+              <th style={{ minWidth: 84 }}>Comms</th>
               <th style={{ minWidth: 120 }}>Last contact</th>
               <th></th>
             </tr>
@@ -860,6 +916,9 @@ export default function ProjectBoard() {
                     {lot.reminderCount}
                     {maxReminders != null ? ` / ${maxReminders}` : ''}
                   </td>
+                  <td>
+                    <CommsIcons comms={lot.comms} />
+                  </td>
                   <td className="muted nowrap">
                     {lot.lastContactedAt
                       ? new Date(lot.lastContactedAt).toLocaleDateString()
@@ -899,7 +958,7 @@ export default function ProjectBoard() {
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={showProjectCol ? 11 : 10} className="muted" style={{ textAlign: 'center', padding: 24 }}>
+                <td colSpan={showProjectCol ? 12 : 11} className="muted" style={{ textAlign: 'center', padding: 24 }}>
                   {selectedProjectIds.size === 0
                     ? 'Select a project above to see its lots.'
                     : lots.length === 0
