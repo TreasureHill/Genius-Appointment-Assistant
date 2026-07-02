@@ -411,7 +411,16 @@ function AriaCard({ aria, onSaved }) {
             <select
               style={{ marginTop: 6 }}
               value={form.calendlyEventTypeUri}
-              onChange={(e) => setForm({ ...form, calendlyEventTypeUri: e.target.value })}
+              onChange={(e) => {
+                const et = eventTypes.find((x) => x.uri === e.target.value);
+                setForm((f) => ({
+                  ...f,
+                  calendlyEventTypeUri: e.target.value,
+                  // Auto-fill the location from the picked event type when Calendly exposes it.
+                  ...(et?.locationKind ? { calendlyLocationKind: et.locationKind } : {}),
+                  ...(et?.locationDetail ? { calendlyLocationDetail: et.locationDetail } : {}),
+                }));
+              }}
             >
               <option value="">— pick an event type —</option>
               {eventTypes.map((et) => (

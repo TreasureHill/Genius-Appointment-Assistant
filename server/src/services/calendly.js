@@ -206,12 +206,17 @@ async function listEventTypes() {
     while (url) {
       const { data } = await c.get(url);
       for (const e of data.collection || []) {
+        const cfg = (e.location_configurations || e.locationConfigurations || [])[0] || {};
         out.push({
           uri: e.uri,
           name: e.name,
           active: e.active,
           schedulingUrl: e.scheduling_url || '',
           duration: e.duration || null,
+          // Surface the configured location so the UI can auto-fill booking.
+          locationKind: cfg.kind || '',
+          locationDetail:
+            cfg.location || cfg.additional_info || cfg.additonal_info || cfg.phone_number || '',
         });
       }
       url = data.pagination?.next_page ? data.pagination.next_page.replace(API_BASE, '') : null;
