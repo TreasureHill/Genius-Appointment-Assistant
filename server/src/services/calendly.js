@@ -1,6 +1,10 @@
 const axios = require('axios');
 const env = require('../config/env');
 const Lot = require('../models/Lot');
+// Registered for the .populate('project') calls below — standalone scripts
+// (fixCalendlyUnmatched, reconcileCalendly) load this service without the rest
+// of the app, so the model must be registered here, not just in the routes.
+require('../models/Project');
 const Setting = require('../models/Setting');
 const MessageLog = require('../models/MessageLog');
 const CalendlyUnmatch = require('../models/CalendlyUnmatch');
