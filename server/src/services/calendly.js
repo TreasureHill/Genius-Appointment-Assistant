@@ -621,6 +621,210 @@ async function collectOccurrences(events) {
   return emailOccurrences;
 }
 
+// Rebuild an occurrence (the shape the matchers/buildLotCalendlyEvent expect)
+// from a stored CalendlyUnmatch row. Lets queued rows be re-matched straight
+// from the DB — the event may have fallen out of the poller's sync window, so
+// re-fetching it from the Calendly API isn't an option. Pure.
+function occurrenceFromUnmatch(row) {
+  return {
+    eventUri: row.eventUri || '',
+    eventName: row.eventName || '',
+    startTime: row.eventStartTime || null,
+    endTime: null,
+    location: '',
+    inviteeName: row.inviteeName || '',
+    inviteeFirstName: row.inviteeFirstName || '',
+    inviteeLastName: row.inviteeLastName || '',
+    inviteeStatus: row.inviteeStatus || '',
+    rescheduleUrl: '',
+    cancelUrl: '',
+    answerText: row.answer || '',
+  };
+}
+
+// Re-match every queued 'unmatched' Calendly invitee against the CURRENT
+// database. syncAll only resolves queue rows whose invitee reappears inside
+// its sync window (30 days back), so a buyer imported AFTER their event synced
+// — e.g. after the DB was wiped and re-seeded — stays "unmatched" forever even
+// though their email is now on a lot. This walks the queue itself, no Calendly
+// API needed: email → lot buyers first, then the typed project/lot answer,
+// then the buyer name (unambiguous hits only, same rules as syncAll).
+//
+// Matched lots follow reconcileTargetStatus: 'scheduled' when the appointment
+// is upcoming, 'completed' when it has already passed; opted_out lots keep
+// their status but their queue rows still resolve to 'mapped'.
+//
+// With `ignoreStalePast`, rows that STILL match nothing and whose event has
+// already passed are marked 'ignored' — they reference data that no longer
+// exists (pre-wipe projects), so they can never auto-match and only clog the
+// manual-mapping queue.
+async function rematchUnmatchedQueue({ dryRun = false, ignoreStalePast = false, now = Date.now() } = {}) {
+  const rows = await CalendlyUnmatch.find({ status: 'unmatched' });
+
+  // Group by invitee — one person can have several queued events; they all
+  // resolve to the same lot, with the most recent event attached to it.
+  const byEmail = new Map();
+  for (const row of rows) {
+    const email = normalizeEmail(row.inviteeEmail);
+    if (!email) continue;
+    const arr = byEmail.get(email) || [];
+    arr.push(row);
+    byEmail.set(email, arr);
+  }
+
+  const stats = {
+    rows: rows.length,
+    invitees: byEmail.size,
+    mappedByEmail: 0,
+    mappedBySignal: 0,
+    lotsScheduled: 0,
+    lotsCompleted: 0,
+    ignoredStalePast: 0,
+    stillUnmatched: 0,
+  };
+  const changes = [];
+
+  // Candidates for the answer/name passes — same restriction as syncAll: a
+  // fuzzy signal must never steal a lot that is already scheduled/completed/
+  // opted_out. Loaded once; email matches query directly instead.
+  const candidates = await Lot.find({ status: { $in: ['pending', 'contacted'] } }).populate(
+    'project',
+    'name'
+  );
+  const prepared = candidates.map(prepLotForMatch);
+  const usedLotIds = new Set();
+  const matchedEmails = new Set();
+
+  for (const [email, entries] of byEmail) {
+    // Most recent event carries the appointment we attach to the lot.
+    entries.sort((a, b) => new Date(b.eventStartTime || 0) - new Date(a.eventStartTime || 0));
+    const occ = occurrenceFromUnmatch(entries[0]);
+
+    // Pass 1 — email. The buyer may have been imported after the event synced.
+    let lots = await Lot.find({ 'buyers.email': email }).populate('project', 'name');
+    let method = 'email';
+    let role = '';
+    if (lots.length) {
+      role = (lots[0].buyers.find((b) => normalizeEmail(b.email) === email) || {}).role || '';
+    } else {
+      // Pass 2 — the typed project/lot answer, then the buyer name.
+      const m = matchUnmatchedOccurrence(occ, prepared);
+      if (m && !usedLotIds.has(String(m.lot._id))) {
+        lots = [m.lot];
+        method = m.method;
+        role = m.role;
+        usedLotIds.add(String(m.lot._id));
+      }
+    }
+
+    if (!lots.length) {
+      stats.stillUnmatched += entries.length;
+      continue;
+    }
+
+    matchedEmails.add(email);
+    if (method === 'email') stats.mappedByEmail += entries.length;
+    else stats.mappedBySignal += entries.length;
+
+    for (const lot of lots) {
+      const target = reconcileTargetStatus(lot.status, occ, now);
+      if (target === null) continue; // opted_out — leave the lot alone entirely
+      // Never replace a newer appointment already on the lot with an older one.
+      const existingStart = lot.calendlyEvent?.startTime
+        ? new Date(lot.calendlyEvent.startTime).getTime()
+        : 0;
+      const occStart = occ.startTime ? new Date(occ.startTime).getTime() : 0;
+      const attach =
+        !lot.calendlyEventUri || lot.calendlyEventUri === occ.eventUri || occStart >= existingStart;
+      const statusChanges = target !== lot.status;
+      const uriChanges = attach && lot.calendlyEventUri !== occ.eventUri;
+      if (!statusChanges && !uriChanges) continue;
+
+      if (statusChanges) {
+        if (target === 'completed') stats.lotsCompleted += 1;
+        else stats.lotsScheduled += 1;
+      }
+      changes.push({
+        email,
+        method,
+        lot: lot.lotNumber,
+        project: lot.project?.name || '',
+        from: lot.status,
+        to: target,
+        when: occ.startTime
+          ? new Date(occ.startTime).toISOString().slice(0, 16).replace('T', ' ')
+          : '—',
+      });
+      if (dryRun) continue;
+
+      const priorStatus = lot.status;
+      lot.status = target;
+      if (attach) {
+        lot.calendlyEventUri = occ.eventUri || lot.calendlyEventUri;
+        lot.calendlyEvent = buildLotCalendlyEvent(occ, email, role);
+        lot.calendlyWarning =
+          method === 'email'
+            ? ''
+            : `Auto-matched by ${method} (not email) — verify this is the right lot.`;
+      }
+      await lot.save();
+
+      const projectId = lot.project?._id || lot.project;
+      await MessageLog.create({
+        project: projectId,
+        lot: lot._id,
+        type: 'calendly',
+        direction: 'in',
+        to: email,
+        subject: occ.eventName || 'Calendly event (queue re-match)',
+        body: `Re-matched queued invitee ${email} to lot ${lot.lotNumber} by ${method} → ${lot.status} (event ${occ.eventUri})`,
+        status: 'received',
+        providerId: occ.eventUri,
+        sentAt: new Date(),
+      });
+      if (priorStatus !== lot.status) {
+        await logStatusChange({
+          lot,
+          project: projectId,
+          fromStatus: priorStatus,
+          toStatus: lot.status,
+          actor: 'calendly_sync',
+          message: `Calendly queue re-match: ${email} → ${occ.eventName || 'event'} by ${method}.`,
+        });
+      }
+    }
+
+    if (!dryRun) {
+      await CalendlyUnmatch.updateMany(
+        { _id: { $in: entries.map((e) => e._id) } },
+        { $set: { status: 'mapped', mappedLot: lots[0]._id, mappedAt: new Date() } }
+      );
+    }
+  }
+
+  // Cleanup pass: past events that still match nothing reference data that no
+  // longer exists — mark them ignored so the manual queue only shows rows a
+  // human can actually act on.
+  if (ignoreStalePast) {
+    for (const [email, entries] of byEmail) {
+      if (matchedEmails.has(email)) continue;
+      for (const entry of entries) {
+        if (!entry.eventStartTime || new Date(entry.eventStartTime).getTime() > now) continue;
+        stats.ignoredStalePast += 1;
+        stats.stillUnmatched -= 1;
+        if (!dryRun) {
+          await CalendlyUnmatch.updateOne(
+            { _id: entry._id },
+            { $set: { status: 'ignored', lastSeenAt: new Date() } }
+          );
+        }
+      }
+    }
+  }
+
+  return { stats, changes };
+}
+
 // Sync the single owner's Calendly events: pull scheduled_events, match
 // invitees to lot buyers by email, flip matches to 'scheduled'. Anything
 // unmatched goes into CalendlyUnmatch for manual mapping.
@@ -841,6 +1045,18 @@ async function syncAll() {
     }
   }
 
+  // Self-heal the manual-mapping queue: rows whose invitee now matches data
+  // imported AFTER the row was created. Their event may have left the sync
+  // window entirely, so the passes above will never see that email again —
+  // without this, a row stays "unmatched" forever even though its email is
+  // right there on a lot.
+  let queueRematch = { stats: {} };
+  try {
+    queueRematch = await rematchUnmatchedQueue();
+  } catch (err) {
+    console.warn('[calendly] queue re-match failed', err.message);
+  }
+
   setting.lastCalendlySync = new Date();
   setting.calendlyHealth = {
     ok: true,
@@ -857,6 +1073,7 @@ async function syncAll() {
     bySignal: signalMatched,
     reMatched: reMatched.length,
     unmatched: unmatchedCount,
+    queueRematched: queueRematch.stats,
   };
 }
 
@@ -1096,6 +1313,8 @@ module.exports = {
   listEvents,
   listInvitees,
   collectOccurrences,
+  occurrenceFromUnmatch,
+  rematchUnmatchedQueue,
   findLotHits,
   buildLotCalendlyEvent,
   eventHasEnded,

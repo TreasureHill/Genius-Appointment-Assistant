@@ -18,6 +18,7 @@ const {
   matchLotsByName,
   matchUnmatchedOccurrence,
   prepLotForMatch,
+  occurrenceFromUnmatch,
 } = require('../../services/calendly');
 
 let passed = 0;
@@ -195,6 +196,48 @@ t('flattens a lot doc into the shape the matchers read', () => {
   assert.strictEqual(out.projectName, 'Maple');
   assert.strictEqual(out.buyers.length, 1);
   assert.ok(out.doc);
+});
+
+console.log('occurrenceFromUnmatch (queue row → occurrence)');
+t('maps a stored CalendlyUnmatch row into the occurrence shape', () => {
+  const occ = occurrenceFromUnmatch({
+    eventUri: 'https://api.calendly.com/scheduled_events/abc',
+    eventName: 'Genius Appointment',
+    eventStartTime: new Date(past),
+    inviteeEmail: 'jane@x.com',
+    inviteeName: 'Jane Doe',
+    inviteeFirstName: 'Jane',
+    inviteeLastName: 'Doe',
+    inviteeStatus: 'active',
+    answer: 'Stonerose, Niagara Lot 41',
+  });
+  assert.strictEqual(occ.eventUri, 'https://api.calendly.com/scheduled_events/abc');
+  assert.strictEqual(occ.eventName, 'Genius Appointment');
+  assert.strictEqual(occ.answerText, 'Stonerose, Niagara Lot 41');
+  assert.strictEqual(occ.inviteeName, 'Jane Doe');
+});
+t('the rebuilt occurrence drives the same matchers as a live sync', () => {
+  const row = { answer: 'Stonerose, Niagara Lot 41', inviteeName: 'Jane Doe' };
+  const prepared = [prep('Stonerose', '41'), prep('Other', '9')];
+  const m = matchUnmatchedOccurrence(occurrenceFromUnmatch(row), prepared);
+  assert.ok(m);
+  assert.strictEqual(m.method, 'project/lot answer');
+  assert.strictEqual(m.lot.tag, 'Stonerose/41');
+});
+t('a past queue row resolves to completed, an upcoming one to scheduled', () => {
+  assert.strictEqual(
+    reconcileTargetStatus('contacted', occurrenceFromUnmatch({ eventStartTime: new Date(past) }), now),
+    'completed'
+  );
+  assert.strictEqual(
+    reconcileTargetStatus('contacted', occurrenceFromUnmatch({ eventStartTime: new Date(future) }), now),
+    'scheduled'
+  );
+});
+t('handles an empty row without throwing', () => {
+  const occ = occurrenceFromUnmatch({});
+  assert.strictEqual(occ.answerText, '');
+  assert.strictEqual(occ.startTime, null);
 });
 
 console.log(`\nAll ${passed} assertions passed ✅`);

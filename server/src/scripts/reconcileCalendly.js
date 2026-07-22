@@ -196,13 +196,20 @@ async function main() {
       await CalendlyUnmatch.updateOne(
         { eventUri: occ.eventUri, inviteeEmail: email },
         {
-          $set: { lastSeenAt: new Date() },
+          // Backfill the typed answer + name like syncAll does — the queue
+          // re-matcher and the UI both rely on them.
+          $set: {
+            lastSeenAt: new Date(),
+            answer: occ.answerText || '',
+            inviteeName: occ.inviteeName || '',
+            inviteeFirstName: occ.inviteeFirstName || '',
+            inviteeLastName: occ.inviteeLastName || '',
+          },
           $setOnInsert: {
             eventUri: occ.eventUri,
             eventName: occ.eventName || '',
             eventStartTime: occ.startTime ? new Date(occ.startTime) : null,
             inviteeEmail: email,
-            inviteeName: occ.inviteeName || '',
             inviteeStatus: occ.inviteeStatus || '',
             status: 'unmatched',
           },
