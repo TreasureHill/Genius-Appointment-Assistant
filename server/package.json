@@ -10,6 +10,7 @@
     "seed": "node src/scripts/seed.js",
     "reconcile:calendly": "node src/scripts/reconcileCalendly.js",
     "fix:calendly": "node src/scripts/fixCalendlyUnmatched.js",
+    "check:calendly": "node src/scripts/checkCalendlyEmails.js",
     "test:calendly": "node src/scripts/__tests__/calendly.helpers.test.js"
   },
   "dependencies": {
