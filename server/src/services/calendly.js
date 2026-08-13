@@ -210,7 +210,7 @@ async function listEventTypes() {
     while (url) {
       const { data } = await c.get(url);
       for (const e of data.collection || []) {
-        const cfg = (e.location_configurations || e.locationConfigurations || [])[0] || {};
+        const cfg = eventTypeLocations(e)[0] || {};
         out.push({
           uri: e.uri,
           name: e.name,
@@ -231,7 +231,20 @@ async function listEventTypes() {
   }
 }
 
-// Fetch a single event type resource (includes its location_configurations).
+// The Calendly event type resource lists its configured locations under
+// `locations` — NOT `location_configurations` (that name only appears in the
+// API's *error* paths, e.g. "event.location_configuration.location"). We used
+// to read the wrong field, got an empty list, and fell back to the
+// operator-typed address, which Calendly rejects for `physical` events unless
+// it exactly matches the configured choice ("invalid location choice").
+// The legacy names are kept as fallbacks in case of older cached shapes.
+function eventTypeLocations(et) {
+  if (!et) return [];
+  const list = et.locations || et.location_configurations || et.locationConfigurations || [];
+  return Array.isArray(list) ? list : [];
+}
+
+// Fetch a single event type resource (includes its `locations`).
 async function getEventType(uri) {
   const c = client();
   if (!c || !uri) return null;
@@ -278,6 +291,11 @@ function normalizeKind(k) {
 
 // Kinds where Calendly's Create Event Invitee requires location.location.
 const KINDS_NEEDING_DETAIL = ['outbound_call', 'inbound_call', 'ask_invitee', 'physical', 'custom'];
+
+// Kinds where the invitee (not the host) supplies the detail — a phone number
+// or their choice of place. Omitting `location` for these can never book, so
+// the invalid-choice retry below skips them.
+const KINDS_NEEDING_INVITEE_INPUT = ['outbound_call', 'ask_invitee'];
 
 // Build the Create-Event-Invitee `location` object from the event type's
 // configured locations. `kindOverride` (Settings → Aria) wins when set;
@@ -341,7 +359,7 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
 
   // Resolve the event type so location.kind matches and required questions get answered.
   const et = await getEventType(uri);
-  const cfgs = et?.location_configurations || et?.locationConfigurations || [];
+  const cfgs = eventTypeLocations(et);
   const location = buildLocation(cfgs, locationKind, phone, locationDetail);
   const qa = buildQuestionsAndAnswers(et?.custom_questions || et?.customQuestions || [], {
     projectName,
@@ -361,8 +379,7 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
   if (location) payload.location = location;
   if (qa.length) payload.questions_and_answers = qa;
 
-  try {
-    const { data } = await c.post('/invitees', payload);
+  const inviteeSuccess = (data) => {
     const resource = data?.resource || data || {};
     return {
       ok: true,
@@ -371,16 +388,38 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
       rescheduleUrl: resource.reschedule_url || '',
       cancelUrl: resource.cancel_url || '',
     };
+  };
+
+  try {
+    const { data } = await c.post('/invitees', payload);
+    return inviteeSuccess(data);
   } catch (err) {
     const body = err.response?.data || {};
     const detailMsg = Array.isArray(body.details) && body.details.length
       ? body.details.map((d) => `${d.parameter || ''} ${d.message || ''}`.trim()).join('; ')
       : '';
     let message = detailMsg || body.message || body.title || err.message;
-    // Make a location mismatch actionable by listing the event type's kinds.
     if (/location/i.test(message)) {
-      const kinds = cfgs.map((cc) => cc.kind).filter(Boolean);
-      if (kinds.length) message += ` (event type location kind${kinds.length === 1 ? '' : 's'}: ${kinds.join(', ')})`;
+      // The location string we sent didn't match one of the event type's
+      // configured choices. For host-set kinds (physical, custom, video
+      // conferences) Calendly fills the location from the event type itself,
+      // so retry once without the field. Invitee-supplied kinds
+      // (outbound_call, ask_invitee) can't be omitted — skip the retry there.
+      if (payload.location && !KINDS_NEEDING_INVITEE_INPUT.includes(payload.location.kind)) {
+        try {
+          const { location: _omit, ...retryPayload } = payload;
+          const { data } = await c.post('/invitees', retryPayload);
+          return inviteeSuccess(data);
+        } catch {
+          /* fall through to the original, more descriptive error */
+        }
+      }
+      // Make a location mismatch actionable by listing the event type's
+      // configured choices.
+      const choices = cfgs
+        .map((cc) => [cc.kind, cc.location].filter(Boolean).join(': '))
+        .filter(Boolean);
+      if (choices.length) message += ` (event type location${choices.length === 1 ? '' : 's'}: ${choices.join('; ')})`;
     }
     return { ok: false, status: err.response?.status, message };
   }
@@ -1324,6 +1363,10 @@ module.exports = {
   eventHasEnded,
   reconcileTargetStatus,
   normalizeEmail,
+  // booking location helpers (unit-tested)
+  eventTypeLocations,
+  buildLocation,
+  normalizeKind,
   // matching helpers (project/lot answer + buyer name)
   normalizeText,
   compact,

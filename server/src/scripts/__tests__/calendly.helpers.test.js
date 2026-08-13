@@ -19,6 +19,9 @@ const {
   matchUnmatchedOccurrence,
   prepLotForMatch,
   occurrenceFromUnmatch,
+  eventTypeLocations,
+  buildLocation,
+  normalizeKind,
 } = require('../../services/calendly');
 
 let passed = 0;
@@ -238,6 +241,54 @@ t('handles an empty row without throwing', () => {
   const occ = occurrenceFromUnmatch({});
   assert.strictEqual(occ.answerText, '');
   assert.strictEqual(occ.startTime, null);
+});
+
+console.log('eventTypeLocations');
+t('reads the real Calendly field name (locations)', () => {
+  const et = { locations: [{ kind: 'physical', location: '1621 Major Mackenzie Dr E, Richmond Hill, ON L4S 0A2, Canada' }] };
+  assert.strictEqual(eventTypeLocations(et).length, 1);
+  assert.strictEqual(eventTypeLocations(et)[0].kind, 'physical');
+});
+t('falls back to legacy names and tolerates null', () => {
+  assert.strictEqual(eventTypeLocations({ location_configurations: [{ kind: 'custom' }] })[0].kind, 'custom');
+  assert.deepStrictEqual(eventTypeLocations(null), []);
+  assert.deepStrictEqual(eventTypeLocations({}), []);
+});
+
+console.log('normalizeKind');
+t('maps operator labels to Calendly kinds', () => {
+  assert.strictEqual(normalizeKind('Physical'), 'physical');
+  assert.strictEqual(normalizeKind('In-person'), 'physical');
+  assert.strictEqual(normalizeKind('Phone call'), 'outbound_call');
+  assert.strictEqual(normalizeKind('Zoom'), 'zoom_conference');
+  assert.strictEqual(normalizeKind(''), '');
+});
+
+console.log('buildLocation');
+const PHYSICAL_CFG = [{ kind: 'physical', location: '1621 Major Mackenzie Dr E, Richmond Hill, ON L4S 0A2, Canada' }];
+t('physical: exact configured address wins over the operator-typed detail', () => {
+  const loc = buildLocation(PHYSICAL_CFG, 'physical', '', '1621 Major Mackenzie Dr E, Richmond Hill, ON');
+  assert.strictEqual(loc.kind, 'physical');
+  // Must be Calendly's own string, or Create Invitee rejects with
+  // "invalid location choice".
+  assert.strictEqual(loc.location, PHYSICAL_CFG[0].location);
+});
+t('physical: operator detail used only when the event type exposes none', () => {
+  const loc = buildLocation([], 'physical', '', '1621 Major Mackenzie Dr E, Richmond Hill, ON');
+  assert.strictEqual(loc.kind, 'physical');
+  assert.strictEqual(loc.location, '1621 Major Mackenzie Dr E, Richmond Hill, ON');
+});
+t('outbound_call: invitee phone becomes the location', () => {
+  const loc = buildLocation([{ kind: 'outbound_call' }], '', '+16478211512', '');
+  assert.strictEqual(loc.kind, 'outbound_call');
+  assert.strictEqual(loc.location, '+16478211512');
+});
+t('zoom: kind only, no location detail needed', () => {
+  const loc = buildLocation([{ kind: 'zoom_conference' }], '', '', '');
+  assert.deepStrictEqual(loc, { kind: 'zoom_conference' });
+});
+t('no config and no override → null (omit the field)', () => {
+  assert.strictEqual(buildLocation([], '', '', ''), null);
 });
 
 console.log(`\nAll ${passed} assertions passed ✅`);
