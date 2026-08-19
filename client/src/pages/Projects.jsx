@@ -16,6 +16,16 @@ export default function Projects() {
     load();
   }, []);
 
+  async function toggleReminders(p) {
+    setErr('');
+    try {
+      await api.patch(`/api/projects/${p._id}`, { remindersPaused: !p.remindersPaused });
+      load();
+    } catch (ex) {
+      setErr(ex.message);
+    }
+  }
+
   async function create(e) {
     e.preventDefault();
     setErr('');
@@ -61,6 +71,7 @@ export default function Projects() {
               <th>Pending</th>
               <th>Contacted</th>
               <th>Scheduled</th>
+              <th>Reminders</th>
             </tr>
           </thead>
           <tbody>
@@ -73,11 +84,27 @@ export default function Projects() {
                 <td>{p.stats.byStatus.pending || 0}</td>
                 <td>{p.stats.byStatus.contacted || 0}</td>
                 <td>{p.stats.byStatus.scheduled || 0}</td>
+                <td>
+                  <span
+                    className={`badge ${p.remindersPaused ? 'err' : 'ok'}`}
+                    style={{ marginRight: 8 }}
+                  >
+                    {p.remindersPaused ? 'paused' : 'active'}
+                  </span>
+                  <button
+                    type="button"
+                    className="secondary"
+                    style={{ fontSize: 12, padding: '2px 8px' }}
+                    onClick={() => toggleReminders(p)}
+                  >
+                    {p.remindersPaused ? 'Resume' : 'Pause'}
+                  </button>
+                </td>
               </tr>
             ))}
             {projects.length === 0 && (
               <tr>
-                <td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                <td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                   No projects yet. Create one above, or go to{' '}
                   <Link to="/import">Import / Export</Link> to upload a sheet.
                 </td>

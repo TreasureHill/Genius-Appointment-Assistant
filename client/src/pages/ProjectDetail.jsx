@@ -14,21 +14,31 @@ export default function ProjectDetail() {
   const [tplSms, setTplSms] = useState('');
   const [tplSaved, setTplSaved] = useState('');
   const [tplErr, setTplErr] = useState('');
+  const [loadErr, setLoadErr] = useState('');
 
   async function load() {
-    const [p, lots, tpls] = await Promise.all([
-      api.get(`/api/projects/${id}`),
-      api.get(`/api/lots?project=${id}&limit=500`),
-      api.get('/api/templates'),
-    ]);
-    setProject(p);
-    setLotCount(lots.length);
-    setTemplates(tpls);
-    setTplEmail(p.defaultEmailTemplate || '');
-    setTplSms(p.defaultSmsTemplate || '');
+    try {
+      const [p, lots, tpls] = await Promise.all([
+        api.get(`/api/projects/${id}`),
+        api.get(`/api/lots?project=${id}&limit=500`),
+        api.get('/api/templates'),
+      ]);
+      setProject(p);
+      setLotCount(lots.length);
+      setTemplates(tpls);
+      setTplEmail(p.defaultEmailTemplate || '');
+      setTplSms(p.defaultSmsTemplate || '');
+      setLoadErr('');
+    } catch (ex) {
+      // Bad/stale id (404, cast error) or a network blip. Without this the
+      // rejection is unhandled and the page shows "Loading…" forever.
+      setLoadErr(ex.message || 'failed to load project');
+    }
   }
 
   useEffect(() => {
+    setProject(null);
+    setLoadErr('');
     load();
   }, [id]);
 
@@ -65,6 +75,24 @@ export default function ProjectDetail() {
     }
   }
 
+  const [remBusy, setRemBusy] = useState(false);
+  const [remErr, setRemErr] = useState('');
+
+  async function toggleReminders() {
+    setRemErr('');
+    setRemBusy(true);
+    try {
+      const updated = await api.patch(`/api/projects/${id}`, {
+        remindersPaused: !project.remindersPaused,
+      });
+      setProject(updated);
+    } catch (ex) {
+      setRemErr(ex.message);
+    } finally {
+      setRemBusy(false);
+    }
+  }
+
   async function remove() {
     if (lotCount > 0) {
       alert('This project still has lots. Delete or move them first.');
@@ -86,6 +114,22 @@ export default function ProjectDetail() {
     URL.revokeObjectURL(url);
   }
 
+  if (loadErr && !project) {
+    return (
+      <div>
+        <h1>Project unavailable</h1>
+        <div className="card">
+          <p className="error" style={{ marginTop: 0 }}>
+            Couldn't load this project: {loadErr}
+          </p>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            It may have been deleted, or the link is stale.{' '}
+            <Link to="/projects">← Back to all projects</Link>
+          </p>
+        </div>
+      </div>
+    );
+  }
   if (!project) return <div className="muted">Loading…</div>;
 
   const emailTemplates = templates.filter((t) => t.type === 'email');
@@ -182,9 +226,28 @@ export default function ProjectDetail() {
       </div>
 
       <div className="card">
-        <p className="muted" style={{ margin: 0 }}>
-          Pacing, reminder interval, max reminders, and send windows are configured system-wide on
-          the <Link to="/settings">Settings</Link> page.
+        <h2 style={{ marginTop: 0 }}>Reminders</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Automatic reminders for this project only. When paused, the scheduler skips this
+          project's lots and any of its reminders already queued are held until you resume.
+          Other projects are not affected, and manual sends from the Board still go through.
+        </p>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            onClick={toggleReminders}
+            disabled={remBusy}
+            className={project.remindersPaused ? '' : 'secondary'}
+          >
+            {project.remindersPaused ? 'Resume reminders' : 'Pause reminders'}
+          </button>
+          <span className={`badge ${project.remindersPaused ? 'err' : 'ok'}`}>
+            {project.remindersPaused ? 'paused' : 'active'}
+          </span>
+          {remErr && <span className="error">{remErr}</span>}
+        </div>
+        <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>
+          Pacing, reminder interval, max reminders, send windows, and the master reminder switch
+          are configured system-wide on the <Link to="/settings">Settings</Link> page.
         </p>
       </div>
 

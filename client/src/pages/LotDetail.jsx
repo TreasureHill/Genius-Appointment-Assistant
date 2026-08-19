@@ -381,9 +381,15 @@ export default function LotDetail() {
     <div>
       <div className="page-head">
         <div>
-          <Link to={`/projects/${lot.project?._id}`} className="muted" style={{ fontSize: 13 }}>
-            ← {lot.project?.name}
-          </Link>
+          {lot.project?._id ? (
+            <Link to={`/projects/${lot.project._id}`} className="muted" style={{ fontSize: 13 }}>
+              ← {lot.project.name}
+            </Link>
+          ) : (
+            <Link to="/projects" className="muted" style={{ fontSize: 13 }}>
+              ← all projects
+            </Link>
+          )}
           <h1 style={{ margin: '4px 0 0' }}>
             Lot {lot.lotNumber}{' '}
             <span className={`badge ${lot.status}`} style={{ marginLeft: 8, verticalAlign: 'middle' }}>
