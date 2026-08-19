@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 
 export default function Login() {
@@ -9,10 +9,16 @@ export default function Login() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const nav = useNavigate();
+  const location = useLocation();
+  // Where the auth guard bounced the user from (deep link, bookmark, shared
+  // URL). Fall back to the dashboard when they came to /login directly.
+  const from = location.state?.from
+    ? location.state.from.pathname + (location.state.from.search || '')
+    : '/';
 
   useEffect(() => {
-    if (user) nav('/', { replace: true });
-  }, [user, nav]);
+    if (user) nav(from, { replace: true });
+  }, [user, nav, from]);
 
   async function submit(e) {
     e.preventDefault();
@@ -20,7 +26,7 @@ export default function Login() {
     setBusy(true);
     try {
       await login(username, password);
-      nav('/', { replace: true });
+      nav(from, { replace: true });
     } catch (ex) {
       setErr(ex.message || 'login failed');
     } finally {

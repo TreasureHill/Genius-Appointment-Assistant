@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import ErrorBoundary from './ErrorBoundary.jsx';
 
@@ -93,7 +93,6 @@ const links = [
 
 export default function Layout() {
   const { user, logout } = useAuth();
-  const nav = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar:collapsed') === '1');
 
@@ -107,7 +106,9 @@ export default function Layout() {
 
   async function onLogout() {
     await logout();
-    nav('/login', { replace: true });
+    // No manual redirect: clearing the user makes the auth guard render its
+    // <Navigate to="/login"> (remembering this page), so navigating here too
+    // would just race it.
   }
 
   return (

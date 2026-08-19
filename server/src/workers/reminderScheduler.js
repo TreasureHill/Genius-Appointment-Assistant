@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
+const Project = require('../models/Project');
 const Outbox = require('../models/Outbox');
 const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
 const { resolveDefaultsForProject } = require('../services/templateResolver');
@@ -18,12 +19,16 @@ async function runOnce() {
 
   const cutoff = new Date(Date.now() - intervalDays * 24 * 60 * 60 * 1000);
 
+  // Projects can pause their own reminders independently of the master switch.
+  const pausedProjectIds = await Project.find({ remindersPaused: true }).distinct('_id');
+
   // Only contacted lots get automatic reminders. 'pending' = never manually
   // contacted, the user must pick + send from the Board first.
   const due = await Lot.find({
     status: 'contacted',
     reminderCount: { $lt: maxReminders },
     lastContactedAt: { $ne: null, $lte: cutoff },
+    ...(pausedProjectIds.length ? { project: { $nin: pausedProjectIds } } : {}),
   })
     .select('_id project')
     .lean();

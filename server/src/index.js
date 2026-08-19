@@ -67,7 +67,8 @@ app.use('/api/admin', adminRoutes);
 const clientDist = path.resolve(__dirname, '../../client/dist');
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist));
-  app.get(/^\/(?!api\/).*/, (req, res) => {
+  // Everything except /api and /api/... falls through to the SPA.
+  app.get(/^\/(?!api(?:\/|$)).*/, (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 }

@@ -706,7 +706,8 @@ export default function Settings() {
           <div className="muted" style={{ marginBottom: 6 }}>
             Master reminder switch — when on, the hourly scheduler stops queuing new reminders and
             any reminders already sitting in the outbox are skipped. Manual one-off sends from the
-            Board still go through.
+            Board still go through. To pause reminders for a single project instead, use the
+            toggle on that project's page.
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button

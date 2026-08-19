@@ -285,9 +285,25 @@ function AddLotModal({ projects, defaultProjectId, onClose, onCreated }) {
 
 export default function ProjectBoard() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialIds = parseIds(searchParams.get('project') || localStorage.getItem('board:project') || '');
   const [projects, setProjects] = useState([]);
-  const [selectedProjectIds, setSelectedProjectIds] = useState(() => new Set(initialIds));
+  const [selectedProjectIds, setSelectedProjectIds] = useState(
+    () => new Set(parseIds(searchParams.get('project') || localStorage.getItem('board:project') || ''))
+  );
+
+  // Keep the selection in sync with the URL after mount too — navigating to
+  // /board?project=X from another page (or via back/forward) must update the
+  // filter, not just the first render. The write-back effect below uses
+  // { replace: true } with the same sorted key, so this can't loop.
+  const urlProjectKey = searchParams.get('project') || '';
+  useEffect(() => {
+    const ids = parseIds(urlProjectKey);
+    if (!ids.length) return; // URL cleared (e.g. by our own write when nothing is selected)
+    setSelectedProjectIds((prev) => {
+      const key = ids.slice().sort().join(',');
+      const prevKey = Array.from(prev).sort().join(',');
+      return prevKey === key ? prev : new Set(ids);
+    });
+  }, [urlProjectKey]);
   const [maxReminders, setMaxReminders] = useState(null);
   const [lots, setLots] = useState([]);
   const [filter, setFilter] = useState({ status: '', q: '' });

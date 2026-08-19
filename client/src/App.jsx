@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './auth.jsx';
 import Layout from './components/Layout.jsx';
 import Login from './pages/Login.jsx';
@@ -15,11 +15,14 @@ import Activity from './pages/Activity.jsx';
 import Settings from './pages/Settings.jsx';
 import CalendlyEvents from './pages/CalendlyEvents.jsx';
 import Reports from './pages/Reports.jsx';
+import NotFound from './pages/NotFound.jsx';
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
   if (loading) return <div className="center">Loading…</div>;
-  if (!user) return <Navigate to="/login" replace />;
+  // Remember where the user was headed so Login can return them there.
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
   return children;
 }
 
@@ -48,8 +51,10 @@ export default function App() {
         <Route path="/calendly" element={<CalendlyEvents />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<Settings />} />
+        {/* Unknown paths get a real 404 inside the app shell instead of a
+            silent redirect to the dashboard. */}
+        <Route path="*" element={<NotFound />} />
       </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

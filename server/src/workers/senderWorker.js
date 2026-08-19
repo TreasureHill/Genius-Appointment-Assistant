@@ -2,6 +2,7 @@ const Outbox = require('../models/Outbox');
 const Lot = require('../models/Lot');
 const MessageLog = require('../models/MessageLog');
 const Setting = require('../models/Setting');
+const Project = require('../models/Project');
 const { sendEmail } = require('../services/mailer');
 const { sendSms } = require('../services/sms');
 const { isWithinSendWindow, nextSendOpening } = require('../services/sendWindow');
@@ -20,7 +21,19 @@ async function drainOnce() {
 
     const now = new Date();
     const pendingFilter = { status: 'pending', sendAfter: { $lte: now } };
-    if (setting.remindersPaused) pendingFilter.isReminder = { $ne: true };
+    if (setting.remindersPaused) {
+      pendingFilter.isReminder = { $ne: true };
+    } else {
+      // Per-project pause: hold queued reminders for paused projects (they stay
+      // pending and go out when the project is resumed). Manual sends still go.
+      const pausedProjectIds = await Project.find({ remindersPaused: true }).distinct('_id');
+      if (pausedProjectIds.length) {
+        pendingFilter.$or = [
+          { isReminder: { $ne: true } },
+          { project: { $nin: pausedProjectIds } },
+        ];
+      }
+    }
     const batch = await Outbox.find(pendingFilter)
       .sort({ sendAfter: 1 })
       .limit(20);
