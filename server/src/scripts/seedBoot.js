@@ -15,6 +15,31 @@ async function migrateBookedToScheduled() {
   }
 }
 
+// Retire stale Calendly warnings on lots:
+//   - the "Auto-matched by <method> — verify" notice is no longer raised at all
+//   - a duplicate-booking warning is moot once the lot is completed / opted out
+//     or its appointment has already passed
+async function migrateCalendlyWarnings() {
+  const now = new Date();
+  const autoMatch = await Lot.collection.updateMany(
+    { calendlyWarning: /^Auto-matched by/ },
+    { $set: { calendlyWarning: '' } }
+  );
+  const stale = await Lot.collection.updateMany(
+    {
+      calendlyWarning: { $ne: '' },
+      $or: [
+        { status: { $in: ['completed', 'opted_out'] } },
+        { 'calendlyEvent.endTime': { $ne: null, $lte: now } },
+        { 'calendlyEvent.endTime': null, 'calendlyEvent.startTime': { $ne: null, $lte: now } },
+      ],
+    },
+    { $set: { calendlyWarning: '' } }
+  );
+  const n = (autoMatch.modifiedCount || 0) + (stale.modifiedCount || 0);
+  if (n > 0) console.log(`[migration] cleared ${n} stale Calendly warning(s)`);
+}
+
 async function seedAdmin() {
   const count = await User.countDocuments();
   if (count > 0) return;
@@ -50,4 +75,4 @@ at {{lot.address}}. You can pick a time here:
   console.log('[seed] inserted starter templates');
 }
 
-module.exports = { seedAdmin, seedStarterTemplates, migrateBookedToScheduled };
+module.exports = { seedAdmin, seedStarterTemplates, migrateBookedToScheduled, migrateCalendlyWarnings };

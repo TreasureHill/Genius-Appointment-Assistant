@@ -1,17 +1,54 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
+// Email bodies are stored as rendered HTML; show them as readable text.
+function stripHtml(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function fmt(d) {
+  return d ? new Date(d).toLocaleString() : '—';
+}
+
+function statusClass(status) {
+  if (status === 'sent' || status === 'received' || status === 'delivered') return 'ok';
+  if (status === 'failed') return 'err';
+  return 'pending';
+}
+
+// Lot cell: always a link when the lot still exists, otherwise say so instead
+// of leaving the column blank.
+function LotCell({ lot }) {
+  if (lot?._id) {
+    return (
+      <Link to={`/lots/${lot._id}`} title={lot.address || ''}>
+        Lot {lot.lotNumber}
+      </Link>
+    );
+  }
+  return <span className="muted">(lot deleted)</span>;
+}
+
 // Shared renderer for one unified activity row — used here and on the Dashboard.
+// Click a row to expand the full detail (recipient, error, message body).
 export function ActivityRow({ item }) {
+  const [open, setOpen] = useState(false);
   const when = new Date(item.createdAt).toLocaleString();
-  const lot = item.lot?._id ? (
-    <Link to={`/lots/${item.lot._id}`}>{item.lot.lotNumber}</Link>
-  ) : (
-    ''
-  );
+  const lot = <LotCell lot={item.lot} />;
+
   if (item.kind === 'event') {
     return (
       <tr>
@@ -31,40 +68,119 @@ export function ActivityRow({ item }) {
       </tr>
     );
   }
+
+  const failed = item.status === 'failed';
+  const bodyText = item.type === 'email' ? stripHtml(item.body) : String(item.body || '');
   return (
-    <tr>
-      <td className="nowrap">{when}</td>
-      <td>
-        {item.type}
-        <span className="muted" style={{ fontSize: 11 }}>
-          {' '}
-          {item.direction}
-        </span>
-      </td>
-      <td>{item.project?.name || ''}</td>
-      <td>{lot}</td>
-      <td className="nowrap" style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {item.to}
-      </td>
-      <td style={{ maxWidth: 340 }}>
-        {item.subject || item.body?.slice(0, 90)}
-        {item.status && (
-          <span
-            className={`badge ${
-              item.status === 'sent' || item.status === 'received'
-                ? 'ok'
-                : item.status === 'failed'
-                  ? 'err'
-                  : 'pending'
-            }`}
-            style={{ marginLeft: 8 }}
-          >
-            {item.status}
+    <>
+      <tr
+        onClick={() => setOpen((o) => !o)}
+        style={{ cursor: 'pointer' }}
+        title={open ? 'Hide details' : 'Show details'}
+      >
+        <td className="nowrap">{when}</td>
+        <td>
+          {item.type}
+          <span className="muted" style={{ fontSize: 11 }}>
+            {' '}
+            {item.direction}
           </span>
-        )}
-        {item.error && <div className="error" style={{ fontSize: 11 }}>{item.error}</div>}
-      </td>
-    </tr>
+        </td>
+        <td>{item.project?.name || ''}</td>
+        <td onClick={(e) => e.stopPropagation()}>{lot}</td>
+        <td style={{ maxWidth: 220, overflowWrap: 'anywhere' }}>{item.to || <span className="muted">—</span>}</td>
+        <td style={{ maxWidth: 340 }}>
+          {item.subject || bodyText.slice(0, 90) || <span className="muted">(no subject)</span>}
+          {item.status && (
+            <span className={`badge ${statusClass(item.status)}`} style={{ marginLeft: 8 }}>
+              {item.status}
+            </span>
+          )}
+          {failed && (
+            <div className="error" style={{ fontSize: 11, margin: '2px 0 0' }}>
+              {item.error ? String(item.error).slice(0, 160) : 'send failed'}
+            </div>
+          )}
+          <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+            {open ? '▴ less' : '▾ details'}
+          </span>
+        </td>
+      </tr>
+      {open && (
+        <tr className="activity-detail">
+          <td colSpan={6} style={{ background: 'var(--panel-subtle)', fontSize: 13 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '4px 14px', padding: '6px 4px' }}>
+              <span className="muted">Lot</span>
+              <span onClick={(e) => e.stopPropagation()}>
+                {lot}
+                {item.lot?.address ? <span className="muted"> · {item.lot.address}</span> : null}
+                {item.project?.name ? <span className="muted"> · {item.project.name}</span> : null}
+              </span>
+              <span className="muted">{item.direction === 'in' ? 'From' : 'To'}</span>
+              <span style={{ overflowWrap: 'anywhere' }}>
+                {item.to || '—'}
+                {item.buyerIndex != null ? <span className="muted"> (buyer #{item.buyerIndex + 1})</span> : null}
+              </span>
+              <span className="muted">Status</span>
+              <span>
+                <span className={`badge ${statusClass(item.status)}`}>{item.status || '—'}</span>
+                {item.isReminder ? <span className="muted"> · reminder {item.reminderIndex || ''}</span> : null}
+              </span>
+              {failed && (
+                <>
+                  <span className="muted">Error</span>
+                  <span className="error" style={{ margin: 0, overflowWrap: 'anywhere' }}>
+                    {item.error || 'No error text was recorded.'}
+                  </span>
+                </>
+              )}
+              {(item.scheduledFor || item.sentAt) && (
+                <>
+                  <span className="muted">Timing</span>
+                  <span>
+                    {item.scheduledFor ? `queued for ${fmt(item.scheduledFor)}` : ''}
+                    {item.scheduledFor && item.sentAt ? ' · ' : ''}
+                    {item.sentAt ? `sent ${fmt(item.sentAt)}` : ''}
+                  </span>
+                </>
+              )}
+              {item.subject && (
+                <>
+                  <span className="muted">Subject</span>
+                  <span>{item.subject}</span>
+                </>
+              )}
+              {bodyText && (
+                <>
+                  <span className="muted">Message</span>
+                  <pre
+                    style={{
+                      margin: 0,
+                      whiteSpace: 'pre-wrap',
+                      overflowWrap: 'anywhere',
+                      fontFamily: 'inherit',
+                      fontSize: 12.5,
+                      maxHeight: 320,
+                      overflow: 'auto',
+                    }}
+                  >
+                    {bodyText}
+                  </pre>
+                </>
+              )}
+              {item.providerId && (
+                <>
+                  <span className="muted">Provider id</span>
+                  <span className="muted" style={{ fontSize: 11, overflowWrap: 'anywhere' }}>
+                    {item.providerId}
+                  </span>
+                </>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -76,13 +192,25 @@ export default function Activity() {
   const [pageSize, setPageSize] = useState(50);
   const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState([]);
-  const [filter, setFilter] = useState({ project: '', kind: '', q: '' });
+  const [searchParams] = useSearchParams();
+  // /activity?status=failed (linked from the Dashboard) opens straight on
+  // the failed sends.
+  const [filter, setFilter] = useState({
+    project: searchParams.get('project') || '',
+    kind: searchParams.get('status') === 'failed' ? 'failed' : searchParams.get('kind') || '',
+    q: searchParams.get('q') || '',
+  });
 
   async function load() {
     setLoading(true);
     const qs = new URLSearchParams();
     if (filter.project) qs.append('project', filter.project);
-    if (filter.kind) qs.append('kind', filter.kind);
+    if (filter.kind === 'failed') {
+      qs.append('kind', 'messages');
+      qs.append('status', 'failed');
+    } else if (filter.kind) {
+      qs.append('kind', filter.kind);
+    }
     if (filter.q) qs.append('q', filter.q);
     qs.append('page', String(page));
     qs.append('pageSize', String(pageSize));
@@ -112,7 +240,8 @@ export default function Activity() {
         <div>
           <h1 style={{ margin: 0 }}>Activity log</h1>
           <div className="muted" style={{ fontSize: 13 }}>
-            Every message, call, Calendly match, and status change across all lots.
+            Every message, call, Calendly match, and status change across all lots. Click a row for
+            the full detail.
           </div>
         </div>
       </div>
@@ -141,6 +270,7 @@ export default function Activity() {
         >
           <option value="">All activity</option>
           <option value="messages">Messages &amp; calls</option>
+          <option value="failed">Failed sends only</option>
           <option value="events">Status changes</option>
         </select>
         <input

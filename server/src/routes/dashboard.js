@@ -9,7 +9,8 @@ const CalendlyUnmatch = require('../models/CalendlyUnmatch');
 const router = express.Router();
 
 router.get('/', async (req, res) => {
-  const since = (days) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const now = new Date();
+  const since = (days) => new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
 
   const [
     lotStatusCounts,
@@ -46,9 +47,19 @@ router.get('/', async (req, res) => {
       .populate('project', 'name')
       .populate('lot', 'lotNumber')
       .lean(),
-    Lot.find({ calendlyWarning: { $ne: '' } })
+    // Only live warnings: a lot that is done (completed / opted out) or whose
+    // appointment has already passed has nothing left to double-book.
+    Lot.find({
+      calendlyWarning: { $ne: '' },
+      status: { $nin: ['completed', 'opted_out'] },
+      $nor: [
+        { 'calendlyEvent.endTime': { $ne: null, $lte: now } },
+        { 'calendlyEvent.endTime': null, 'calendlyEvent.startTime': { $ne: null, $lte: now } },
+      ],
+    })
       .populate('project', 'name')
-      .select('lotNumber calendlyWarning project status')
+      .select('lotNumber address calendlyWarning project status calendlyEvent.startTime calendlyEvent.endTime calendlyEvent.name')
+      .sort({ 'calendlyEvent.startTime': 1 })
       .limit(50)
       .lean(),
     Project.aggregate([
@@ -103,7 +114,7 @@ router.get('/', async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(15)
       .populate('project', 'name')
-      .populate('lot', 'lotNumber')
+      .populate('lot', 'lotNumber address')
       .lean(),
   ]);
 

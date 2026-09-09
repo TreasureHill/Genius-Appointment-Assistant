@@ -241,3 +241,23 @@ t('handles an empty row without throwing', () => {
 });
 
 console.log(`\nAll ${passed} assertions passed ✅`);
+
+// ---- buildDuplicateWarning: only UPCOMING, non-canceled bookings count ----
+{
+  const { buildDuplicateWarning } = require('../../services/calendly');
+  const now = new Date('2026-09-09T12:00:00Z').getTime();
+  const past = { eventUri: 'e1', startTime: '2026-09-01T14:00:00Z', endTime: '2026-09-01T15:00:00Z' };
+  const soon = { eventUri: 'e2', startTime: '2026-09-12T14:00:00Z', endTime: '2026-09-12T15:00:00Z' };
+  const later = { eventUri: 'e3', startTime: '2026-09-14T18:00:00Z', endTime: '2026-09-14T19:00:00Z' };
+  const canceled = { eventUri: 'e4', startTime: '2026-09-20T18:00:00Z', inviteeStatus: 'canceled' };
+
+  assert.equal(buildDuplicateWarning([past, soon], now), '', 'a past booking plus one upcoming is not a duplicate');
+  assert.equal(buildDuplicateWarning([soon, canceled], now), '', 'a canceled booking is not a duplicate');
+  assert.equal(buildDuplicateWarning([soon, soon], now), '', 'same event via two buyer slots counts once');
+  const w = buildDuplicateWarning([later, past, soon], now, 'America/New_York');
+  assert.ok(w.startsWith('Invitee has 2 upcoming Calendly bookings'), w);
+  assert.ok(w.includes('Sep 12, 2026, 10:00 AM'), w);
+  assert.ok(w.includes('Sep 14, 2026, 2:00 PM'), w);
+  assert.ok(w.indexOf('Sep 12') < w.indexOf('Sep 14'), 'dates listed in order');
+  console.log('buildDuplicateWarning: ok');
+}

@@ -24,7 +24,7 @@ const ACTOR_LABELS = {
 router.get('/', async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const pageSize = Math.min(200, Math.max(5, Number(req.query.pageSize) || 25));
-  const { project, kind, q } = req.query;
+  const { project, kind, q, status } = req.query;
 
   const msgFilter = {};
   const evFilter = {};
@@ -38,15 +38,18 @@ router.get('/', async (req, res) => {
     evFilter.message = r;
   }
 
+  // status=failed (etc.) narrows to messages only — status changes have no
+  // delivery status to filter on.
+  if (status) msgFilter.status = status;
   const wantMessages = !kind || kind === 'all' || kind === 'messages';
-  const wantEvents = !kind || kind === 'all' || kind === 'events';
+  const wantEvents = !status && (!kind || kind === 'all' || kind === 'events');
   const limitN = page * pageSize;
 
   const [msgs, events, msgCount, evCount] = await Promise.all([
     wantMessages
       ? MessageLog.find(msgFilter)
           .populate('project', 'name')
-          .populate('lot', 'lotNumber')
+          .populate('lot', 'lotNumber address')
           .sort({ createdAt: -1 })
           .limit(limitN)
           .lean()
@@ -76,6 +79,12 @@ router.get('/', async (req, res) => {
     body: m.body,
     status: m.status,
     error: m.error,
+    buyerIndex: m.buyerIndex,
+    providerId: m.providerId,
+    scheduledFor: m.scheduledFor,
+    sentAt: m.sentAt,
+    isReminder: m.isReminder,
+    reminderIndex: m.reminderIndex,
   });
   const normEv = (e) => ({
     _id: `e-${e._id}`,

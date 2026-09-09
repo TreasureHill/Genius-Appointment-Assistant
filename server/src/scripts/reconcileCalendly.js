@@ -36,6 +36,7 @@ const {
   collectOccurrences,
   findLotHits,
   buildLotCalendlyEvent,
+  buildDuplicateWarning,
   reconcileTargetStatus,
 } = require('../services/calendly');
 
@@ -124,7 +125,8 @@ async function main() {
       const occurrences = hits.flatMap((h) => h.occurrences.map((o) => ({ ...o, role: h.role, email: h.email })));
       occurrences.sort((a, b) => new Date(b.startTime || 0) - new Date(a.startTime || 0));
       const firstHit = occurrences[0];
-      const multi = occurrences.length > 1;
+      const dupWarning = buildDuplicateWarning(occurrences, now);
+      const multi = Boolean(dupWarning);
 
       const target = reconcileTargetStatus(lot.status, firstHit, now);
       if (target === null) {
@@ -151,9 +153,7 @@ async function main() {
       if (!opts.dryRun) {
         lot.status = target;
         lot.calendlyEventUri = firstHit.eventUri || lot.calendlyEventUri;
-        lot.calendlyWarning = multi
-          ? `Invitee appears in multiple Calendly events (${occurrences.length}). Check for duplicates.`
-          : '';
+        lot.calendlyWarning = dupWarning;
         lot.calendlyEvent = buildLotCalendlyEvent(firstHit, firstHit.email, firstHit.role);
         await lot.save();
 

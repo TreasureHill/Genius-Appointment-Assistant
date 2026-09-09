@@ -82,13 +82,19 @@ function RecentActivity() {
   );
 }
 
-function Tile({ label, value, hint, accent }) {
-  return (
-    <div className={`tile ${accent ? `tile-${accent}` : ''}`}>
+function Tile({ label, value, hint, accent, to }) {
+  const inner = (
+    <div className={`tile ${accent ? `tile-${accent}` : ''}`} style={to ? { cursor: 'pointer' } : undefined}>
       <div className="label">{label}</div>
       <div className="value">{value ?? 0}</div>
       {hint && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{hint}</div>}
     </div>
+  );
+  if (!to) return inner;
+  return (
+    <Link to={to} style={{ textDecoration: 'none', color: 'inherit' }} title="Open in the activity log">
+      {inner}
+    </Link>
   );
 }
 
@@ -182,8 +188,48 @@ export default function Dashboard() {
         <Tile label="Emails sent (7d)" value={m7.email.out} />
         <Tile label="SMS sent (7d)" value={m7.sms.out} />
         <Tile label="Queued" value={d.outboxByStatus.pending || 0} />
-        <Tile label="Failed (queue)" value={d.outboxByStatus.failed || 0} accent="err" />
+        <Tile
+          label="Failed (queue)"
+          value={d.outboxByStatus.failed || 0}
+          accent="err"
+          to="/activity?status=failed"
+          hint={(d.outboxByStatus.failed || 0) > 0 ? 'click to see which lots' : undefined}
+        />
       </div>
+
+      {d.recentFailures && d.recentFailures.length > 0 && (
+        <>
+          <h2>
+            Failed sends ({d.recentFailures.length}
+            {d.recentFailures.length >= 15 ? '+' : ''})
+            <Link to="/activity?status=failed" style={{ fontSize: 13, fontWeight: 400, marginLeft: 10 }}>
+              all failed →
+            </Link>
+            <span className="muted" style={{ fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+              click a row for the error and message
+            </span>
+          </h2>
+          <div className="card" style={{ padding: 0 }}>
+            <table className="compact-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Type</th>
+                  <th>Project</th>
+                  <th>Lot</th>
+                  <th>To</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {d.recentFailures.map((f) => (
+                  <ActivityRow key={f._id} item={{ ...f, _id: `f-${f._id}`, kind: 'message' }} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       {d.bouncedLots && d.bouncedLots.length > 0 && (
         <>
@@ -266,13 +312,23 @@ export default function Dashboard() {
 
       {d.warnings && d.warnings.length > 0 && (
         <>
-          <h2>Warnings</h2>
+          <h2>
+            Warnings
+            <span className="muted" style={{ fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+              upcoming appointments only — cleared automatically once the date passes
+            </span>
+          </h2>
           <div className="card">
             {d.warnings.map((w) => (
               <div key={w._id} style={{ padding: '6px 0', borderBottom: '1px dashed var(--border)' }}>
                 <Link to={`/lots/${w._id}`}>
                   Lot {w.lotNumber} ({w.project?.name})
-                </Link>{' '}
+                </Link>
+                {w.calendlyEvent?.startTime && (
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>
+                    booked {new Date(w.calendlyEvent.startTime).toLocaleString()}
+                  </span>
+                )}{' '}
                 — <span className="muted">{w.calendlyWarning}</span>
               </div>
             ))}

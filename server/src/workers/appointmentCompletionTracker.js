@@ -20,7 +20,9 @@ async function runOnce() {
   if (!due.length) return { completed: 0 };
 
   const ids = due.map((l) => l._id);
-  await Lot.updateMany({ _id: { $in: ids } }, { $set: { status: 'completed' } });
+  // A finished appointment can no longer collide with anything, so any
+  // duplicate-booking warning goes away with the status flip.
+  await Lot.updateMany({ _id: { $in: ids } }, { $set: { status: 'completed', calendlyWarning: '' } });
 
   const events = due.map((l) => {
     const when =
