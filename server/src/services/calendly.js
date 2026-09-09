@@ -423,6 +423,49 @@ function eventHasEnded(event, now = Date.now()) {
   return Number.isFinite(end.getTime()) && end.getTime() <= now;
 }
 
+// Short human date for warning text, e.g. "Sep 12, 2026, 10:00 AM".
+function formatWhen(raw, timeZone = 'America/New_York') {
+  if (!raw) return 'unknown time';
+  const d = raw instanceof Date ? raw : new Date(raw);
+  if (!Number.isFinite(d.getTime())) return 'unknown time';
+  try {
+    return d.toLocaleString('en-US', {
+      timeZone,
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  } catch {
+    return d.toISOString().slice(0, 16).replace('T', ' ');
+  }
+}
+
+// Warning text for an invitee who holds more than one UPCOMING booking.
+// Past bookings are ignored (a homeowner who rebooked after a finished
+// appointment is not a duplicate), as are canceled invitees. Returns '' when
+// there is nothing to warn about, otherwise names every upcoming date so the
+// owner can see which bookings collide. Pure.
+function buildDuplicateWarning(occurrences, now = Date.now(), timeZone = 'America/New_York') {
+  const upcoming = (occurrences || []).filter(
+    (o) => o && !eventHasEnded(o, now) && String(o.inviteeStatus || '').toLowerCase() !== 'canceled'
+  );
+  // Same event reached through two buyer slots on one lot counts once.
+  const seen = new Set();
+  const distinct = [];
+  for (const o of upcoming) {
+    const key = o.eventUri || `${o.startTime}|${o.eventName}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    distinct.push(o);
+  }
+  if (distinct.length <= 1) return '';
+  distinct.sort((a, b) => new Date(a.startTime || 0) - new Date(b.startTime || 0));
+  const dates = distinct.map((o) => formatWhen(o.startTime, timeZone)).join(', ');
+  return `Invitee has ${distinct.length} upcoming Calendly bookings — check for duplicates: ${dates}.`;
+}
+
 // What status should a matched lot have, given the event and the lot's current
 // status? Used by the reconcile script. Returns null when the lot should be
 // left untouched (terminal/opted-out states).
@@ -766,10 +809,7 @@ async function rematchUnmatchedQueue({ dryRun = false, ignoreStalePast = false, 
       if (attach) {
         lot.calendlyEventUri = occ.eventUri || lot.calendlyEventUri;
         lot.calendlyEvent = buildLotCalendlyEvent(occ, email, role);
-        lot.calendlyWarning =
-          method === 'email'
-            ? ''
-            : `Auto-matched by ${method} (not email) — verify this is the right lot.`;
+        lot.calendlyWarning = '';
       }
       await lot.save();
 
@@ -861,6 +901,7 @@ async function syncAll() {
 
   // Collect invitees: email → [{event info}]
   const emailOccurrences = await collectOccurrences(events);
+  const timeZone = setting.aria?.timezone || 'America/New_York';
 
   const emails = Array.from(emailOccurrences.keys());
   const matchedEmails = new Set();
@@ -893,15 +934,26 @@ async function syncAll() {
       // (fighting the completion tracker) on every single run.
       if (lot.status === 'completed' || lot.status === 'opted_out') continue;
 
-      const multi = hits.some((h) => h.occurrences.length > 1);
+      const dupWarning = buildDuplicateWarning(
+        hits.flatMap((h) => h.occurrences),
+        Date.now(),
+        timeZone
+      );
+      const multi = Boolean(dupWarning);
       const firstHit = hits[0].occurrences[0];
       const alreadyMatchedSameEvent =
         lot.calendlyEventUri && lot.calendlyEventUri === firstHit.eventUri;
 
       // Already scheduled against this exact event → nothing changed. Skip the
       // save + activity log entirely so the poll doesn't churn updatedAt or
-      // spam the feed every cycle.
+      // spam the feed every cycle. The duplicate warning is the one thing that
+      // can still move (a colliding booking got canceled or has passed), so
+      // refresh it quietly when it differs.
       if (alreadyMatchedSameEvent && lot.status === 'scheduled') {
+        if ((lot.calendlyWarning || '') !== dupWarning) {
+          lot.calendlyWarning = dupWarning;
+          await lot.save();
+        }
         reMatched.push({ lotId: String(lot._id), email: hits[0].email });
         continue;
       }
@@ -909,9 +961,7 @@ async function syncAll() {
       const priorStatus = lot.status;
       lot.status = 'scheduled';
       lot.calendlyEventUri = firstHit.eventUri || lot.calendlyEventUri;
-      lot.calendlyWarning = multi
-        ? `Invitee appears in multiple active Calendly events (${hits[0].occurrences.length}). Check for duplicates.`
-        : '';
+      lot.calendlyWarning = dupWarning;
       lot.calendlyEvent = buildLotCalendlyEvent(firstHit, hits[0].email, hits[0].role);
       await lot.save();
 
@@ -977,7 +1027,7 @@ async function syncAll() {
       const priorStatus = lot.status;
       lot.status = 'scheduled';
       lot.calendlyEventUri = occ.eventUri || lot.calendlyEventUri;
-      lot.calendlyWarning = `Auto-matched by ${m.method} (not email) — verify this is the right lot.`;
+      lot.calendlyWarning = '';
       lot.calendlyEvent = buildLotCalendlyEvent(occ, email, m.role);
       await lot.save();
 
@@ -1183,7 +1233,7 @@ async function handleWebhook(payload) {
       const priorStatus = lot.status;
       lot.status = 'scheduled';
       lot.calendlyEventUri = eventUri || lot.calendlyEventUri;
-      lot.calendlyWarning = `Auto-matched by ${m.method} (not email) — verify this is the right lot.`;
+      lot.calendlyWarning = '';
       lot.calendlyEvent = buildLotCalendlyEvent(occ, email, m.role);
       await lot.save();
 
@@ -1322,6 +1372,8 @@ module.exports = {
   findLotHits,
   buildLotCalendlyEvent,
   eventHasEnded,
+  buildDuplicateWarning,
+  formatWhen,
   reconcileTargetStatus,
   normalizeEmail,
   // matching helpers (project/lot answer + buyer name)
