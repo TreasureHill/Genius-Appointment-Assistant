@@ -2,6 +2,7 @@ const express = require('express');
 const Template = require('../models/Template');
 const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
+const Project = require('../models/Project');
 const { renderTemplate, renderContext } = require('../services/templateRender');
 const { sendEmail, stripHtml } = require('../services/mailer');
 const { sendSms } = require('../services/sms');
@@ -57,6 +58,15 @@ router.patch('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   const tpl = await Template.findByIdAndDelete(req.params.id);
   if (!tpl) return res.status(404).json({ error: 'not_found' });
+  // Drop any default-template pointers at the deleted doc so Settings and
+  // project pages don't keep showing a pick that no longer resolves.
+  const field = tpl.type === 'sms' ? 'defaultSmsTemplate' : 'defaultEmailTemplate';
+  await Project.updateMany({ [field]: tpl._id }, { $set: { [field]: null } });
+  const s = await Setting.getSingleton();
+  if (s.schedule && String(s.schedule[field] || '') === String(tpl._id)) {
+    s.schedule[field] = null;
+    await s.save();
+  }
   res.json({ ok: true });
 });
 
