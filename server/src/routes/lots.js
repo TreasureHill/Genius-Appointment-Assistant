@@ -178,9 +178,9 @@ router.post('/:id/clear-bounce', async (req, res) => {
 });
 
 router.post('/:id/send', async (req, res) => {
-  const { templateId } = req.body || {};
+  const { templateId, force } = req.body || {};
   if (!templateId) return res.status(400).json({ error: 'templateId_required' });
-  const result = await enqueueBroadcast({ lotIds: [req.params.id], templateId });
+  const result = await enqueueBroadcast({ lotIds: [req.params.id], templateId, force: Boolean(force) });
   await bumpReminderCount(result.touchedLotIds);
   res.json(result);
 });

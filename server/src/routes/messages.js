@@ -59,10 +59,10 @@ router.get('/outbox', async (req, res) => {
 });
 
 router.post('/send', async (req, res) => {
-  const { lotIds, templateId } = req.body || {};
+  const { lotIds, templateId, force } = req.body || {};
   if (!Array.isArray(lotIds) || lotIds.length === 0) return res.status(400).json({ error: 'lotIds_required' });
   if (!templateId) return res.status(400).json({ error: 'templateId_required' });
-  const result = await enqueueBroadcast({ lotIds, templateId });
+  const result = await enqueueBroadcast({ lotIds, templateId, force: Boolean(force) });
   await bumpReminderCount(result.touchedLotIds);
   res.json(result);
 });
@@ -78,6 +78,7 @@ router.post('/send', async (req, res) => {
 //     project (skipping contacted / scheduled / completed / opted_out automatically)
 router.post('/send-defaults', async (req, res) => {
   const { lotIds, projectId, onlyPending = false } = req.body || {};
+  const force = Boolean(req.body && req.body.force);
 
   // Gather target lots together with their project ids so we can resolve
   // templates per-project.
@@ -122,14 +123,14 @@ router.post('/send-defaults', async (req, res) => {
     };
     if (emailTpl) {
       usedEmailById.set(String(emailTpl._id), { id: String(emailTpl._id), name: emailTpl.name });
-      const r = await enqueueBroadcast({ lotIds: ids, templateId: emailTpl._id });
+      const r = await enqueueBroadcast({ lotIds: ids, templateId: emailTpl._id, force });
       queued.push(...r.queued);
       skipped.push(...r.skipped);
       for (const id of r.touchedLotIds) touched.add(id);
     }
     if (smsTpl) {
       usedSmsById.set(String(smsTpl._id), { id: String(smsTpl._id), name: smsTpl.name });
-      const r = await enqueueBroadcast({ lotIds: ids, templateId: smsTpl._id });
+      const r = await enqueueBroadcast({ lotIds: ids, templateId: smsTpl._id, force });
       queued.push(...r.queued);
       skipped.push(...r.skipped);
       for (const id of r.touchedLotIds) touched.add(id);
@@ -150,6 +151,7 @@ router.post('/send-defaults', async (req, res) => {
     skipped,
     skipSummary: summarizeSkips(skipped),
     touchedLots: touched.size,
+    forced: force,
     // Flat "which templates fired" view for the UI. When several projects
     // resolve to different templates the names are joined so the message
     // still names every template that went out.

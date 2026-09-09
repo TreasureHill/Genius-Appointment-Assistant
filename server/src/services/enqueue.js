@@ -18,7 +18,11 @@ function randomBetween(min, max) {
 // bumpReminderCount() — that way a round that fans out across multiple
 // templates (e.g. Send to all pending fires email + SMS) only counts as
 // ONE reminder, not one per channel.
-async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startAt = null }) {
+//
+// `force` is the owner's explicit "send anyway" from the Board: it lifts the
+// already-scheduled / completed guard and the max-reminders cap for this one
+// send. An opt-out is never overridden, forced or not.
+async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startAt = null, force = false }) {
   const template = await Template.findById(templateId);
   if (!template) throw new Error('Template not found');
 
@@ -37,11 +41,11 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
   let cursor = startAt ? new Date(startAt) : new Date();
 
   for (const lot of lots) {
-    if (Lot.STOP_STATUSES.includes(lot.status)) {
+    if (lot.status === 'opted_out' || (!force && Lot.STOP_STATUSES.includes(lot.status))) {
       skipped.push({ lotId: String(lot._id), reason: `status=${lot.status}` });
       continue;
     }
-    if (lot.reminderCount >= maxReminders) {
+    if (!force && lot.reminderCount >= maxReminders) {
       skipped.push({
         lotId: String(lot._id),
         reason: `max reminders reached (${lot.reminderCount}/${maxReminders})`,

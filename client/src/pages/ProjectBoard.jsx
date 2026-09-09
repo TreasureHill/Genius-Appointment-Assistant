@@ -331,6 +331,10 @@ export default function ProjectBoard() {
   const [selected, setSelected] = useState(new Set());
   const [busyLotId, setBusyLotId] = useState(null);
   const [sendMsg, setSendMsg] = useState('');
+  // Set when a send queued nothing only because of guards the owner may
+  // override (completed / scheduled / max reminders). Holds the exact request
+  // so "Send anyway" re-fires it with force.
+  const [sendRetry, setSendRetry] = useState(null);
   const [sending, setSending] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
@@ -627,12 +631,17 @@ export default function ProjectBoard() {
     });
   }
 
-  async function sendDefaults({ all = false } = {}) {
+  const OVERRIDABLE_SKIPS = ['status_completed', 'status_scheduled', 'max_reminders_reached'];
+
+  async function sendDefaults({ all = false, force = false, retryBody = null } = {}) {
     setSendMsg('');
+    setSendRetry(null);
     setSending(true);
     try {
       let body;
-      if (all) {
+      if (retryBody) {
+        body = { ...retryBody, force: Boolean(force) };
+      } else if (all) {
         const pendingIds = lots.filter((l) => l.status === 'pending').map((l) => l._id);
         if (pendingIds.length === 0) {
           setSendMsg('Nothing pending in the selected projects.');
@@ -680,6 +689,8 @@ export default function ProjectBoard() {
       );
 
       if (result.queued.length === 0) {
+        const summary = result.skipSummary || {};
+        const overridable = Object.keys(summary).some((k) => OVERRIDABLE_SKIPS.includes(k));
         setSendMsg(
           `Warning: nothing was queued` +
             (tplBits.length ? ` even though templates are set (${tplBits.join(' + ')})` : '') +
@@ -688,13 +699,16 @@ export default function ProjectBoard() {
               ? `Every selected lot was skipped: ${skipNote}.`
               : 'Every selected lot was skipped.')
         );
+        if (overridable && !force) setSendRetry({ body: { ...body, force: undefined }, summary });
         return;
       }
 
       setSendMsg(
         `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} across ` +
           `${touchedCount} lot${touchedCount === 1 ? '' : 's'} ` +
-          `(${tplBits.join(' + ')}). ` +
+          `(${tplBits.join(' + ')})` +
+          (force ? ' — sent anyway; lot statuses were left as they were' : '') +
+          '. ' +
           (result.skipped.length ? `Skipped ${result.skipped.length}${skipNote ? `: ${skipNote}` : ''}. ` : '') +
           'They go out spread over minutes per your pacing settings — the row counters will update as each message sends.'
       );
@@ -880,6 +894,22 @@ export default function ProjectBoard() {
           style={{ marginBottom: 10 }}
         >
           {sendMsg}
+          {sendRetry && (
+            <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                className="secondary"
+                disabled={sending}
+                onClick={() => sendDefaults({ force: true, retryBody: sendRetry.body })}
+              >
+                Send anyway
+              </button>
+              <span className="muted" style={{ fontSize: 12 }}>
+                Queues the messages to completed / scheduled lots and past the reminder cap. Opted-out
+                lots are never sent. Statuses stay as they are — use “Reset to pending” on a lot to
+                restart its automatic reminders.
+              </span>
+            </div>
+          )}
         </div>
       )}
 
