@@ -19,6 +19,27 @@ function outreachSkipNote(outreach) {
   return skipped.map((s) => OUTREACH_SKIP_LABELS[s] || s).join('; ');
 }
 
+// Human wording for the skipSummary buckets /api/messages/send-defaults returns.
+const SEND_SKIP_LABELS = {
+  max_reminders_reached: 'hit the max reminder count (raise it in Settings to send again)',
+  status_scheduled: 'already scheduled',
+  status_completed: 'already completed',
+  status_opted_out: 'opted out',
+  opted_out: 'buyer opted out',
+  missing_email: 'buyer has no email',
+  missing_phone: 'buyer has no phone',
+  duplicate_contact: 'duplicate contact within the lot',
+  no_default_templates: 'project has no default templates',
+};
+function describeSkips(skipSummary) {
+  const entries = Object.entries(skipSummary || {}).filter(([, n]) => n > 0);
+  if (!entries.length) return '';
+  return entries
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, n]) => `${n} ${SEND_SKIP_LABELS[key] || key.replace(/_/g, ' ')}`)
+    .join(', ');
+}
+
 const STATUSES = ['pending', 'contacted', 'scheduled', 'completed', 'opted_out'];
 const ROLE_LABELS = { buyer: 'Buyer', coBuyer: 'Co-buyer', thirdBuyer: 'Third buyer' };
 
@@ -628,9 +649,16 @@ export default function ProjectBoard() {
         body = { lotIds: Array.from(selected) };
       }
       const result = await api.post('/api/messages/send-defaults', body);
+      // Older servers only return usedByProject; derive the flat view from it
+      // so the message never claims "no templates configured" when one fired.
+      const usedEmail =
+        result.usedEmail || Object.values(result.usedByProject || {}).map((u) => u && u.email).find(Boolean) || null;
+      const usedSms =
+        result.usedSms || Object.values(result.usedByProject || {}).map((u) => u && u.sms).find(Boolean) || null;
       const tplBits = [];
-      if (result.usedEmail) tplBits.push(`email "${result.usedEmail.name}"`);
-      if (result.usedSms) tplBits.push(`SMS "${result.usedSms.name}"`);
+      if (usedEmail) tplBits.push(`email "${usedEmail.name}"`);
+      if (usedSms) tplBits.push(`SMS "${usedSms.name}"`);
+      const skipNote = describeSkips(result.skipSummary);
 
       // Per-lot counts of how many messages were queued, for optimistic UI.
       const queuedByLot = new Map();
@@ -651,13 +679,23 @@ export default function ProjectBoard() {
         })
       );
 
+      if (result.queued.length === 0) {
+        setSendMsg(
+          `Warning: nothing was queued` +
+            (tplBits.length ? ` even though templates are set (${tplBits.join(' + ')})` : '') +
+            `. ` +
+            (skipNote
+              ? `Every selected lot was skipped: ${skipNote}.`
+              : 'Every selected lot was skipped.')
+        );
+        return;
+      }
+
       setSendMsg(
         `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} across ` +
           `${touchedCount} lot${touchedCount === 1 ? '' : 's'} ` +
-          `(${tplBits.join(' + ') || 'no templates configured'}). ` +
-          (result.skipped.length
-            ? `Skipped ${result.skipped.length} (already contacted / scheduled / opted out / duplicate / missing contact). `
-            : '') +
+          `(${tplBits.join(' + ')}). ` +
+          (result.skipped.length ? `Skipped ${result.skipped.length}${skipNote ? `: ${skipNote}` : ''}. ` : '') +
           'They go out spread over minutes per your pacing settings — the row counters will update as each message sends.'
       );
       setSelected(new Set());
@@ -837,7 +875,10 @@ export default function ProjectBoard() {
         </div>
       )}
       {sendMsg && (
-        <div className={sendMsg.startsWith('Error') ? 'error' : 'card'} style={{ marginBottom: 10 }}>
+        <div
+          className={sendMsg.startsWith('Error') || sendMsg.startsWith('Warning') ? 'error' : 'card'}
+          style={{ marginBottom: 10 }}
+        >
           {sendMsg}
         </div>
       )}

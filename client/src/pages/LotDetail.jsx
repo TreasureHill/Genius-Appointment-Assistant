@@ -352,7 +352,11 @@ export default function LotDetail() {
   async function sendNow(templateId) {
     if (!templateId) return;
     const result = await api.post(`/api/lots/${id}/send`, { templateId });
-    alert(`Queued ${result.queued.length}, skipped ${result.skipped.length}`);
+    const reasons = (result.skipped || []).map((s) => s.reason).filter(Boolean);
+    alert(
+      `Queued ${result.queued.length}, skipped ${result.skipped.length}` +
+        (reasons.length ? `\n\nSkipped because: ${Array.from(new Set(reasons)).join('; ')}` : '')
+    );
     load();
   }
 

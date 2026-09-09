@@ -105,23 +105,30 @@ router.post('/send-defaults', async (req, res) => {
   const skipped = [];
   const touched = new Set();
   const usedByProject = {};
+  const usedEmailById = new Map();
+  const usedSmsById = new Map();
   let anyTemplateFound = false;
 
   for (const [pid, ids] of byProject) {
-    const { emailTpl, smsTpl } = await resolveDefaultsForProject(pid);
-    if (!emailTpl && !smsTpl) continue;
+    const { emailTpl, smsTpl, sources } = await resolveDefaultsForProject(pid);
+    if (!emailTpl && !smsTpl) {
+      for (const id of ids) skipped.push({ lotId: String(id), reason: 'no default templates for project' });
+      continue;
+    }
     anyTemplateFound = true;
     usedByProject[pid] = {
-      email: emailTpl ? { id: String(emailTpl._id), name: emailTpl.name } : null,
-      sms: smsTpl ? { id: String(smsTpl._id), name: smsTpl.name } : null,
+      email: emailTpl ? { id: String(emailTpl._id), name: emailTpl.name, source: sources.email } : null,
+      sms: smsTpl ? { id: String(smsTpl._id), name: smsTpl.name, source: sources.sms } : null,
     };
     if (emailTpl) {
+      usedEmailById.set(String(emailTpl._id), { id: String(emailTpl._id), name: emailTpl.name });
       const r = await enqueueBroadcast({ lotIds: ids, templateId: emailTpl._id });
       queued.push(...r.queued);
       skipped.push(...r.skipped);
       for (const id of r.touchedLotIds) touched.add(id);
     }
     if (smsTpl) {
+      usedSmsById.set(String(smsTpl._id), { id: String(smsTpl._id), name: smsTpl.name });
       const r = await enqueueBroadcast({ lotIds: ids, templateId: smsTpl._id });
       queued.push(...r.queued);
       skipped.push(...r.skipped);
@@ -141,10 +148,47 @@ router.post('/send-defaults', async (req, res) => {
   res.json({
     queued,
     skipped,
+    skipSummary: summarizeSkips(skipped),
     touchedLots: touched.size,
+    // Flat "which templates fired" view for the UI. When several projects
+    // resolve to different templates the names are joined so the message
+    // still names every template that went out.
+    usedEmail: describeUsed(usedEmailById),
+    usedSms: describeUsed(usedSmsById),
     usedByProject,
   });
 });
+
+// Collapse per-buyer skip rows into { reason: count } buckets so the UI can
+// explain *why* nothing queued (max reminders reached, lot already scheduled,
+// buyer missing an email, ...) instead of guessing.
+function summarizeSkips(skipped) {
+  const counts = {};
+  for (const s of skipped) {
+    const key = normalizeSkipReason(s.reason);
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function normalizeSkipReason(reason) {
+  const r = String(reason || '');
+  if (r.startsWith('max reminders reached')) return 'max_reminders_reached';
+  if (r.startsWith('status=')) return `status_${r.slice('status='.length)}`;
+  if (r.includes('opted out')) return 'opted_out';
+  if (r.includes('missing email')) return 'missing_email';
+  if (r.includes('missing sms')) return 'missing_phone';
+  if (r.includes('duplicate')) return 'duplicate_contact';
+  if (r.startsWith('no default templates')) return 'no_default_templates';
+  return r || 'unknown';
+}
+
+function describeUsed(byId) {
+  if (byId.size === 0) return null;
+  const list = Array.from(byId.values());
+  if (list.length === 1) return list[0];
+  return { id: list[0].id, name: list.map((t) => t.name).join(' / '), all: list };
+}
 
 router.post('/outbox/:id/cancel', async (req, res) => {
   const row = await Outbox.findById(req.params.id);
