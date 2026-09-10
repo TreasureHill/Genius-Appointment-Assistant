@@ -7,6 +7,7 @@ const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
 const { logStatusChange } = require('../services/lotEventLogger');
 const elevenlabs = require('../services/elevenlabs');
 const ariaCall = require('../services/ariaCall');
+const { GROUP_KEY_EXPR } = require('../services/sendGroups');
 
 const router = express.Router();
 
@@ -37,22 +38,25 @@ router.get('/', async (req, res) => {
     .limit(Math.min(Number(limit) || 200, 1000))
     .lean();
 
-  // Attach per-lot count of currently-pending Outbox rows so the board can
-  // surface "X queued" without a second round-trip.
+  // Attach per-lot count of queued SENDS (lot × channel, not per recipient) so
+  // the board can surface "X queued" without a second round-trip.
   if (lots.length) {
     const lotIds = lots.map((l) => l._id);
     const counts = await Outbox.aggregate([
       { $match: { lot: { $in: lotIds }, status: { $in: ['pending', 'sending'] } } },
-      { $group: { _id: '$lot', n: { $sum: 1 } } },
+      { $group: { _id: { lot: '$lot', g: GROUP_KEY_EXPR } } },
+      { $group: { _id: '$_id.lot', n: { $sum: 1 } } },
     ]);
     const map = new Map(counts.map((c) => [String(c._id), c.n]));
     for (const l of lots) l.pendingMessages = map.get(String(l._id)) || 0;
 
-    // Per-lot communication breakdown (by MessageLog type) so the board can
-    // show which channels have been used with small icons.
+    // Per-lot communication breakdown (sends by MessageLog type) so the board
+    // can show which channels have been used with small icons. A text to the
+    // buyer and the co-buyer in one round counts once.
     const commsRows = await MessageLog.aggregate([
       { $match: { lot: { $in: lotIds } } },
-      { $group: { _id: { lot: '$lot', type: '$type' }, n: { $sum: 1 } } },
+      { $group: { _id: { lot: '$lot', type: '$type', g: GROUP_KEY_EXPR } } },
+      { $group: { _id: { lot: '$_id.lot', type: '$_id.type' }, n: { $sum: 1 } } },
     ]);
     const commsMap = new Map();
     for (const r of commsRows) {

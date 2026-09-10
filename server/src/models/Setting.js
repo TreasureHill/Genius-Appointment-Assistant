@@ -17,6 +17,11 @@ const SettingSchema = new mongoose.Schema(
       // here, never on the server's clock). Blank = fall back to Aria's zone,
       // then America/New_York; the boot migration fills it in once.
       timezone: { type: String, default: '' },
+      // One email per lot, addressed to every buyer on it (the greeting reads
+      // "Hi Jane and John,"). Off = a separate personalised email per buyer.
+      // Texts always go one per phone; either way they count as ONE send for
+      // the lot and share one pacing slot.
+      emailPerLot: { type: Boolean, default: true },
       reminderIntervalDays: { type: Number, default: env.defaults.reminderDays, min: 0 },
       maxReminders: { type: Number, default: env.defaults.maxReminders, min: 0 },
       pacing: {

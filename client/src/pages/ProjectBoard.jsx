@@ -663,12 +663,15 @@ export default function ProjectBoard() {
       if (usedSms) tplBits.push(`SMS "${usedSms.name}"`);
       const skipNote = describeSkips(result.skipSummary);
 
-      // Per-lot counts of how many messages were queued, for optimistic UI.
+      // Per-lot counts of how many sends were queued (one per channel — an
+      // email to every buyer, or the texts to each phone — not one per
+      // recipient), for optimistic UI.
       const queuedByLot = new Map();
-      for (const q of result.queued) {
+      for (const q of result.sends || result.queued) {
         queuedByLot.set(q.lotId, (queuedByLot.get(q.lotId) || 0) + 1);
       }
       const touchedCount = queuedByLot.size;
+      const sendCount = result.sendCount ?? result.queued.length;
 
       setLots((prev) =>
         prev.map((l) => {
@@ -709,7 +712,7 @@ export default function ProjectBoard() {
         }
       }
       setSendMsg(
-        `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} across ` +
+        `Queued ${sendCount} message${sendCount === 1 ? '' : 's'} across ` +
           `${touchedCount} lot${touchedCount === 1 ? '' : 's'} ` +
           `(${tplBits.join(' + ')}). ` +
           (result.skipped.length ? `Skipped ${result.skipped.length}${skipNote ? `: ${skipNote}` : ''}. ` : '') +
@@ -1101,8 +1104,9 @@ export default function ProjectBoard() {
 
       <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
         <strong>How sending works:</strong> tick lots and click <em>Send to selected</em> (or{' '}
-        <em>Send to all pending</em>). Every buyer on those lots gets the project's default email and
-        text, queued a pacing gap apart and only inside the send window — the{' '}
+        <em>Send to all pending</em>). Each lot gets the project's default email (one email, addressed to
+        every buyer on the lot) and a text to each buyer's phone, queued a pacing gap apart per lot and only
+        inside the send window — the{' '}
         <Link to="/queue">Queue</Link> shows exactly when each one goes out. Once the first message is
         sent the lot flips to <span className="badge contacted">contacted</span> and reminders repeat on
         the schedule until the lot is <span className="badge scheduled">scheduled</span> (by hand, a

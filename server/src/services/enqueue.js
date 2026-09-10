@@ -2,8 +2,9 @@ const Outbox = require('../models/Outbox');
 const Lot = require('../models/Lot');
 const Template = require('../models/Template');
 const Setting = require('../models/Setting');
-const { renderTemplate, renderContext } = require('./templateRender');
+const { renderTemplate, renderContext, combinedRecipientView } = require('./templateRender');
 const { nextSendOpening, resolveScheduleTimezone } = require('./sendWindow');
+const { newSendGroup } = require('./sendGroups');
 
 function randomBetween(min, max) {
   const lo = Math.max(0, Number(min) || 0);
@@ -35,11 +36,48 @@ function planSlot(sendWindows, from, tz) {
   return nextSendOpening(sendWindows, from, tz) || from;
 }
 
+// Who on this lot gets this channel: not opted out, has an address, and each
+// address only once per lot. Skips are reported so the UI can explain them.
+function eligibleRecipients(lot, type, skipped) {
+  const out = [];
+  const seen = new Set();
+  const buyers = lot.buyers || [];
+  for (let i = 0; i < buyers.length; i++) {
+    const buyer = buyers[i];
+    if (buyer.optedOut) {
+      skipped.push({ lotId: String(lot._id), reason: `buyer ${buyer.role} opted out` });
+      continue;
+    }
+    const address = type === 'email' ? buyer.email : buyer.phone;
+    if (!address) {
+      skipped.push({ lotId: String(lot._id), reason: `buyer ${buyer.role} missing ${type}` });
+      continue;
+    }
+    const key = type === 'email' ? String(address).toLowerCase().trim() : String(address).replace(/\D/g, '');
+    if (seen.has(key)) {
+      skipped.push({ lotId: String(lot._id), reason: `buyer ${buyer.role} duplicate ${type} (${address}) within lot` });
+      continue;
+    }
+    seen.add(key);
+    out.push({ buyerIndex: i, role: buyer.role, name: buyer.name || '', address: String(address).trim(), buyer });
+  }
+  return out;
+}
+
+const strip = ({ buyerIndex, role, name, address }) => ({ buyerIndex, role, name, address });
+
 // Enqueue a template (email or sms) for selected lots. Pacing, reminder caps,
-// send windows and the timezone all live on the global Setting singleton.
+// send windows, the timezone and the per-lot email preference all live on
+// the global Setting singleton.
+//
+// The LOT is the unit of sending: one send per lot per channel, one pacing
+// slot, one send group. An email goes out once, addressed to every buyer on
+// the lot (unless Settings → "one email per buyer"), rendered with the
+// buyers' names joined ("Hi Jane and John,"). Texts can't be combined, so one
+// row per phone goes out in the same slot under the same group.
 //
 // Every row gets its real send time here — inside the send window, spaced by
-// the pacing jitter — so the Queue page shows exactly when each message goes
+// the pacing jitter — so the Queue page shows exactly when each send goes
 // out the moment it's queued (the worker only re-checks at send time).
 //
 // `startAt` lets callers chain batches: pass the previous call's `nextCursor`
@@ -61,10 +99,12 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
   const sched = setting.schedule || {};
   const pacing = sched.pacing || { minSec: 30, maxSec: 120 };
   const maxReminders = sched.maxReminders ?? 3;
+  const emailPerLot = sched.emailPerLot !== false;
   const timezone = resolveScheduleTimezone(setting);
   const sendWindows = sched.sendWindows;
 
   const queued = [];
+  const sends = [];
   const skipped = [];
   const touchedLotIds = new Set();
 
@@ -87,61 +127,72 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
       });
       continue;
     }
-    let queuedThisLot = 0;
-    const sentTo = new Set();
-    for (let i = 0; i < lot.buyers.length; i++) {
-      const buyer = lot.buyers[i];
-      if (buyer.optedOut) {
-        skipped.push({ lotId: String(lot._id), reason: `buyer ${buyer.role} opted out` });
-        continue;
-      }
-      const to = template.type === 'email' ? buyer.email : buyer.phone;
-      if (!to) {
-        skipped.push({ lotId: String(lot._id), reason: `buyer ${buyer.role} missing ${template.type}` });
-        continue;
-      }
-      const dedupKey = String(to).toLowerCase().trim();
-      if (sentTo.has(dedupKey)) {
-        skipped.push({
-          lotId: String(lot._id),
-          reason: `buyer ${buyer.role} duplicate ${template.type} (${to}) within lot`,
-        });
-        continue;
-      }
-      sentTo.add(dedupKey);
-      const ctx = renderContext({ project: lot.project, lot, buyer, owner });
-      const rendered = renderTemplate(template, ctx);
+    const recipients = eligibleRecipients(lot, template.type, skipped);
+    if (!recipients.length) continue;
 
-      const sendAfter = planSlot(sendWindows, cursor, timezone);
+    // One slot and one group for the whole lot.
+    const sendAfter = planSlot(sendWindows, cursor, timezone);
+    const sendGroup = newSendGroup();
+    const rows = [];
+    if (template.type === 'email' && emailPerLot) {
+      // ONE email, addressed to every buyer on the lot.
+      const view = combinedRecipientView(recipients.map((r) => r.buyer));
+      const rendered = renderTemplate(template, renderContext({ project: lot.project, lot, buyer: view, owner }));
+      rows.push({
+        buyerIndex: recipients[0].buyerIndex,
+        to: recipients.map((r) => r.address).join(', '),
+        recipients: recipients.map(strip),
+        rendered,
+      });
+    } else {
+      // One text per phone (or one email per buyer when the owner prefers
+      // that) — personalised each, same slot, same group.
+      for (const r of recipients) {
+        const rendered = renderTemplate(template, renderContext({ project: lot.project, lot, buyer: r.buyer, owner }));
+        rows.push({ buyerIndex: r.buyerIndex, to: r.address, recipients: [strip(r)], rendered });
+      }
+    }
+
+    for (const row of rows) {
       await Outbox.create({
         project: lot.project._id,
         lot: lot._id,
-        buyerIndex: i,
+        buyerIndex: row.buyerIndex,
         type: template.type,
         templateId: template._id,
-        to,
-        renderedSubject: rendered.subject,
-        renderedBody: template.type === 'email' ? rendered.html : rendered.text || rendered.html,
-        renderedText: rendered.text,
+        to: row.to,
+        renderedSubject: row.rendered.subject,
+        renderedBody: template.type === 'email' ? row.rendered.html : row.rendered.text || row.rendered.html,
+        renderedText: row.rendered.text,
         sendAfter,
         status: 'pending',
         isReminder,
         reminderIndex: isReminder ? lot.reminderCount + 1 : 0,
+        sendGroup,
+        recipients: row.recipients,
       });
-      queued.push({ lotId: String(lot._id), buyerIndex: i, type: template.type, to, sendAfter });
-      queuedThisLot += 1;
-      if (!firstSendAt) firstSendAt = sendAfter;
-      lastSendAt = sendAfter;
+      queued.push({ lotId: String(lot._id), buyerIndex: row.buyerIndex, type: template.type, to: row.to, sendAfter, sendGroup });
+    }
+    sends.push({
+      lotId: String(lot._id),
+      type: template.type,
+      sendGroup,
+      recipients: recipients.map(strip),
+      sendAfter,
+    });
+    touchedLotIds.add(String(lot._id));
+    if (!firstSendAt) firstSendAt = sendAfter;
+    lastSendAt = sendAfter;
 
-      const jitter = randomBetween(pacing.minSec, pacing.maxSec);
-      cursor = new Date(sendAfter.getTime() + jitter * 1000);
-    }
-    if (queuedThisLot > 0) {
-      touchedLotIds.add(String(lot._id));
-    }
+    const jitter = randomBetween(pacing.minSec, pacing.maxSec);
+    cursor = new Date(sendAfter.getTime() + jitter * 1000);
   }
   return {
+    // One entry per row written (per recipient for texts / per-buyer emails).
     queued,
+    // One entry per lot × channel — what the UI counts and shows.
+    sends,
+    sendCount: sends.length,
     skipped,
     touchedLotIds: Array.from(touchedLotIds),
     firstSendAt,
@@ -149,6 +200,7 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
     // Where the next batch should start so it paces on after this one.
     nextCursor: cursor,
     timezone,
+    emailPerLot,
   };
 }
 
@@ -162,4 +214,4 @@ async function bumpReminderCount(lotIds) {
   return { matched: r.modifiedCount || r.nModified || 0 };
 }
 
-module.exports = { enqueueBroadcast, bumpReminderCount, randomBetween, queueTail, planSlot };
+module.exports = { enqueueBroadcast, bumpReminderCount, randomBetween, queueTail, planSlot, eligibleRecipients };

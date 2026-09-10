@@ -9,8 +9,18 @@ const CallQueueItem = require('../models/CallQueueItem');
 const env = require('../config/env');
 const { resolveScheduleTimezone } = require('../services/sendWindow');
 const { scheduleStatus } = require('../services/outboxPlanner');
+const { GROUP_KEY_EXPR } = require('../services/sendGroups');
 
 const router = express.Router();
+
+// Sends (lot × channel × round) by type and direction since `since` — a text
+// to the buyer and co-buyer in one round counts once.
+const sendsSince = (since) =>
+  MessageLog.aggregate([
+    { $match: { createdAt: { $gte: since } } },
+    { $group: { _id: { type: '$type', direction: '$direction', g: GROUP_KEY_EXPR } } },
+    { $group: { _id: { type: '$_id.type', direction: '$_id.direction' }, n: { $sum: 1 } } },
+  ]);
 
 router.get('/', async (req, res) => {
   const now = new Date();
@@ -35,18 +45,9 @@ router.get('/', async (req, res) => {
   ] = await Promise.all([
     Lot.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
     Outbox.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
-    MessageLog.aggregate([
-      { $match: { createdAt: { $gte: since(1) } } },
-      { $group: { _id: { type: '$type', direction: '$direction' }, n: { $sum: 1 } } },
-    ]),
-    MessageLog.aggregate([
-      { $match: { createdAt: { $gte: since(7) } } },
-      { $group: { _id: { type: '$type', direction: '$direction' }, n: { $sum: 1 } } },
-    ]),
-    MessageLog.aggregate([
-      { $match: { createdAt: { $gte: since(30) } } },
-      { $group: { _id: { type: '$type', direction: '$direction' }, n: { $sum: 1 } } },
-    ]),
+    sendsSince(since(1)),
+    sendsSince(since(7)),
+    sendsSince(since(30)),
     MessageLog.find({})
       .sort({ createdAt: -1 })
       .limit(25)

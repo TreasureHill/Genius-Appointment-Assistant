@@ -40,6 +40,33 @@ function combineNames(a, b) {
   return '';
 }
 
+// "Jane", "Jane and John", "Jane, John and Mary"
+function joinNames(names) {
+  const list = (names || []).map((n) => String(n || '').trim()).filter(Boolean);
+  if (list.length <= 1) return list[0] || '';
+  return `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+}
+
+// The "buyer" that ONE email addressed to every buyer on a lot renders as:
+// the names joined ("Jane Doe and John Smith" / "Jane and John"), so a
+// template written as "Hi {{buyer.firstName}}," still reads naturally, with
+// the primary recipient's email / phone / role behind it. A single buyer
+// comes back unchanged.
+function combinedRecipientView(buyers) {
+  const list = (buyers || []).filter(Boolean);
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+  const primary = list[0];
+  return {
+    name: joinNames(list.map((b) => b.name)),
+    firstName: joinNames(list.map((b) => firstNameOf(b.name))),
+    email: primary.email || '',
+    phone: primary.phone || '',
+    role: primary.role || 'buyer',
+    combined: true,
+  };
+}
+
 function renderContext({ project, lot, buyer, owner }) {
   const ownerCtx = owner
     ? {
@@ -63,7 +90,7 @@ function renderContext({ project, lot, buyer, owner }) {
   const recipient = buyer || buyerRow || {};
   const buyerCtx = {
     name: recipient.name || '',
-    firstName: firstNameOf(recipient.name),
+    firstName: recipient.combined ? recipient.firstName || '' : firstNameOf(recipient.name),
     email: recipient.email || '',
     phone: recipient.phone || '',
     role: recipient.role || 'buyer',
@@ -127,4 +154,4 @@ function renderTemplate(template, ctx) {
   };
 }
 
-module.exports = { render, renderTemplate, renderContext };
+module.exports = { render, renderTemplate, renderContext, joinNames, combinedRecipientView, firstNameOf };

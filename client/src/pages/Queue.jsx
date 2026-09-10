@@ -44,6 +44,22 @@ function stop(e) {
   e.stopPropagation();
 }
 
+// Everyone one send goes to: the buyers on the lot (one email to all of them,
+// or one text per phone). Names on top, addresses underneath.
+function Recipients({ list }) {
+  const people = list || [];
+  if (!people.length) return <span className="muted">—</span>;
+  const names = people.map((r) => r.name).filter(Boolean);
+  return (
+    <>
+      {names.length > 0 && <div>{names.join(', ')}</div>}
+      <div className="muted" style={{ fontSize: 12 }}>
+        {people.map((r) => r.address).filter(Boolean).join(', ')}
+      </div>
+    </>
+  );
+}
+
 function QueueRow({ it, tz, selected, onToggle, open, onOpen, detail, onSendNow, onCancel, busy }) {
   const due = new Date(it.sendAfter).getTime() <= Date.now();
   const pending = it.status === 'pending';
@@ -82,11 +98,8 @@ function QueueRow({ it, tz, selected, onToggle, open, onOpen, detail, onSendNow,
             </div>
           )}
         </td>
-        <td style={{ minWidth: 170, maxWidth: 240, overflowWrap: 'anywhere' }}>
-          {it.buyer?.name && <div>{it.buyer.name}</div>}
-          <div className="muted" style={{ fontSize: 12 }}>
-            {it.to}
-          </div>
+        <td style={{ minWidth: 170, maxWidth: 260, overflowWrap: 'anywhere' }}>
+          <Recipients list={it.recipients} />
         </td>
         <td style={{ maxWidth: 360 }}>
           <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>
@@ -138,9 +151,17 @@ function QueueRow({ it, tz, selected, onToggle, open, onOpen, detail, onSendNow,
                 </span>
                 <span className="muted">To</span>
                 <span style={{ overflowWrap: 'anywhere' }}>
-                  {it.buyer?.name ? `${it.buyer.name} · ` : ''}
-                  {it.to}
-                  {it.buyer?.role ? <span className="muted"> ({it.buyer.role === 'coBuyer' ? 'co-buyer' : it.buyer.role === 'thirdBuyer' ? 'third buyer' : 'buyer'})</span> : null}
+                  {(it.recipients || []).map((r, i) => (
+                    <span key={i}>
+                      {i > 0 ? ', ' : ''}
+                      {r.name ? `${r.name} · ` : ''}
+                      {r.address}
+                      {r.role ? <span className="muted"> ({r.role === 'coBuyer' ? 'co-buyer' : r.role === 'thirdBuyer' ? 'third buyer' : 'buyer'})</span> : null}
+                    </span>
+                  ))}
+                  {it.rows > 1 && (
+                    <span className="muted"> — {it.rows} {it.type === 'sms' ? 'texts, one per phone' : 'emails'}, sent together</span>
+                  )}
                 </span>
                 {detail.template && (
                   <>
@@ -157,7 +178,14 @@ function QueueRow({ it, tz, selected, onToggle, open, onOpen, detail, onSendNow,
                   </>
                 )}
                 <span className="muted">Message</span>
-                <pre className="message-pre">{detail.bodyText || detail.text || '(empty)'}</pre>
+                <div>
+                  {it.rows > 1 && (
+                    <div className="muted" style={{ fontSize: 11, marginBottom: 4 }}>
+                      Personalised per recipient — showing the first.
+                    </div>
+                  )}
+                  <pre className="message-pre">{detail.bodyText || detail.text || '(empty)'}</pre>
+                </div>
                 {detail.lastError && (
                   <>
                     <span className="muted">Last error</span>
@@ -240,7 +268,7 @@ export default function Queue() {
     if (!q.trim()) return all;
     const needle = q.trim().toLowerCase();
     return all.filter((it) =>
-      [it.to, it.subject, it.preview, it.buyer?.name, it.lot?.lotNumber, it.lot?.address, it.project?.name, it.template?.name]
+      [it.to, it.subject, it.preview, ...(it.recipients || []).map((r) => r.name), it.lot?.lotNumber, it.lot?.address, it.project?.name, it.template?.name]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
@@ -264,8 +292,9 @@ export default function Queue() {
   }, [items, tz]);
 
   const pendingShown = items.filter((i) => i.status === 'pending');
-  const allSelected = pendingShown.length > 0 && pendingShown.every((i) => selected.has(i._id));
-  const someSelected = pendingShown.some((i) => selected.has(i._id));
+  const allSelected = pendingShown.length > 0 && pendingShown.every((i) => selected.has(i.key));
+  const someSelected = pendingShown.some((i) => selected.has(i.key));
+  const idsOf = (list) => list.flatMap((i) => i.ids || [String(i._id)]);
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = !allSelected && someSelected;
   }, [allSelected, someSelected]);
@@ -281,8 +310,8 @@ export default function Queue() {
   function toggleAll() {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (allSelected) for (const i of pendingShown) next.delete(i._id);
-      else for (const i of pendingShown) next.add(i._id);
+      if (allSelected) for (const i of pendingShown) next.delete(i.key);
+      else for (const i of pendingShown) next.add(i.key);
       return next;
     });
   }
@@ -304,26 +333,26 @@ export default function Queue() {
 
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+  const who = (it) => `Lot ${it.lot?.lotNumber || ''} (${(it.recipients || []).map((r) => r.name || r.address).join(', ')})`;
   function sendNow(it) {
     return run(
-      () => api.post(`/api/queue/${it._id}/send-now`),
-      `Sending the ${it.type === 'sms' ? 'text' : 'email'} to ${it.to} now — it goes out within a few seconds.`
+      () => api.post('/api/queue/send-now', { ids: it.ids }),
+      `Sending the ${it.type === 'sms' ? 'text' : 'email'} for ${who(it)} now — it goes out within a few seconds.`
     );
   }
   function cancelOne(it) {
-    return run(() => api.post(`/api/queue/${it._id}/cancel`), `Cancelled the ${it.type === 'sms' ? 'text' : 'email'} to ${it.to}.`);
+    return run(() => api.post('/api/queue/cancel', { ids: it.ids }), `Cancelled the ${it.type === 'sms' ? 'text' : 'email'} for ${who(it)}.`);
   }
   function cancelSelected() {
-    const ids = Array.from(selected);
-    if (!ids.length) return;
-    if (!confirm(`Cancel ${plural(ids.length, 'queued message')}? They will not be sent.`)) return;
-    return run(() => api.post('/api/queue/cancel', { ids }), (r) => `Cancelled ${plural(r.cancelled, 'message')}.`);
+    const chosen = pendingShown.filter((i) => selected.has(i.key));
+    if (!chosen.length) return;
+    if (!confirm(`Cancel ${plural(chosen.length, 'queued message')}? They will not be sent.`)) return;
+    return run(() => api.post('/api/queue/cancel', { ids: idsOf(chosen) }), () => `Cancelled ${plural(chosen.length, 'message')}.`);
   }
   function cancelShown() {
-    const ids = pendingShown.map((i) => i._id);
-    if (!ids.length) return;
-    if (!confirm(`Cancel all ${plural(ids.length, 'queued message')} shown? They will not be sent.`)) return;
-    return run(() => api.post('/api/queue/cancel', { ids }), (r) => `Cancelled ${plural(r.cancelled, 'message')}.`);
+    if (!pendingShown.length) return;
+    if (!confirm(`Cancel all ${plural(pendingShown.length, 'queued message')} shown? They will not be sent.`)) return;
+    return run(() => api.post('/api/queue/cancel', { ids: idsOf(pendingShown) }), () => `Cancelled ${plural(pendingShown.length, 'message')}.`);
   }
   function replan() {
     return run(
@@ -349,18 +378,19 @@ export default function Queue() {
     return run(() => api.del(`/api/calls/queue/${item._id}`), `Removed Lot ${item.lot?.lotNumber || ''} from the call queue.`);
   }
 
-  async function openRow(id) {
-    if (openId === id) {
+  async function openRow(it) {
+    const key = it.key;
+    if (openId === key) {
       setOpenId(null);
       return;
     }
-    setOpenId(id);
-    if (!details[id]) {
+    setOpenId(key);
+    if (!details[key]) {
       try {
-        const d = await api.get(`/api/queue/${id}`);
-        setDetails((prev) => ({ ...prev, [id]: d }));
+        const d = await api.get(`/api/queue/${it.ids[0]}`);
+        setDetails((prev) => ({ ...prev, [key]: d }));
       } catch (e) {
-        setDetails((prev) => ({ ...prev, [id]: { bodyText: `Could not load: ${e.message}` } }));
+        setDetails((prev) => ({ ...prev, [key]: { bodyText: `Could not load: ${e.message}` } }));
       }
     }
   }
@@ -443,10 +473,29 @@ export default function Queue() {
         <Tile
           label="Emails queued"
           value={counts.email || 0}
+          hint={
+            (counts.rows?.email || 0) > (counts.email || 0)
+              ? `one per lot · ${counts.rows.email} buyers`
+              : counts.email
+                ? 'one per lot'
+                : undefined
+          }
           active={type === 'email'}
           onClick={() => setType(type === 'email' ? '' : 'email')}
         />
-        <Tile label="Texts queued" value={counts.sms || 0} active={type === 'sms'} onClick={() => setType(type === 'sms' ? '' : 'sms')} />
+        <Tile
+          label="Texts queued"
+          value={counts.sms || 0}
+          hint={
+            (counts.rows?.sms || 0) > (counts.sms || 0)
+              ? `one per lot · ${counts.rows.sms} phones`
+              : counts.sms
+                ? 'one per lot'
+                : undefined
+          }
+          active={type === 'sms'}
+          onClick={() => setType(type === 'sms' ? '' : 'sms')}
+        />
         <Tile
           label="Calls queued"
           value={(calls.queuedCount || 0) + (calls.activeCount || 0)}
@@ -523,7 +572,7 @@ export default function Queue() {
               <th>Type</th>
               <th style={{ minWidth: 110 }}>Project</th>
               <th style={{ minWidth: 120 }}>Lot</th>
-              <th style={{ minWidth: 170 }}>To</th>
+              <th style={{ minWidth: 170 }}>Buyers</th>
               <th style={{ minWidth: 220 }}>Message</th>
               <th style={{ minWidth: 110 }}>Kind</th>
               <th></th>
@@ -542,14 +591,14 @@ export default function Queue() {
                 </tr>
                 {g.items.map((it) => (
                   <QueueRow
-                    key={it._id}
+                    key={it.key}
                     it={it}
                     tz={tz}
-                    selected={selected.has(it._id)}
-                    onToggle={() => toggle(it._id)}
-                    open={openId === it._id}
-                    onOpen={() => openRow(it._id)}
-                    detail={details[it._id]}
+                    selected={selected.has(it.key)}
+                    onToggle={() => toggle(it.key)}
+                    open={openId === it.key}
+                    onOpen={() => openRow(it)}
+                    detail={details[it.key]}
                     onSendNow={() => sendNow(it)}
                     onCancel={() => cancelOne(it)}
                     busy={busy}
@@ -657,10 +706,13 @@ export default function Queue() {
       </div>
 
       <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-        <strong>How the queue works:</strong> messages leave in the order above, {sched.pacing?.minSec}–{sched.pacing?.maxSec} seconds
-        apart, only inside the send window ({tz}). New batches line up after whatever is already queued. <em>Send now</em> skips
-        the window and pacing for one message. <em>Cancel</em> removes it for good (the lot's reminder count is not reduced).
-        Change the window, pacing or timezone in <Link to="/settings">Settings</Link> — the queue re-plans itself when you save.
+        <strong>How the queue works:</strong> the lot is the unit. Each row is one message for one lot:{' '}
+        {data.emailPerLot ? 'one email addressed to every buyer on the lot' : 'the emails to that lot\'s buyers'}, or the texts
+        to each of its phones, sent together. Messages leave in the order above, {sched.pacing?.minSec}–{sched.pacing?.maxSec}{' '}
+        seconds apart, only inside the send window ({tz}). New batches line up after whatever is already queued.{' '}
+        <em>Send now</em> skips the window and pacing for one message. <em>Cancel</em> removes it for good (the lot's reminder
+        count is not reduced). Change the window, pacing or timezone in <Link to="/settings">Settings</Link> — the queue re-plans
+        itself when you save.
       </div>
     </div>
   );

@@ -104,6 +104,7 @@ router.post('/send-defaults', async (req, res) => {
   }
 
   const queued = [];
+  const sends = [];
   const skipped = [];
   const touched = new Set();
   const usedByProject = {};
@@ -113,13 +114,16 @@ router.post('/send-defaults', async (req, res) => {
   let firstSendAt = null;
   let lastSendAt = null;
   let timezone = null;
+  let emailPerLot = true;
   // One paced line: this batch starts after whatever is already queued, and
   // email → SMS → next project chain instead of all starting "now".
   let cursor = await queueTail();
 
   const take = (r) => {
     queued.push(...r.queued);
+    sends.push(...(r.sends || []));
     skipped.push(...r.skipped);
+    emailPerLot = r.emailPerLot !== false;
     for (const id of r.touchedLotIds) touched.add(id);
     if (r.firstSendAt && (!firstSendAt || r.firstSendAt < firstSendAt)) firstSendAt = r.firstSendAt;
     if (r.lastSendAt && (!lastSendAt || r.lastSendAt > lastSendAt)) lastSendAt = r.lastSendAt;
@@ -158,7 +162,12 @@ router.post('/send-defaults', async (req, res) => {
   // ONE reminder for the lot, not two.
   await bumpReminderCount(Array.from(touched));
   res.json({
+    // `queued` has one entry per row written (per recipient for texts);
+    // `sends` has one per lot × channel — the number the UI reports.
     queued,
+    sends,
+    sendCount: sends.length,
+    emailPerLot,
     skipped,
     skipSummary: summarizeSkips(skipped),
     touchedLots: touched.size,

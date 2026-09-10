@@ -393,11 +393,12 @@ export default function LotDetail() {
     }
   }
 
-  // Cancel / force a single queued message from this lot's queue table.
+  // Cancel / force one queued send (all of its rows: the email to every
+  // buyer, or the texts to each phone).
   async function queueAction(q, action) {
     setQueueMsg('');
     try {
-      await api.post(`/api/queue/${q._id}/${action}`);
+      await api.post(`/api/queue/${action}`, { ids: q.ids });
       const what = q.type === 'sms' ? 'text' : 'email';
       setQueueMsg(action === 'cancel' ? `Cancelled the ${what} to ${q.to}.` : `Sending the ${what} to ${q.to} now.`);
       load();
@@ -421,6 +422,34 @@ export default function LotDetail() {
     () => (data ? buildTimeline(data.history || [], data.events || []) : []),
     [data]
   );
+
+  // One row per send (lot × channel): the email to every buyer, or the texts
+  // to each phone that go out together.
+  const queuedSends = useMemo(() => {
+    const out = [];
+    const byKey = new Map();
+    for (const q of data?.queued || []) {
+      const key = q.sendGroup || String(q._id);
+      const recipients =
+        Array.isArray(q.recipients) && q.recipients.length
+          ? q.recipients
+          : [{ buyerIndex: q.buyerIndex, name: data?.lot?.buyers?.[q.buyerIndex]?.name || '', address: q.to }];
+      let g = byKey.get(key);
+      if (!g) {
+        g = { ...q, key, ids: [String(q._id)], recipients: [...recipients], rows: 1 };
+        byKey.set(key, g);
+        out.push(g);
+      } else {
+        g.ids.push(String(q._id));
+        g.recipients.push(...recipients);
+        g.rows += 1;
+        if (q.status === 'sending') g.status = 'sending';
+        g.sendNow = g.sendNow && q.sendNow;
+      }
+      g.to = g.recipients.map((r) => r.address).filter(Boolean).join(', ');
+    }
+    return out;
+  }, [data]);
 
   if (!data) return <div className="muted">Loading…</div>;
   const { lot, queued } = data;
@@ -686,10 +715,10 @@ export default function LotDetail() {
         )}
       </div>
 
-      {queued.length > 0 && (
+      {queuedSends.length > 0 && (
         <div className="card">
           <h2 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-            Waiting to go out ({queued.length})
+            Waiting to go out ({queuedSends.length})
             <Link to={`/queue?lot=${lot._id}`} style={{ fontSize: 13, fontWeight: 400 }}>
               open in the queue →
             </Link>
@@ -703,15 +732,15 @@ export default function LotDetail() {
               <tr>
                 <th>Goes out</th>
                 <th>Type</th>
-                <th>To</th>
+                <th>Buyers</th>
                 <th>Message</th>
                 <th>Status</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {queued.map((q) => (
-                <tr key={q._id}>
+              {queuedSends.map((q) => (
+                <tr key={q.key}>
                   <td className="nowrap">
                     <strong>
                       {fmtDayLabel(q.sendAfter, tz)} {fmtTime(q.sendAfter, tz)}
@@ -723,7 +752,13 @@ export default function LotDetail() {
                   <td>
                     <span className={`badge type-${q.type}`}>{q.type === 'sms' ? 'SMS' : 'Email'}</span>
                   </td>
-                  <td style={{ overflowWrap: 'anywhere' }}>{q.to}</td>
+                  <td style={{ overflowWrap: 'anywhere' }}>
+                    {q.recipients.map((r) => r.name).filter(Boolean).join(', ') || <span className="muted">—</span>}
+                    <div className="muted" style={{ fontSize: 11 }}>
+                      {q.to}
+                      {q.rows > 1 ? ` · ${q.rows} ${q.type === 'sms' ? 'texts' : 'emails'}, sent together` : ''}
+                    </div>
+                  </td>
                   <td style={{ maxWidth: 320 }}>
                     <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {q.renderedSubject || (q.type === 'sms' ? String(q.renderedBody || '').slice(0, 90) : '')}

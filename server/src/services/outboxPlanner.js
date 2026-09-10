@@ -2,6 +2,7 @@ const Outbox = require('../models/Outbox');
 const Setting = require('../models/Setting');
 const { nextSendOpening, resolveScheduleTimezone, windowStatus } = require('./sendWindow');
 const { randomBetween } = require('./enqueue');
+const { groupKeyOf } = require('./sendGroups');
 
 // Re-plan every pending message from `from` (default: now): same order, fresh
 // pacing, every slot inside the current send windows and timezone. Rows the
@@ -16,29 +17,39 @@ async function replanPendingOutbox({ from = new Date() } = {}) {
   const pacing = sched.pacing || { minSec: 30, maxSec: 120 };
 
   const rows = await Outbox.find({ status: 'pending', sendNow: { $ne: true } })
-    .sort({ sendAfter: 1, createdAt: 1, _id: 1 })
-    .select('_id sendAfter')
+    .sort({ sendAfter: 1, sendGroup: 1, createdAt: 1, _id: 1 })
+    .select('_id sendAfter sendGroup')
     .lean();
 
+  // One pacing slot per send (lot × channel): every row of a group keeps the
+  // same time, and the gap is applied between groups.
   const ops = [];
   let cursor = new Date(Math.max(new Date(from).getTime() || 0, Date.now()));
   let moved = 0;
+  let sends = 0;
   let firstSendAt = null;
   let lastSendAt = null;
+  let currentGroup = null;
+  let slot = null;
   for (const row of rows) {
-    const slot = nextSendOpening(sched.sendWindows, cursor, timezone) || cursor;
+    const group = groupKeyOf(row);
+    if (group !== currentGroup) {
+      if (slot) cursor = new Date(slot.getTime() + randomBetween(pacing.minSec, pacing.maxSec) * 1000);
+      slot = nextSendOpening(sched.sendWindows, cursor, timezone) || cursor;
+      currentGroup = group;
+      sends += 1;
+      if (!firstSendAt) firstSendAt = slot;
+      lastSendAt = slot;
+    }
     if (Math.abs(slot.getTime() - new Date(row.sendAfter).getTime()) > 1000) {
       ops.push({
         updateOne: { filter: { _id: row._id, status: 'pending' }, update: { $set: { sendAfter: slot } } },
       });
       moved += 1;
     }
-    if (!firstSendAt) firstSendAt = slot;
-    lastSendAt = slot;
-    cursor = new Date(slot.getTime() + randomBetween(pacing.minSec, pacing.maxSec) * 1000);
   }
   if (ops.length) await Outbox.bulkWrite(ops, { ordered: false });
-  return { total: rows.length, moved, timezone, firstSendAt, lastSendAt };
+  return { total: sends, rows: rows.length, moved, timezone, firstSendAt, lastSendAt };
 }
 
 // Window + pause state in one call — what the Queue page, Settings and the

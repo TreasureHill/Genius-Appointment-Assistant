@@ -69,13 +69,34 @@ async function drainOnce() {
       // it here because lot.reminderCount is bumped immediately after enqueue,
       // so by the time the worker runs the counter already reflects this very
       // round and would falsely look over-quota.
-      const buyer = lot.buyers[claimed.buyerIndex];
-      if (!buyer || buyer.optedOut) {
+      // Re-check every recipient at send time: anyone who opted out (or was
+      // removed) since the row was queued is dropped, and the row is
+      // cancelled if nobody is left. A per-lot email keeps going to whoever
+      // remains.
+      const wanted =
+        claimed.recipients && claimed.recipients.length
+          ? claimed.recipients
+          : [{ buyerIndex: claimed.buyerIndex, address: claimed.to }];
+      const live = wanted.filter((r) => {
+        const b = lot.buyers[r.buyerIndex];
+        return b && !b.optedOut;
+      });
+      if (!live.length) {
         claimed.status = 'cancelled';
         claimed.lastError = 'buyer opted out or missing';
         await claimed.save();
         continue;
       }
+      if (claimed.type === 'email') {
+        const to = live.map((r) => r.address || lot.buyers[r.buyerIndex].email).filter(Boolean).join(', ');
+        if (to && to !== claimed.to) claimed.to = to;
+      }
+      const logRecipients = live.map((r) => ({
+        buyerIndex: r.buyerIndex,
+        role: r.role || lot.buyers[r.buyerIndex].role || '',
+        name: r.name || lot.buyers[r.buyerIndex].name || '',
+        address: r.address || claimed.to,
+      }));
       if (!claimed.sendNow && !isWithinSendWindow(sched.sendWindows, new Date(), timezone)) {
         // Outside the send window (evaluated in the schedule's timezone, never
         // the server clock). Defer to the next opening; if every day is
@@ -123,6 +144,8 @@ async function drainOnce() {
           sentAt: new Date(),
           isReminder: claimed.isReminder,
           reminderIndex: claimed.reminderIndex,
+          sendGroup: claimed.sendGroup || '',
+          recipients: logRecipients,
         });
 
         // reminderCount is incremented per-lot at enqueue time, not here.
@@ -163,6 +186,8 @@ async function drainOnce() {
           scheduledFor: claimed.sendAfter,
           isReminder: claimed.isReminder,
           reminderIndex: claimed.reminderIndex,
+          sendGroup: claimed.sendGroup || '',
+          recipients: logRecipients,
         });
 
         // Treat invalid-recipient errors as a buyer-email problem so the UI

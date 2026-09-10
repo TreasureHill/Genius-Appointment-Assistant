@@ -85,6 +85,8 @@ router.get('/', async (req, res) => {
     status: m.status,
     error: m.error,
     buyerIndex: m.buyerIndex,
+    recipients: Array.isArray(m.recipients) ? m.recipients : [],
+    sendGroup: m.sendGroup || '',
     providerId: m.providerId,
     scheduledFor: m.scheduledFor,
     sentAt: m.sentAt,

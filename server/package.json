@@ -13,7 +13,8 @@
     "check:calendly": "node src/scripts/checkCalendlyEmails.js",
     "test:calendly": "node src/scripts/__tests__/calendly.helpers.test.js",
     "test:sendwindow": "node src/services/__tests__/sendWindow.test.js",
-    "test": "npm run test:calendly && npm run test:sendwindow"
+    "test:render": "node src/services/__tests__/templateRender.test.js",
+    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render"
   },
   "dependencies": {
     "axios": "^1.7.7",
