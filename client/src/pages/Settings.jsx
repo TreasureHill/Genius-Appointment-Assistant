@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { useTimezone } from '../timezone.jsx';
 import { browserTimezone, calendarDays, fmtClock, fmtDateTime, isValidTimezone, timezoneOptions, tzAbbrev } from '../time';
+import { RECOMMENDED_FIRST_MESSAGE, RECOMMENDED_SYSTEM_PROMPT } from '../ariaDefaults';
 
 const DAY_DEFS = [
   { key: 'monday', label: 'Monday' },
@@ -483,6 +484,17 @@ function AriaCard({ aria, onSaved }) {
 
   const needsFirst = !!(form.firstMessage && form.firstMessage.trim());
   const needsPrompt = !!(form.systemPrompt && form.systemPrompt.trim());
+
+  // Fill a field with the recommended text (saved only when the owner clicks
+  // Save Aria settings).
+  function useRecommended(field) {
+    const current = form[field] || '';
+    const next = field === 'firstMessage' ? RECOMMENDED_FIRST_MESSAGE : RECOMMENDED_SYSTEM_PROMPT;
+    if (current.trim() === next.trim()) return;
+    if (current.trim() && !confirm('Replace the current text with the recommended version? You can still edit it before saving.')) return;
+    setForm((f) => ({ ...f, [field]: next }));
+    setCallPreview(null);
+  }
   const overridesBlocked = perm && perm.ok && ((needsFirst && !perm.firstMessage) || (needsPrompt && !perm.prompt));
 
   async function loadEventTypes() {
@@ -677,7 +689,12 @@ function AriaCard({ aria, onSaved }) {
         </div>
       )}
 
-      <label>First message (optional) — what Aria says the moment the call connects</label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>First message (optional) — what Aria says the moment the call connects</span>
+        <button type="button" className="secondary small" onClick={() => useRecommended('firstMessage')} style={{ marginLeft: 'auto' }}>
+          Use recommended
+        </button>
+      </label>
       <textarea
         value={form.firstMessage}
         onChange={(e) => setForm({ ...form, firstMessage: e.target.value })}
@@ -694,13 +711,24 @@ function AriaCard({ aria, onSaved }) {
         ))}
         . They are filled in on this server before the call, so the agent never has to declare them.
       </div>
-      <label>System prompt override (optional)</label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span>System prompt override (optional)</span>
+        <button type="button" className="secondary small" onClick={() => useRecommended('systemPrompt')} style={{ marginLeft: 'auto' }}>
+          Use recommended
+        </button>
+      </label>
       <textarea
         value={form.systemPrompt}
         onChange={(e) => setForm({ ...form, systemPrompt: e.target.value })}
         placeholder="Leave blank to use the prompt configured on the ElevenLabs agent."
-        rows={3}
+        rows={form.systemPrompt && form.systemPrompt.length > 400 ? 14 : 3}
       />
+      <div className="muted" style={{ fontSize: 12, marginTop: 2, marginBottom: 6 }}>
+        The recommended prompt is written for a phone call: short turns, no filler sounds, times in words, an honest
+        after-booking line (Calendly emails the calendar invite; no confirmation text is sent), and clear handling of
+        voicemail, wrong person, "not now", and opt-outs. Click <em>Preview what Aria will say</em> to see it rendered
+        for a real lot.
+      </div>
 
       <div style={{ marginTop: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={save} disabled={busy}>
