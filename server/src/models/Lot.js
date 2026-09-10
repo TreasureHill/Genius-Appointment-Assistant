@@ -73,6 +73,11 @@ const LotSchema = new mongoose.Schema(
       // Set true once the agent's book_appointment tool fired during the call.
       booked: { type: Boolean, default: false },
       attempts: { type: Number, default: 0 },
+      // Exactly what this call asked the agent to open with / follow (after
+      // placeholder substitution), so "it didn't say my first sentence" can
+      // be checked against what was actually sent.
+      firstMessage: { type: String, default: '' },
+      promptOverridden: { type: Boolean, default: false },
     },
     bounceCount: { type: Number, default: 0 },
     lastBounceAt: { type: Date, default: null },

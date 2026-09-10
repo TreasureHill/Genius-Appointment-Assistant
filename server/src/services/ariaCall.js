@@ -230,6 +230,8 @@ async function dispatchCall({ lotId, buyerRole }) {
     outcome: '',
     booked: false,
     attempts: (lot.call?.attempts || 0) + 1,
+    firstMessage: resp?.overrides?.firstMessage || '',
+    promptOverridden: Boolean(resp?.overrides?.prompt),
   };
   lot.markModified('call');
   await lot.save();
@@ -241,7 +243,12 @@ async function dispatchCall({ lotId, buyerRole }) {
     direction: 'out',
     to: buyer.phone,
     subject: `Aria called ${buyer.name || buyer.phone}`,
-    body: slotsText ? `Offering slots: ${slotsText}` : 'Outbound call placed.',
+    body: [
+      resp?.overrides?.firstMessage ? `Opening line: ${resp.overrides.firstMessage}` : 'Opening line: agent default (no first-message override set).',
+      slotsText ? `Offering slots: ${slotsText}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
     status: 'sending',
     providerId: conversationId,
     sentAt: now,

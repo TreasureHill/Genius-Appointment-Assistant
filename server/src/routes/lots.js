@@ -217,11 +217,12 @@ router.post('/:id/call', async (req, res) => {
   } catch (err) {
     const mapped = CALL_ERROR_HTTP[err.code];
     if (mapped) return res.status(mapped[0]).json({ error: err.code, message: mapped[1] });
-    // Upstream ElevenLabs failure (bad number, quota, etc.)
-    const status = err.response?.status || 502;
+    // Upstream ElevenLabs failure (bad number, quota, an override the agent's
+    // Security settings don't allow, etc.)
+    const status = err.response?.status || (err.code === 'call_refused' ? 502 : 502);
     return res.status(status).json({
-      error: 'call_dispatch_failed',
-      message: err.response?.data?.detail || err.response?.data?.message || err.message,
+      error: err.code === 'call_refused' ? 'call_refused' : 'call_dispatch_failed',
+      message: `ElevenLabs: ${elevenlabs.describeError(err)}`,
     });
   }
 });

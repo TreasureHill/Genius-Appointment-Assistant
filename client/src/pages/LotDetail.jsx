@@ -159,6 +159,22 @@ function CallWithAria({ lot, ariaCfg, calling, callMsg, onCall, tz }) {
         </div>
       )}
 
+      {(inProgress || hasResult) && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+          {call.firstMessage ? (
+            <>
+              Opening line sent for this call: <em>“{call.firstMessage}”</em>
+              {call.promptOverridden ? ' · custom system prompt sent' : ''}
+            </>
+          ) : (
+            <>
+              No first-message override was sent for this call — the agent used its ElevenLabs dashboard
+              greeting. Set one in <Link to="/settings">Settings → Aria</Link>.
+            </>
+          )}
+        </div>
+      )}
+
       {hasResult && (
         <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
           <div className="cal-grid" style={{ marginBottom: 8 }}>

@@ -428,7 +428,62 @@ function AriaCard({ aria, onSaved }) {
   const [preview, setPreview] = useState(null);
   const [eventTypes, setEventTypes] = useState(null);
   const [loadingTypes, setLoadingTypes] = useState(false);
+  const [perm, setPerm] = useState(null); // agent Security-tab override toggles
+  const [permBusy, setPermBusy] = useState(false);
+  const [callPreview, setCallPreview] = useState(null);
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const placeholders = aria.placeholders || ['first_name', 'lot_number', 'project_name', 'available_slots'];
+
+  // Ask ElevenLabs which overrides the agent honours — the usual reason a
+  // first message "isn't said" is that the Security toggle is off.
+  async function loadPermissions() {
+    if (!aria.apiKeySet || !aria.agentIdSet) return;
+    setPermBusy(true);
+    try {
+      setPerm(await api.get('/api/settings/aria/overrides'));
+    } catch (ex) {
+      setPerm({ ok: false, message: ex.message });
+    } finally {
+      setPermBusy(false);
+    }
+  }
+  useEffect(() => {
+    loadPermissions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aria.apiKeySet, aria.agentIdSet]);
+
+  async function enableOverrides() {
+    if (!confirm('Turn on the "First message" and "System prompt" override toggles on your ElevenLabs agent (Security tab)? Nothing else on the agent changes.')) return;
+    setPermBusy(true);
+    setMsg('');
+    try {
+      const r = await api.post('/api/settings/aria/overrides/enable', {});
+      setPerm(r);
+      setMsg(r.firstMessage && r.prompt ? 'Overrides enabled on the agent — your first message and prompt will be used on the next call.' : 'ElevenLabs answered, but the toggles still read off. Enable them in the agent’s Security tab.');
+    } catch (ex) {
+      setMsg('Error enabling overrides: ' + ex.message);
+    } finally {
+      setPermBusy(false);
+    }
+  }
+
+  async function previewCall() {
+    setMsg('');
+    setCallPreview({ loading: true });
+    try {
+      const r = await api.post('/api/settings/aria/preview', {
+        firstMessage: form.firstMessage,
+        systemPrompt: form.systemPrompt,
+      });
+      setCallPreview(r);
+    } catch (ex) {
+      setCallPreview({ error: ex.message });
+    }
+  }
+
+  const needsFirst = !!(form.firstMessage && form.firstMessage.trim());
+  const needsPrompt = !!(form.systemPrompt && form.systemPrompt.trim());
+  const overridesBlocked = perm && perm.ok && ((needsFirst && !perm.firstMessage) || (needsPrompt && !perm.prompt));
 
   async function loadEventTypes() {
     setLoadingTypes(true);
@@ -568,13 +623,77 @@ function AriaCard({ aria, onSaved }) {
         in-person event, put the address here (auto-used from the event type when Calendly exposes it).
       </div>
 
-      <label>First message (optional — {'{first_name}'}, {'{project_name}'}, {'{available_slots}'} supported)</label>
+      {(needsFirst || needsPrompt) && perm && (
+        <div
+          className={`card alert ${overridesBlocked ? 'alert-err' : perm.ok ? 'alert-ok' : 'alert-warn'}`}
+          style={{ marginTop: 12, marginBottom: 12, padding: '10px 14px' }}
+        >
+          {perm.ok ? (
+            <>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+                <strong>Agent “{perm.agentName || perm.agentId}” — overrides allowed:</strong>
+                <span>
+                  <span className={`badge ${perm.firstMessage ? 'ok' : 'err'}`}>{perm.firstMessage ? '✓' : '✗'}</span>{' '}
+                  <span className="muted" style={{ fontSize: 12 }}>First message</span>
+                </span>
+                <span>
+                  <span className={`badge ${perm.prompt ? 'ok' : 'err'}`}>{perm.prompt ? '✓' : '✗'}</span>{' '}
+                  <span className="muted" style={{ fontSize: 12 }}>System prompt</span>
+                </span>
+                <button type="button" className="secondary" onClick={loadPermissions} disabled={permBusy} style={{ fontSize: 12, padding: '4px 10px' }}>
+                  {permBusy ? 'Checking…' : 'Re-check'}
+                </button>
+                {overridesBlocked && (
+                  <button type="button" onClick={enableOverrides} disabled={permBusy} style={{ fontSize: 12, padding: '4px 10px' }}>
+                    Enable on the agent
+                  </button>
+                )}
+              </div>
+              {overridesBlocked ? (
+                <div style={{ fontSize: 12.5, marginTop: 6 }}>
+                  <strong>This is why Aria doesn’t say your first sentence.</strong> ElevenLabs disables overrides by default,
+                  so the {needsFirst && !perm.firstMessage ? 'first message' : ''}
+                  {needsFirst && !perm.firstMessage && needsPrompt && !perm.prompt ? ' and ' : ''}
+                  {needsPrompt && !perm.prompt ? 'system prompt' : ''} set here {needsFirst && !perm.firstMessage && needsPrompt && !perm.prompt ? 'are' : 'is'}{' '}
+                  refused or ignored and the agent uses its dashboard default
+                  {perm.agentFirstMessage ? <> (“{perm.agentFirstMessage.slice(0, 120)}{perm.agentFirstMessage.length > 120 ? '…' : ''}”)</> : null}.
+                  Click <em>Enable on the agent</em>, or open the agent in ElevenLabs → Security → Enable overrides → First
+                  message + System prompt.
+                </div>
+              ) : (
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  ElevenLabs will use the first message and prompt below on every call.
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 12.5 }}>
+              Couldn’t read the agent’s Security settings: {perm.message || perm.reason || 'unknown error'}.{' '}
+              <button type="button" className="secondary" onClick={loadPermissions} disabled={permBusy} style={{ fontSize: 12, padding: '4px 10px' }}>
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <label>First message (optional) — what Aria says the moment the call connects</label>
       <textarea
         value={form.firstMessage}
         onChange={(e) => setForm({ ...form, firstMessage: e.target.value })}
-        placeholder="Hi {first_name}, this is Aria calling about lot {lot_number} at {project_name}…"
+        placeholder="Hi {{first_name}}, this is Aria calling about Lot {{lot_number}} at {{project_name}}…"
         rows={2}
       />
+      <div className="muted" style={{ fontSize: 12, marginTop: 2, marginBottom: 6 }}>
+        Placeholders (write them as <span className="kbd">{'{{first_name}}'}</span> or <span className="kbd">{'{first_name}'}</span>, both work):{' '}
+        {placeholders.map((n, i) => (
+          <span key={n}>
+            {i > 0 ? ', ' : ''}
+            <span className="kbd">{`{{${n}}}`}</span>
+          </span>
+        ))}
+        . They are filled in on this server before the call, so the agent never has to declare them.
+      </div>
       <label>System prompt override (optional)</label>
       <textarea
         value={form.systemPrompt}
@@ -590,8 +709,55 @@ function AriaCard({ aria, onSaved }) {
         <button className="secondary" onClick={previewAvailability}>
           Preview availability
         </button>
+        <button className="secondary" onClick={previewCall} title="Render the first message and prompt for a real lot, without calling">
+          Preview what Aria will say
+        </button>
         {msg && <span className={msg.startsWith('Error') ? 'error' : 'success'}>{msg}</span>}
       </div>
+
+      {callPreview && (
+        <div style={{ marginTop: 10, fontSize: 13 }}>
+          {callPreview.loading ? (
+            <span className="muted">Rendering…</span>
+          ) : callPreview.error ? (
+            <div className="error">{callPreview.error}</div>
+          ) : (
+            <div className="card" style={{ margin: 0, background: 'var(--panel-subtle)' }}>
+              <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                Rendered for {callPreview.sample ? 'a sample lot (add a lot with a phone to preview real data)' : <>Lot {callPreview.lot?.lotNumber} · {callPreview.lot?.project}{callPreview.buyer?.name ? ` · ${callPreview.buyer.name}` : ''}</>}.
+                This is exactly what the next call would send, using the text in the boxes above (saved or not).
+              </div>
+              <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>Aria opens with</div>
+              {callPreview.firstMessage ? (
+                <div style={{ fontSize: 14, margin: '2px 0 8px' }}>“{callPreview.firstMessage}”</div>
+              ) : (
+                <div className="muted" style={{ margin: '2px 0 8px' }}>
+                  No first message set here — the agent’s dashboard first message is used.
+                </div>
+              )}
+              {callPreview.unresolved?.firstMessage?.length > 0 && (
+                <div className="error" style={{ margin: '0 0 8px' }}>
+                  These placeholders have no value and would be spoken literally:{' '}
+                  {callPreview.unresolved.firstMessage.map((n) => `{{${n}}}`).join(', ')}
+                </div>
+              )}
+              {callPreview.prompt ? (
+                <details>
+                  <summary style={{ cursor: 'pointer', fontSize: 12.5 }}>System prompt as sent ({callPreview.prompt.length} characters)</summary>
+                  <pre className="message-pre" style={{ marginTop: 6 }}>{callPreview.prompt}</pre>
+                </details>
+              ) : (
+                <div className="muted" style={{ fontSize: 12 }}>No system prompt override — the agent’s dashboard prompt is used.</div>
+              )}
+              {callPreview.unresolved?.prompt?.length > 0 && (
+                <div className="error" style={{ margin: '6px 0 0' }}>
+                  Unfilled placeholders in the prompt: {callPreview.unresolved.prompt.map((n) => `{{${n}}}`).join(', ')}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {preview && (
         <div style={{ marginTop: 10, fontSize: 13 }}>

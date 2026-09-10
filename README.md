@@ -91,7 +91,7 @@ status changes.
 
 ## Tests
 ```bash
-npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering
+npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers
 ```
 
 ## How the sheet diff works
@@ -173,6 +173,19 @@ force-fails any call left "calling" for 30 min (dropped webhook safety net).
   `/api/aria/tools/*` URLs (sending the `x-aria-secret` header). The tool the
   agent uses to book takes `lot_id`, `start_time`, and optional
   `buyer_name` / `buyer_email`.
+
+**If Aria doesn't say your first message / ignores your prompt:** ElevenLabs
+disables overrides by default. The agent's *Security* tab must allow the
+"First message" and "System prompt" overrides, otherwise the ones set in
+Settings → Aria are refused or ignored and the agent opens with its
+dashboard default. Settings → Aria reads those toggles from the agent and
+shows them (with an *Enable on the agent* button), and *Preview what Aria
+will say* renders the first message + prompt for a real lot and flags any
+placeholder that would be spoken literally. Placeholders can be written as
+`{{first_name}}` or `{first_name}`; they are filled in server-side before the
+call. Each call records the opening line it was given (lot page → Call with
+Aria), and a call ElevenLabs refuses now fails loudly instead of sitting in
+"calling".
 
 Everything degrades gracefully: with no ElevenLabs keys the Call button is
 disabled and the rest of the app is unaffected.
