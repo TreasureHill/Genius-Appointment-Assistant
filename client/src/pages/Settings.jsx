@@ -43,6 +43,7 @@ function ScheduleCard({ schedule, templates, onSaved }) {
     pacingMax: schedule.pacing?.maxSec ?? 120,
     defaultEmailTemplate: schedule.defaultEmailTemplate || '',
     defaultSmsTemplate: schedule.defaultSmsTemplate || '',
+    emailPerLot: schedule.emailPerLot !== false,
     sendWindows: normalizeSendWindows(schedule.sendWindows),
   });
   const [msg, setMsg] = useState('');
@@ -84,6 +85,7 @@ function ScheduleCard({ schedule, templates, onSaved }) {
         sendWindows: form.sendWindows,
         defaultEmailTemplate: form.defaultEmailTemplate || null,
         defaultSmsTemplate: form.defaultSmsTemplate || null,
+        emailPerLot: !!form.emailPerLot,
       });
       const rp = r?.replan || {};
       let text = 'Saved.';
@@ -226,6 +228,26 @@ function ScheduleCard({ schedule, templates, onSaved }) {
             ))}
           </select>
         </div>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <h3 style={{ marginBottom: 4 }}>One message per lot</h3>
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 4, color: 'var(--text)', fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={!!form.emailPerLot}
+            onChange={(e) => setForm({ ...form, emailPerLot: e.target.checked })}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            <strong>Send one email per lot</strong>, addressed to every buyer on it (the greeting reads{' '}
+            <span className="kbd">Hi Jane and John,</span>). Off: a separate personalised email per buyer.
+            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+              Texts always go one per phone. Either way a lot counts as <strong>one</strong> send per channel
+              on the Queue, the Board and the Dashboard, takes one pacing slot, and uses one reminder.
+            </div>
+          </span>
+        </label>
       </div>
 
       <div style={{ marginTop: 18 }}>

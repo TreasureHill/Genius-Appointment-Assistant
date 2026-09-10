@@ -23,6 +23,25 @@ const MessageLogSchema = new mongoose.Schema(
     sentAt: { type: Date, default: null },
     isReminder: { type: Boolean, default: false },
     reminderIndex: { type: Number, default: 0 },
+    // The lot is the unit of sending. `sendGroup` ties together every row of
+    // one send (lot × channel × round): the single email addressed to all
+    // buyers, or the one text per phone that go out together. `recipients`
+    // lists who this row goes to (several for a per-lot email).
+    sendGroup: { type: String, default: '', index: true },
+    recipients: {
+      type: [
+        new mongoose.Schema(
+          {
+            buyerIndex: { type: Number, default: null },
+            role: { type: String, default: '' },
+            name: { type: String, default: '' },
+            address: { type: String, default: '' },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

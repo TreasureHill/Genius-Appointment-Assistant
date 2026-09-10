@@ -151,8 +151,20 @@ export function ActivityRow({ item }) {
               </span>
               <span className="muted">{item.direction === 'in' ? 'From' : 'To'}</span>
               <span style={{ overflowWrap: 'anywhere' }}>
-                {item.to || '—'}
-                {item.buyerIndex != null ? <span className="muted"> (buyer #{item.buyerIndex + 1})</span> : null}
+                {item.recipients && item.recipients.length > 0 ? (
+                  item.recipients.map((r, i) => (
+                    <span key={i}>
+                      {i > 0 ? ', ' : ''}
+                      {r.name ? `${r.name} · ` : ''}
+                      {r.address}
+                    </span>
+                  ))
+                ) : (
+                  <>
+                    {item.to || '—'}
+                    {item.buyerIndex != null ? <span className="muted"> (buyer #{item.buyerIndex + 1})</span> : null}
+                  </>
+                )}
               </span>
               <span className="muted">Status</span>
               <span>

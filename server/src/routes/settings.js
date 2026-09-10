@@ -22,6 +22,7 @@ router.get('/', async (req, res) => {
       timezone,
       timezoneSource: isValidTimezone(sched.timezone) ? 'schedule' : isValidTimezone(s.aria?.timezone) ? 'aria' : 'default',
       window: await scheduleStatus(s),
+      emailPerLot: sched.emailPerLot !== false,
       reminderIntervalDays: sched.reminderIntervalDays ?? env.defaults.reminderDays,
       maxReminders: sched.maxReminders ?? env.defaults.maxReminders,
       pacing: sched.pacing || { minSec: env.defaults.pacingMin, maxSec: env.defaults.pacingMax },
@@ -79,14 +80,23 @@ router.patch('/owner', async (req, res) => {
 const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 router.patch('/schedule', async (req, res) => {
-  const { reminderIntervalDays, maxReminders, pacing, sendWindows, defaultEmailTemplate, defaultSmsTemplate, timezone } =
-    req.body || {};
+  const {
+    reminderIntervalDays,
+    maxReminders,
+    pacing,
+    sendWindows,
+    defaultEmailTemplate,
+    defaultSmsTemplate,
+    timezone,
+    emailPerLot,
+  } = req.body || {};
   if (timezone != null && !isValidTimezone(String(timezone).trim())) {
     return res.status(400).json({ error: 'invalid_timezone', message: `"${timezone}" is not a valid IANA timezone (e.g. America/Toronto).` });
   }
   const s = await Setting.getSingleton();
   s.schedule = s.schedule || {};
   if (timezone != null) s.schedule.timezone = String(timezone).trim();
+  if (emailPerLot != null) s.schedule.emailPerLot = Boolean(emailPerLot);
   if (reminderIntervalDays != null) s.schedule.reminderIntervalDays = Number(reminderIntervalDays);
   if (maxReminders != null) s.schedule.maxReminders = Number(maxReminders);
   if (pacing) {

@@ -66,11 +66,24 @@ immediately; the worker only re-checks at send time. Saving the schedule
 boot after this change pins the zone (Aria's zone, else `America/New_York`) and
 re-plans the existing queue once.
 
+## The lot is the unit of sending
+A send is one lot × one channel × one round. One "Send" queues, per lot, a
+single email addressed to every buyer on the lot (the greeting renders as
+"Hi Jane and John," — `{{buyer.firstName}}` and `{{buyer.name}}` list every
+buyer on a per-lot email) and one text per buyer phone; the texts go out
+together in the same pacing slot. Every Outbox / MessageLog row carries a
+`sendGroup`, and the Queue, the Board's queued badge and comms icons, and the
+Dashboard's sent counts all count sends, not recipients. Settings → Sending
+schedule → "Send one email per lot" can be switched off to send a separate
+personalised email per buyer; either way the lot still counts as one send and
+uses one reminder. The Aria call-time outreach follows the same rule.
+
 ## The Queue tab
-`/queue` lists every email and text waiting in the outbox and every Aria call
-waiting in the call queue, in the order they will happen, grouped by day, with
-times in the schedule timezone. Per message: **Send now** (skips the window,
-pacing and reminder holds; only "Pause sending" still stops it) and **Cancel**;
+`/queue` lists every email and text waiting in the outbox (one row per lot
+send, with all of its recipients) and every Aria call waiting in the call
+queue, in the order they will happen, grouped by day, with times in the
+schedule timezone. Per send: **Send now** (skips the window, pacing and
+reminder holds; only "Pause sending" still stops it) and **Cancel**;
 bulk cancel; **Re-plan queue**; pause/resume sending. Rows expand to the full
 rendered message. The old History page is folded into Activity (`/history`
 redirects), which now filters by channel, replies received, failed sends, and
@@ -78,7 +91,7 @@ status changes.
 
 ## Tests
 ```bash
-npm test            # pure-function suites: Calendly matching + send-window timezone math
+npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering
 ```
 
 ## How the sheet diff works

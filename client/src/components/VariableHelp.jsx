@@ -1,6 +1,6 @@
 const GROUPS = [
   {
-    title: 'Recipient (the buyer this message is being sent to)',
+    title: 'Recipient — who this message goes to (on a one-email-per-lot send, name / firstName list every buyer: "Jane and John")',
     vars: ['{{buyer.name}}', '{{buyer.firstName}}', '{{buyer.email}}', '{{buyer.phone}}'],
   },
   {

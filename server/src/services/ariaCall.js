@@ -21,9 +21,10 @@ const Setting = require('../models/Setting');
 const elevenlabs = require('./elevenlabs');
 const calendly = require('./calendly');
 const { logStatusChange } = require('./lotEventLogger');
-const { bumpReminderCount } = require('./enqueue');
+const { bumpReminderCount, eligibleRecipients } = require('./enqueue');
 const { resolveDefaultsForProject } = require('./templateResolver');
-const { renderContext, renderTemplate } = require('./templateRender');
+const { renderContext, renderTemplate, combinedRecipientView } = require('./templateRender');
+const { newSendGroup } = require('./sendGroups');
 const { sendEmail } = require('./mailer');
 const { sendSms } = require('./sms');
 
@@ -71,7 +72,10 @@ function matchBuyer(lot, { phone, email, name }) {
 // bypasses the send window — the homeowner is being called right now, so the
 // accompanying email/SMS should go out now, not defer to 9am. Templates resolve
 // the same way ("set for that project": project default → system default →
-// reminder fallback). Best-effort; never throws. Returns { sent, used, skipped }.
+// reminder fallback). The lot is the unit: one email addressed to every buyer
+// (unless Settings prefers one per buyer) and one text per phone, each channel
+// logged as one send group. Best-effort; never throws. Returns
+// { sent, used, skipped }.
 async function triggerProjectOutreach(lot) {
   try {
     const projectId = lot.project?._id || lot.project;
@@ -80,61 +84,57 @@ async function triggerProjectOutreach(lot) {
 
     const setting = await Setting.getSingleton();
     const owner = (setting.owner && setting.owner.toObject?.()) || setting.owner || {};
+    const emailPerLot = setting.schedule?.emailPerLot !== false;
     const used = {};
     const skipped = [];
     let sent = 0;
-    const doneAddrs = new Set();
 
-    for (const buyer of lot.buyers || []) {
-      if (buyer.optedOut) continue;
-      // Email
-      if (emailTpl && buyer.email) {
-        const key = `e:${String(buyer.email).toLowerCase()}`;
-        if (!doneAddrs.has(key)) {
-          doneAddrs.add(key);
-          if (!env.smtp.configured) {
-            if (!skipped.includes('smtp_not_configured')) skipped.push('smtp_not_configured');
-          } else {
-            try {
-              const ctx = renderContext({ project: lot.project, lot, buyer, owner });
-              const r = renderTemplate(emailTpl, ctx);
-              const info = await sendEmail({
-                to: buyer.email,
-                subject: r.subject,
-                html: r.html,
-                text: r.text,
-                highImportance: !!setting.emailHighImportance,
-              });
-              await logOutreach(lot, 'email', buyer, r.subject, r.html, info.messageId);
-              used.email = emailTpl.name;
-              sent += 1;
-            } catch (e) {
-              await logOutreach(lot, 'email', buyer, emailTpl.name, '', '', e.message);
-              if (!skipped.includes('email_failed')) skipped.push('email_failed');
-            }
+    if (emailTpl) {
+      const recipients = eligibleRecipients(lot, 'email', []);
+      if (recipients.length && !env.smtp.configured) {
+        skipped.push('smtp_not_configured');
+      } else if (recipients.length) {
+        const group = newSendGroup();
+        const batches = emailPerLot ? [recipients] : recipients.map((r) => [r]);
+        for (const batch of batches) {
+          const view = batch.length > 1 ? combinedRecipientView(batch.map((r) => r.buyer)) : batch[0].buyer;
+          const to = batch.map((r) => r.address).join(', ');
+          try {
+            const r = renderTemplate(emailTpl, renderContext({ project: lot.project, lot, buyer: view, owner }));
+            const info = await sendEmail({
+              to,
+              subject: r.subject,
+              html: r.html,
+              text: r.text,
+              highImportance: !!setting.emailHighImportance,
+            });
+            await logOutreach(lot, 'email', batch, to, r.subject, r.html, info.messageId, '', group);
+            used.email = emailTpl.name;
+            sent += 1;
+          } catch (e) {
+            await logOutreach(lot, 'email', batch, to, emailTpl.name, '', '', e.message, group);
+            if (!skipped.includes('email_failed')) skipped.push('email_failed');
           }
         }
       }
-      // SMS
-      if (smsTpl && buyer.phone) {
-        const key = `s:${String(buyer.phone).replace(/\D/g, '')}`;
-        if (!doneAddrs.has(key)) {
-          doneAddrs.add(key);
-          if (!env.twilio.configured) {
-            if (!skipped.includes('twilio_not_configured')) skipped.push('twilio_not_configured');
-          } else {
-            try {
-              const ctx = renderContext({ project: lot.project, lot, buyer, owner });
-              const r = renderTemplate(smsTpl, ctx);
-              const body = r.text || r.html;
-              const info = await sendSms({ to: buyer.phone, body });
-              await logOutreach(lot, 'sms', buyer, '', body, info.messageId);
-              used.sms = smsTpl.name;
-              sent += 1;
-            } catch (e) {
-              await logOutreach(lot, 'sms', buyer, '', smsTpl.name, '', e.message);
-              if (!skipped.includes('sms_failed')) skipped.push('sms_failed');
-            }
+    }
+    if (smsTpl) {
+      const recipients = eligibleRecipients(lot, 'sms', []);
+      if (recipients.length && !env.twilio.configured) {
+        skipped.push('twilio_not_configured');
+      } else if (recipients.length) {
+        const group = newSendGroup();
+        for (const r of recipients) {
+          try {
+            const rendered = renderTemplate(smsTpl, renderContext({ project: lot.project, lot, buyer: r.buyer, owner }));
+            const body = rendered.text || rendered.html;
+            const info = await sendSms({ to: r.address, body });
+            await logOutreach(lot, 'sms', [r], r.address, '', body, info.messageId, '', group);
+            used.sms = smsTpl.name;
+            sent += 1;
+          } catch (e) {
+            await logOutreach(lot, 'sms', [r], r.address, '', smsTpl.name, '', e.message, group);
+            if (!skipped.includes('sms_failed')) skipped.push('sms_failed');
           }
         }
       }
@@ -147,20 +147,23 @@ async function triggerProjectOutreach(lot) {
   }
 }
 
-async function logOutreach(lot, type, buyer, subject, body, providerId, error) {
+async function logOutreach(lot, type, recipients, to, subject, body, providerId, error, sendGroup) {
   try {
     await MessageLog.create({
       project: lot.project?._id || lot.project,
       lot: lot._id,
+      buyerIndex: recipients[0]?.buyerIndex ?? null,
       type,
       direction: 'out',
-      to: type === 'email' ? buyer.email : buyer.phone,
+      to,
       subject: subject || '',
       body: body || '',
       status: error ? 'failed' : 'sent',
       error: error || '',
       providerId: providerId || '',
       sentAt: new Date(),
+      sendGroup: sendGroup || '',
+      recipients: recipients.map(({ buyerIndex, role, name, address }) => ({ buyerIndex, role, name, address })),
     });
   } catch {
     /* logging never fatal */
