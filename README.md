@@ -162,13 +162,27 @@ force-fails any call left "calling" for 30 min (dropped webhook safety net).
 
 **Availability, and why it used to time out:** Calendly's
 `event_type_available_times` endpoint only accepts a 7-day window, so a
-60-day horizon is up to nine requests. Those are now fetched concurrently
-under a hard time budget (about 6 s for the in-call tool, 3 s for the
-pre-call fetch), returning the soonest slots found rather than making the
-agent wait, and the result is cached for 90 s so a retry — or the mid-call
-tool hit right after dispatch warmed it — is instant. Reading them one after
-another is what made the agent's first `get_availability` call time out and
-the second one succeed.
+60-day horizon is up to nine requests. Reading them one after another is what
+made the agent's first `get_availability` call hit ElevenLabs' ~20 s tool
+timeout while the retry succeeded. Now:
+
+- Windows are read **five at a time**, so 60 days is two round trips even when
+  the next opening is weeks out.
+- The Calendly reads run under a **time budget** (6 s for the in-call tool, 3 s
+  for the pre-call fetch), and the whole tool response is capped by a **hard
+  9 s deadline** covering everything else too (database, DNS, TLS). It answers
+  with the soonest slots it has rather than making the agent wait.
+- Results are **cached stale-while-revalidate**: served instantly for 10
+  minutes, refreshed in the background once older than 90 s. Dispatching a call
+  primes the cache, so the mid-call tool hit is normally a cache hit.
+- If Calendly fails or is too slow, the **last times we read** are offered
+  rather than an error — `book_appointment` re-validates with Calendly, and a
+  slot taken in the meantime is already handled.
+
+Each lookup logs one line (`[calendly] availability: 412 ms, 5 window(s), 3
+slot(s)`) so a slow call can be diagnosed from the server log. If the tool
+still times out, check the tool's own **response timeout** on the ElevenLabs
+agent — it should be comfortably above 10 seconds.
 
 **Setup** (Settings → *Aria voice calling*, plus `.env`):
 - `.env`: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`,

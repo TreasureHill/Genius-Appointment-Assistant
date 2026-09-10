@@ -315,12 +315,46 @@ async function applyPostCall(normalised) {
   return { ok: true, status: normalised.status };
 }
 
+// Hard ceiling on anything the voice agent waits for. ElevenLabs gives a
+// server tool ~20 s before it fails the call, so we answer well inside that
+// no matter what is slow — a hung database, DNS, TLS, Calendly itself. The
+// lookup keeps running in the background and warms the cache, so an
+// immediate retry is served instantly.
+function withDeadline(promise, ms, onTimeout) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(onTimeout()), ms);
+    const settle = (value) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    promise.then(settle, (err) => settle(onTimeout(err)));
+  });
+}
+
 // Answer the get_availability tool. Aria is mid-conversation with a real
 // person, so this must answer fast: the lookup runs under a time budget and
 // returns the soonest slots it has rather than making the agent wait (and
-// time out). `budgetMs` is deliberately short for the same reason.
-async function getAvailability({ limit = 6, budgetMs = 6_000 } = {}) {
-  const avail = await calendly.listAvailableTimes({ limit, budgetMs });
+// time out). `budgetMs` bounds the Calendly reads; `deadlineMs` bounds
+// everything, including the database.
+async function getAvailability({ limit = 6, budgetMs = 6_000, deadlineMs = 9_000 } = {}) {
+  const avail = await withDeadline(
+    calendly.listAvailableTimes({ limit, budgetMs }),
+    deadlineMs,
+    (err) => {
+      if (err) console.warn('[aria] availability lookup failed:', err.message);
+      else console.warn(`[aria] availability lookup exceeded ${deadlineMs} ms — answering from what we last read`);
+      // Real times we read recently beat telling the homeowner the calendar
+      // is broken; book_appointment re-checks with Calendly anyway.
+      return (
+        calendly.lastKnownAvailability({ limit }) || {
+          ok: true,
+          slots: [],
+          partial: true,
+          timedOut: true,
+        }
+      );
+    }
+  );
   if (!avail.ok) {
     return { available: false, message: avail.message, slots: [] };
   }
@@ -520,6 +554,7 @@ module.exports = {
   dispatchCall,
   applyPostCall,
   getAvailability,
+  withDeadline,
   bookAppointment,
   reconcileCallingLots,
   // exported for tests

@@ -102,3 +102,25 @@ console.log(`\nAll ${passed} assertions passed ✅`);
   assert.deepStrictEqual(pv.unresolved, { firstMessage: ['nope'], prompt: [] });
   console.log('readOverridePermissions / previewOverrides: ok');
 }
+
+// ---- withDeadline: the voice agent never waits longer than we promised ----
+{
+  const { withDeadline } = require('../ariaCall');
+  const sleep = (ms, v) => new Promise((r) => setTimeout(() => r(v), ms));
+  (async () => {
+    // A fast lookup passes straight through.
+    assert.deepStrictEqual(await withDeadline(sleep(5, { ok: true }), 200, () => ({ ok: false })), { ok: true });
+    // A slow one falls back instead of hanging the call.
+    const started = Date.now();
+    const slow = await withDeadline(sleep(2000, { ok: true }), 100, () => ({ ok: false, timedOut: true }));
+    assert.deepStrictEqual(slow, { ok: false, timedOut: true });
+    assert.ok(Date.now() - started < 500, 'returned at the deadline, not when the work finished');
+    // A rejection is handled the same way as a timeout.
+    const failed = await withDeadline(Promise.reject(new Error('boom')), 500, (e) => ({ ok: false, why: e.message }));
+    assert.deepStrictEqual(failed, { ok: false, why: 'boom' });
+    console.log('withDeadline: ok');
+  })().catch((e) => {
+    console.error('withDeadline FAILED:', e);
+    process.exit(1);
+  });
+}

@@ -13,6 +13,7 @@ const {
   buildAvailabilityWindows,
   listAvailableTimes,
   clearAvailabilityCache,
+  lastKnownAvailability,
 } = require('../calendly');
 
 let passed = 0;
@@ -55,6 +56,13 @@ function fakeCalendly({ latency = 100, slotsFor = () => [], failAll = false } = 
 }
 
 const slot = (iso, status = 'available') => ({ start_time: iso, status, scheduling_url: 'https://x' });
+
+// Backdate every cache entry so the stale-while-revalidate paths can be
+// exercised without waiting minutes.
+function ageCache(byMs) {
+  const cache = require('../calendly').__availabilityCacheForTests();
+  for (const entry of cache.values()) entry.at -= byMs;
+}
 const call = (opts, extra = {}) =>
   listAvailableTimes({
     eventTypeUri: URI,
@@ -116,7 +124,7 @@ const call = (opts, extra = {}) =>
     const fake = fakeCalendly({ latency: 20, slotsFor: () => [slot('2026-09-12T14:00:00Z'), slot('2026-09-12T15:00:00Z')] });
     const r = await call(fake, { limit: 2 });
     assert.strictEqual(r.slots.length, 2);
-    assert.ok(fake.state.calls <= 3, `did not read all nine windows (${fake.state.calls})`);
+    assert.ok(fake.state.calls <= 5, `stopped after the first wave instead of reading all nine windows (${fake.state.calls})`);
   });
 
   console.log('listAvailableTimes — results');
@@ -209,6 +217,55 @@ const call = (opts, extra = {}) =>
     });
     assert.strictEqual(second.cached, true);
     assert.strictEqual(fake.state.calls, before);
+  });
+
+  await t('an aging entry is served instantly and refreshed in the background', async () => {
+    clearAvailabilityCache();
+    const fake = fakeCalendly({ latency: 5, slotsFor: () => [slot('2026-09-12T14:00:00Z'), slot('2026-09-12T15:00:00Z')] });
+    await call(fake, { limit: 2 });
+    // Age the entry past "fresh" but well inside "stale".
+    ageCache(2 * 60 * 1000);
+    const before = fake.state.calls;
+    const started = Date.now();
+    const second = await listAvailableTimes({
+      eventTypeUri: URI,
+      timeZone: 'America/Toronto',
+      now: NOW,
+      limit: 2,
+      fetchWindow: fake.fetchWindow,
+    });
+    assert.ok(Date.now() - started < 50, 'answered without waiting on Calendly');
+    assert.strictEqual(second.cached, true);
+    assert.strictEqual(second.stale, true);
+    assert.strictEqual(second.slots.length, 2);
+    await sleep(60); // let the background refresh run
+    assert.ok(fake.state.calls > before, 'refreshed behind the scenes');
+  });
+
+  await t('a calendar that has gone down still offers the times we last read', async () => {
+    clearAvailabilityCache();
+    const good = fakeCalendly({ latency: 5, slotsFor: () => [slot('2026-09-12T14:00:00Z')] });
+    await call(good, { limit: 1 });
+    ageCache(20 * 60 * 1000); // older than stale, so it must go back to Calendly
+    const down = fakeCalendly({ latency: 5, failAll: true });
+    const r = await listAvailableTimes({
+      eventTypeUri: URI,
+      timeZone: 'America/Toronto',
+      now: NOW,
+      limit: 1,
+      fetchWindow: down.fetchWindow,
+    });
+    assert.strictEqual(r.ok, true, 'served the last known times rather than an error');
+    assert.strictEqual(r.slots.length, 1);
+    assert.strictEqual(r.stale, true);
+  });
+
+  await sync('lastKnownAvailability returns the most recent real slots, and expires', () => {
+    const known = lastKnownAvailability({ limit: 5 });
+    assert.ok(known && known.slots.length >= 1, 'has last-known slots');
+    assert.strictEqual(lastKnownAvailability({ limit: 5, maxAgeMs: 0 }), null, 'expires');
+    clearAvailabilityCache();
+    assert.strictEqual(lastKnownAvailability({}), null, 'cleared with the cache');
   });
 
   clearAvailabilityCache();
