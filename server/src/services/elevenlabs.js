@@ -40,19 +40,36 @@ function normalizePhone(raw) {
   return `+${digits}`;
 }
 
-// Replace {variable} placeholders server-side. ElevenLabs only resolves a
-// placeholder when the variable is declared on the agent, and an unresolved
-// {name} is spoken literally — so we substitute here to be bulletproof.
-// Unknown names are left intact so typos surface in QA instead of vanishing.
+// Replace placeholders server-side, in either spelling: {{first_name}} (the
+// ElevenLabs dynamic-variable style people naturally type) or {first_name}.
+// ElevenLabs only resolves a placeholder when the variable is declared on the
+// agent, and an unresolved one is spoken literally — so we substitute here to
+// be bulletproof. Unknown names are left intact so typos surface in QA
+// instead of vanishing (see unresolvedPlaceholders below).
+const PLACEHOLDER_RE = /\{\{\s*(\w+)\s*\}\}|\{\s*(\w+)\s*\}/g;
+
 function substituteVariables(template, vars) {
   if (template === null || template === undefined) return template;
   const str = String(template);
   if (!vars) return str;
-  return str.replace(/\{(\w+)\}/g, (match, name) => {
+  return str.replace(PLACEHOLDER_RE, (match, dbl, single) => {
+    const name = dbl || single;
     if (!Object.prototype.hasOwnProperty.call(vars, name)) return match;
     const v = vars[name];
     return v === null || v === undefined ? '' : String(v);
   });
+}
+
+// Placeholder names in `template` that `vars` doesn't provide — shown in
+// Settings so a typo like {{lot_numbr}} is caught before a call.
+function unresolvedPlaceholders(template, vars) {
+  const out = new Set();
+  const str = String(template || '');
+  for (const m of str.matchAll(PLACEHOLDER_RE)) {
+    const name = m[1] || m[2];
+    if (!vars || !Object.prototype.hasOwnProperty.call(vars, name)) out.add(name);
+  }
+  return Array.from(out);
 }
 
 // Variables handed to the agent for this call. The agent's prompt / first
@@ -143,7 +160,129 @@ async function startOutboundCall({ lot, buyer, owner = {}, slotsText = '', aria 
 
   const c = client();
   const { data } = await c.post('/convai/twilio/outbound-call', payload);
-  return data; // { conversation_id, callSid, ... }
+  // The endpoint answers 200 with { success:false, message } for a refused
+  // call (e.g. an override the agent's Security settings don't allow). Treat
+  // that as the failure it is instead of marking the lot "calling" forever.
+  if (data && data.success === false) {
+    const err = new Error(data.message || 'ElevenLabs refused to place the call');
+    err.code = 'call_refused';
+    err.details = data;
+    throw err;
+  }
+  return {
+    ...data,
+    // What we actually asked the agent to say / be, for the lot record.
+    overrides: {
+      firstMessage: agentOverride.first_message || '',
+      prompt: agentOverride.prompt ? agentOverride.prompt.prompt : '',
+    },
+  }; // { conversation_id, callSid, success, message, overrides }
+}
+
+// Turn an axios / ElevenLabs error into one readable line. ElevenLabs puts
+// its explanation under `detail` (a string, or { status, message }).
+function describeError(err) {
+  const d = err?.response?.data;
+  if (d) {
+    const detail = d.detail ?? d.message ?? d.error;
+    if (typeof detail === 'string') return detail;
+    if (detail && typeof detail === 'object') {
+      return detail.message || detail.status || JSON.stringify(detail);
+    }
+    if (typeof d === 'string') return d;
+  }
+  return err?.message || String(err);
+}
+
+// ---- Agent Security settings: which overrides the agent will honour ----
+//
+// ElevenLabs disables overrides by default. If the agent's Security tab does
+// not allow "First message" / "System prompt" overrides, the ones we send at
+// call time are refused or ignored and Aria opens with the dashboard default
+// — the classic "it didn't say my first sentence". These helpers read (and,
+// on request, flip) those two toggles so Settings can show the truth.
+
+function agentPath() {
+  return `/convai/agents/${encodeURIComponent(env.elevenlabs.agentId)}`;
+}
+
+async function getAgent() {
+  const c = client();
+  if (!c || !env.elevenlabs.agentId) {
+    const err = new Error('agent_not_configured');
+    err.code = 'agent_not_configured';
+    throw err;
+  }
+  const { data } = await c.get(agentPath());
+  return data;
+}
+
+// { firstMessage, prompt } booleans from a GET /convai/agents/:id payload.
+function readOverridePermissions(agent) {
+  const a = agent?.platform_settings?.overrides?.conversation_config_override?.agent || {};
+  return {
+    firstMessage: Boolean(a.first_message),
+    prompt: Boolean(a.prompt && a.prompt.prompt),
+    language: Boolean(a.language),
+  };
+}
+
+async function getOverridePermissions() {
+  if (!env.elevenlabs.apiKey || !env.elevenlabs.agentId) {
+    return { ok: false, reason: 'not_configured', message: 'Set ELEVENLABS_API_KEY and ELEVENLABS_AGENT_ID first.' };
+  }
+  const agent = await getAgent();
+  return {
+    ok: true,
+    agentId: agent.agent_id || env.elevenlabs.agentId,
+    agentName: agent.name || '',
+    // The agent's own (dashboard) first message, for comparison.
+    agentFirstMessage: agent?.conversation_config?.agent?.first_message || '',
+    ...readOverridePermissions(agent),
+  };
+}
+
+// Turn on the "First message" and "System prompt" override toggles on the
+// agent's Security tab. PATCH is a partial update, but we send the whole
+// `overrides` object as it is currently configured (with our two flags set)
+// so nothing else under it can be lost.
+async function enableOverrides({ firstMessage = true, prompt = true } = {}) {
+  const agent = await getAgent();
+  const overrides = JSON.parse(JSON.stringify(agent?.platform_settings?.overrides || {}));
+  overrides.conversation_config_override = overrides.conversation_config_override || {};
+  const cfg = overrides.conversation_config_override;
+  cfg.agent = cfg.agent || {};
+  if (firstMessage) cfg.agent.first_message = true;
+  if (prompt) {
+    cfg.agent.prompt = cfg.agent.prompt || {};
+    cfg.agent.prompt.prompt = true;
+  }
+  const c = client();
+  const { data } = await c.patch(agentPath(), { platform_settings: { overrides } });
+  return { ok: true, agentName: data?.name || agent?.name || '', ...readOverridePermissions(data) };
+}
+
+// What a call to `lot` / `buyer` would send the agent, without placing it:
+// the substituted first message + prompt and any placeholder that would be
+// spoken literally because no variable fills it.
+function previewOverrides({ lot, buyer, owner = {}, slotsText = '', aria = {} }) {
+  const dynamicVars = buildDynamicVariables({ lot, buyer, owner, slotsText });
+  const firstMessage = aria.firstMessage && String(aria.firstMessage).trim() ? substituteVariables(aria.firstMessage, dynamicVars) : '';
+  const prompt = aria.systemPrompt && String(aria.systemPrompt).trim() ? substituteVariables(aria.systemPrompt, dynamicVars) : '';
+  return {
+    dynamicVariables: dynamicVars,
+    firstMessage,
+    prompt,
+    unresolved: {
+      firstMessage: unresolvedPlaceholders(aria.firstMessage, dynamicVars),
+      prompt: unresolvedPlaceholders(aria.systemPrompt, dynamicVars),
+    },
+  };
+}
+
+// Placeholder names a first message / prompt can use (for the Settings help).
+function placeholderNames() {
+  return Object.keys(buildDynamicVariables({ lot: {}, buyer: {}, owner: {}, slotsText: '' }));
 }
 
 // HMAC-SHA256 of `${timestamp}.${rawBody}` per ElevenLabs' docs.
@@ -330,6 +469,14 @@ module.exports = {
   isDispatchable,
   normalizePhone,
   substituteVariables,
+  unresolvedPlaceholders,
+  describeError,
+  getAgent,
+  readOverridePermissions,
+  getOverridePermissions,
+  enableOverrides,
+  previewOverrides,
+  placeholderNames,
   buildDynamicVariables,
   startOutboundCall,
   verifyWebhookSignature,

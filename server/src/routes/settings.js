@@ -4,6 +4,8 @@ const { verifySmtp, sendEmail } = require('../services/mailer');
 const { verifyTwilio, sendSms } = require('../services/sms');
 const { verifyCalendly, syncAll, listEventTypes } = require('../services/calendly');
 const ariaCall = require('../services/ariaCall');
+const elevenlabs = require('../services/elevenlabs');
+const Lot = require('../models/Lot');
 const env = require('../config/env');
 const { isValidTimezone, resolveScheduleTimezone } = require('../services/sendWindow');
 const { replanPendingOutbox, scheduleStatus } = require('../services/outboxPlanner');
@@ -48,6 +50,8 @@ router.get('/', async (req, res) => {
       calendlyLocationDetail: s.aria?.calendlyLocationDetail || '',
       firstMessage: s.aria?.firstMessage || '',
       systemPrompt: s.aria?.systemPrompt || '',
+      // Names the first message / prompt can use as {{placeholder}}.
+      placeholders: elevenlabs.placeholderNames(),
     },
     senderPaused: s.senderPaused,
     remindersPaused: !!s.remindersPaused,
@@ -226,6 +230,69 @@ router.get('/aria/event-types', async (req, res) => {
   } catch (err) {
     res.status(500).json({ ok: false, message: err.message, eventTypes: [] });
   }
+});
+
+// Which overrides the ElevenLabs agent accepts (its Security tab). When
+// "First message" / "System prompt" are off, the overrides set above are
+// refused or ignored and Aria opens with the dashboard default.
+router.get('/aria/overrides', async (req, res) => {
+  try {
+    res.json(await elevenlabs.getOverridePermissions());
+  } catch (err) {
+    res.status(502).json({ ok: false, reason: 'lookup_failed', message: elevenlabs.describeError(err) });
+  }
+});
+
+router.post('/aria/overrides/enable', async (req, res) => {
+  try {
+    res.json(await elevenlabs.enableOverrides({ firstMessage: true, prompt: true }));
+  } catch (err) {
+    res.status(502).json({ ok: false, message: elevenlabs.describeError(err) });
+  }
+});
+
+// Render the first message + prompt exactly as a call would send them, for
+// a real lot (the given one, or the most recently updated lot with a phone),
+// and list placeholders that would be spoken literally. No call is placed.
+router.post('/aria/preview', async (req, res) => {
+  const { lotId, firstMessage, systemPrompt } = req.body || {};
+  const s = await Setting.getSingleton();
+  const aria = (s.aria && s.aria.toObject?.()) || s.aria || {};
+  // Unsaved edits from the form win over what's stored.
+  if (firstMessage != null) aria.firstMessage = String(firstMessage);
+  if (systemPrompt != null) aria.systemPrompt = String(systemPrompt);
+  const owner = (s.owner && s.owner.toObject?.()) || s.owner || {};
+
+  let lot = null;
+  if (lotId) lot = await Lot.findById(lotId).populate('project', 'name marketingName').lean();
+  if (!lot) {
+    lot = await Lot.findOne({ 'buyers.phone': { $nin: ['', null] } })
+      .sort({ updatedAt: -1 })
+      .populate('project', 'name marketingName')
+      .lean();
+  }
+  let buyer = null;
+  let sample = false;
+  if (lot) {
+    buyer = (lot.buyers || []).find((b) => b.phone && !b.optedOut) || (lot.buyers || [])[0] || null;
+  } else {
+    sample = true;
+    lot = { _id: '000000000000000000000000', lotNumber: '12', address: '18 Larkspur Way', project: { name: 'Sample Project', marketingName: 'Union Village' } };
+    buyer = { role: 'buyer', name: 'Jane Doe', email: 'jane@example.com', phone: '+14165550100' };
+  }
+  const preview = elevenlabs.previewOverrides({
+    lot,
+    buyer,
+    owner,
+    slotsText: 'Tuesday 2:00 PM, Wednesday 10:00 AM (sample — real slots come from Calendly at call time)',
+    aria,
+  });
+  res.json({
+    ...preview,
+    sample,
+    lot: { _id: lot._id, lotNumber: lot.lotNumber, address: lot.address || '', project: lot.project?.marketingName || lot.project?.name || '' },
+    buyer: buyer ? { name: buyer.name || '', phone: buyer.phone || '', email: buyer.email || '' } : null,
+  });
 });
 
 // Preview the slots Aria would offer — sanity-checks the Calendly event type
