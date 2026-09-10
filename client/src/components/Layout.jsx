@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
 import ErrorBoundary from './ErrorBoundary.jsx';
+import { TimezoneProvider } from '../timezone.jsx';
 
 // Simple, professional line icons (stroke = currentColor) — no emojis.
 function Icon({ name }) {
@@ -18,6 +19,13 @@ function Icon({ name }) {
       <>
         <rect x="3" y="3" width="18" height="18" rx="2" />
         <path d="M9 3v18M15 3v18" />
+      </>
+    ),
+    queue: (
+      <>
+        <path d="M4 6h9M4 11h7M4 16h5" />
+        <circle cx="16.5" cy="15.5" r="4.5" />
+        <path d="M16.5 13v2.5l1.8 1.2" />
       </>
     ),
     projects: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
@@ -78,14 +86,16 @@ function Icon({ name }) {
   );
 }
 
+// Order follows the daily flow: see the state (Dashboard), act on lots
+// (Board), watch what's about to go out (Queue), see what happened (Activity).
 const links = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
   { to: '/board', label: 'Board', icon: 'board' },
+  { to: '/queue', label: 'Queue', icon: 'queue' },
+  { to: '/activity', label: 'Activity', icon: 'activity' },
   { to: '/projects', label: 'Projects', icon: 'projects' },
   { to: '/templates', label: 'Templates', icon: 'templates' },
   { to: '/import', label: 'Import / Export', icon: 'importExport' },
-  { to: '/activity', label: 'Activity log', icon: 'activity' },
-  { to: '/history', label: 'History', icon: 'history' },
   { to: '/calendly', label: 'Calendly events', icon: 'calendar' },
   { to: '/reports', label: 'Reports', icon: 'reports' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
@@ -150,7 +160,9 @@ export default function Layout() {
         {/* Key by path so a crash on one page becomes an inline, recoverable
             error (sidebar stays usable) and navigating elsewhere resets it. */}
         <ErrorBoundary key={location.pathname}>
-          <Outlet />
+          <TimezoneProvider>
+            <Outlet />
+          </TimezoneProvider>
         </ErrorBoundary>
       </main>
     </div>

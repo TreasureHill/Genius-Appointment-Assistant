@@ -73,6 +73,7 @@ router.get('/:id', async (req, res) => {
   const [history, queued, events] = await Promise.all([
     MessageLog.find({ lot: lot._id }).sort({ createdAt: -1 }).limit(200).lean(),
     Outbox.find({ lot: lot._id, status: { $in: ['pending', 'sending'] } })
+      .populate('templateId', 'name')
       .sort({ sendAfter: 1 })
       .lean(),
     LotEvent.find({ lot: lot._id }).sort({ createdAt: -1 }).limit(200).lean(),
@@ -180,6 +181,8 @@ router.post('/:id/clear-bounce', async (req, res) => {
 router.post('/:id/send', async (req, res) => {
   const { templateId } = req.body || {};
   if (!templateId) return res.status(400).json({ error: 'templateId_required' });
+  // A one-off send starts from now (inside the send window), not behind the
+  // rest of the queue — the owner is pushing this one lot on purpose.
   const result = await enqueueBroadcast({ lotIds: [req.params.id], templateId });
   await bumpReminderCount(result.touchedLotIds);
   res.json(result);

@@ -2,7 +2,8 @@ const express = require('express');
 const MessageLog = require('../models/MessageLog');
 const Outbox = require('../models/Outbox');
 const Lot = require('../models/Lot');
-const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
+const { enqueueBroadcast, bumpReminderCount, queueTail } = require('../services/enqueue');
+const { scheduleStatus } = require('../services/outboxPlanner');
 const { resolveDefaultsForProject } = require('../services/templateResolver');
 
 const router = express.Router();
@@ -62,9 +63,10 @@ router.post('/send', async (req, res) => {
   const { lotIds, templateId } = req.body || {};
   if (!Array.isArray(lotIds) || lotIds.length === 0) return res.status(400).json({ error: 'lotIds_required' });
   if (!templateId) return res.status(400).json({ error: 'templateId_required' });
-  const result = await enqueueBroadcast({ lotIds, templateId });
+  // Pace on after whatever is already queued (one global line).
+  const result = await enqueueBroadcast({ lotIds, templateId, startAt: await queueTail() });
   await bumpReminderCount(result.touchedLotIds);
-  res.json(result);
+  res.json({ ...result, schedule: await scheduleStatus() });
 });
 
 // "Send defaults" — fires both the default email AND default SMS templates at
@@ -108,6 +110,22 @@ router.post('/send-defaults', async (req, res) => {
   const usedEmailById = new Map();
   const usedSmsById = new Map();
   let anyTemplateFound = false;
+  let firstSendAt = null;
+  let lastSendAt = null;
+  let timezone = null;
+  // One paced line: this batch starts after whatever is already queued, and
+  // email → SMS → next project chain instead of all starting "now".
+  let cursor = await queueTail();
+
+  const take = (r) => {
+    queued.push(...r.queued);
+    skipped.push(...r.skipped);
+    for (const id of r.touchedLotIds) touched.add(id);
+    if (r.firstSendAt && (!firstSendAt || r.firstSendAt < firstSendAt)) firstSendAt = r.firstSendAt;
+    if (r.lastSendAt && (!lastSendAt || r.lastSendAt > lastSendAt)) lastSendAt = r.lastSendAt;
+    timezone = r.timezone;
+    cursor = r.nextCursor;
+  };
 
   for (const [pid, ids] of byProject) {
     const { emailTpl, smsTpl, sources } = await resolveDefaultsForProject(pid);
@@ -122,17 +140,11 @@ router.post('/send-defaults', async (req, res) => {
     };
     if (emailTpl) {
       usedEmailById.set(String(emailTpl._id), { id: String(emailTpl._id), name: emailTpl.name });
-      const r = await enqueueBroadcast({ lotIds: ids, templateId: emailTpl._id });
-      queued.push(...r.queued);
-      skipped.push(...r.skipped);
-      for (const id of r.touchedLotIds) touched.add(id);
+      take(await enqueueBroadcast({ lotIds: ids, templateId: emailTpl._id, startAt: cursor }));
     }
     if (smsTpl) {
       usedSmsById.set(String(smsTpl._id), { id: String(smsTpl._id), name: smsTpl.name });
-      const r = await enqueueBroadcast({ lotIds: ids, templateId: smsTpl._id });
-      queued.push(...r.queued);
-      skipped.push(...r.skipped);
-      for (const id of r.touchedLotIds) touched.add(id);
+      take(await enqueueBroadcast({ lotIds: ids, templateId: smsTpl._id, startAt: cursor }));
     }
   }
 
@@ -156,6 +168,12 @@ router.post('/send-defaults', async (req, res) => {
     usedEmail: describeUsed(usedEmailById),
     usedSms: describeUsed(usedSmsById),
     usedByProject,
+    // When the batch actually goes out (send window + pacing applied), so the
+    // Board can say "first at 9:00 AM Fri, last at 9:41 AM" and link the Queue.
+    firstSendAt,
+    lastSendAt,
+    timezone,
+    schedule: await scheduleStatus(),
   });
 });
 

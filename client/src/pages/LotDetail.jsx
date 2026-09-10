@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
+import { useTimezone } from '../timezone.jsx';
+import { fmtDateTime, fmtDayLabel, fmtTime, relativeTime, tzAbbrev } from '../time';
 
 const ROLES = [
   { key: 'buyer', label: 'Buyer' },
@@ -100,7 +102,7 @@ function fmtDuration(secs) {
   return `${m}m ${r}s`;
 }
 
-function CallWithAria({ lot, ariaCfg, calling, callMsg, onCall }) {
+function CallWithAria({ lot, ariaCfg, calling, callMsg, onCall, tz }) {
   const callable = (lot.buyers || []).filter((b) => b.phone && !b.optedOut);
   const [role, setRole] = useState(callable[0]?.role || '');
   const call = lot.call || {};
@@ -177,7 +179,7 @@ function CallWithAria({ lot, ariaCfg, calling, callMsg, onCall }) {
                 <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
                   Ended
                 </div>
-                <div>{new Date(call.endedAt).toLocaleString()}</div>
+                <div>{fmtDateTime(call.endedAt, tz)}</div>
               </div>
             )}
           </div>
@@ -237,11 +239,17 @@ export default function LotDetail() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [templates, setTemplates] = useState([]);
-  const [ariaCfg, setAriaCfg] = useState(null);
+  const [cfg, setCfg] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
   const [calling, setCalling] = useState(false);
   const [callMsg, setCallMsg] = useState('');
+  const [sendTpl, setSendTpl] = useState('');
+  const [sendBusy, setSendBusy] = useState(false);
+  const [sendMsg, setSendMsg] = useState('');
+  const [queueMsg, setQueueMsg] = useState('');
+  const { timezone: ctxTz } = useTimezone();
+  const tz = cfg?.schedule?.timezone || ctxTz;
 
   async function load() {
     const [d, t] = await Promise.all([api.get(`/api/lots/${id}`), api.get('/api/templates')]);
@@ -252,8 +260,9 @@ export default function LotDetail() {
 
   useEffect(() => {
     load();
-    // Aria config is only needed to explain why the Call button is disabled.
-    api.get('/api/settings').then((s) => setAriaCfg(s?.aria || null)).catch(() => {});
+    // Settings give us the Aria status (why the Call button is disabled) and
+    // the send window / timezone (when a queued message will go out).
+    api.get('/api/settings').then((s) => setCfg(s || null)).catch(() => {});
   }, [id]);
 
   // After dispatching a call, the transcript/summary/recording land later via
@@ -349,15 +358,52 @@ export default function LotDetail() {
     load();
   }
 
-  async function sendNow(templateId) {
-    if (!templateId) return;
-    const result = await api.post(`/api/lots/${id}/send`, { templateId });
-    const reasons = (result.skipped || []).map((s) => s.reason).filter(Boolean);
-    alert(
-      `Queued ${result.queued.length}, skipped ${result.skipped.length}` +
-        (reasons.length ? `\n\nSkipped because: ${Array.from(new Set(reasons)).join('; ')}` : '')
-    );
-    load();
+  async function queueSend() {
+    if (!sendTpl) {
+      setSendMsg('Pick a template first.');
+      return;
+    }
+    setSendBusy(true);
+    setSendMsg('');
+    try {
+      const result = await api.post(`/api/lots/${id}/send`, { templateId: sendTpl });
+      const reasons = Array.from(new Set((result.skipped || []).map((s) => s.reason).filter(Boolean)));
+      const zone = result.timezone || tz;
+      if (result.queued.length === 0) {
+        setSendMsg(`Warning: nothing was queued${reasons.length ? ` — ${reasons.join('; ')}` : ''}.`);
+      } else {
+        const n = result.queued.length;
+        setSendMsg(
+          `Queued ${n} message${n === 1 ? '' : 's'}. ` +
+            (result.firstSendAt
+              ? `Goes out ${fmtDayLabel(result.firstSendAt, zone)} ${fmtTime(result.firstSendAt, zone)} ${tzAbbrev(zone, result.firstSendAt)}` +
+                (result.lastSendAt && result.lastSendAt !== result.firstSendAt
+                  ? ` (last one ${fmtTime(result.lastSendAt, zone)})`
+                  : '') +
+                '.'
+              : '') +
+            (reasons.length ? ` Skipped: ${reasons.join('; ')}.` : '')
+        );
+      }
+      load();
+    } catch (ex) {
+      setSendMsg('Error: ' + ex.message);
+    } finally {
+      setSendBusy(false);
+    }
+  }
+
+  // Cancel / force a single queued message from this lot's queue table.
+  async function queueAction(q, action) {
+    setQueueMsg('');
+    try {
+      await api.post(`/api/queue/${q._id}/${action}`);
+      const what = q.type === 'sms' ? 'text' : 'email';
+      setQueueMsg(action === 'cancel' ? `Cancelled the ${what} to ${q.to}.` : `Sending the ${what} to ${q.to} now.`);
+      load();
+    } catch (ex) {
+      setQueueMsg('Error: ' + ex.message);
+    }
   }
 
   async function remove() {
@@ -379,6 +425,14 @@ export default function LotDetail() {
   if (!data) return <div className="muted">Loading…</div>;
   const { lot, queued } = data;
   const calEvent = lot.calendlyEvent;
+  const win = cfg?.schedule?.window;
+  const windowNote = !win
+    ? ''
+    : win.open
+      ? `The send window is open until ${fmtTime(win.closesAt, tz)} ${tzAbbrev(tz)}, so it goes out within minutes.`
+      : win.nextOpening
+        ? `The send window is closed right now — it will go out ${fmtDayLabel(win.nextOpening, tz)} at ${fmtTime(win.nextOpening, tz)} ${tzAbbrev(tz)}.`
+        : 'No send days are enabled in Settings, so nothing will go out until one is.';
   const hasCalEvent = !!(calEvent && (calEvent.startTime || calEvent.name || calEvent.inviteeEmail));
 
   return (
@@ -416,7 +470,7 @@ export default function LotDetail() {
               <strong>Recipient address rejected ({lot.bounceCount} time{lot.bounceCount === 1 ? '' : 's'}).</strong>
               <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
                 Last error: {lot.lastBounceError || 'unknown'}
-                {lot.lastBounceAt && <> · {new Date(lot.lastBounceAt).toLocaleString()}</>}
+                {lot.lastBounceAt && <> · {fmtDateTime(lot.lastBounceAt, tz)}</>}
               </div>
               <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                 Likely a wrong email or phone — fix the buyer record and click "Clear" once the new
@@ -447,11 +501,11 @@ export default function LotDetail() {
                     When
                   </div>
                   <div>
-                    {calEvent.startTime ? new Date(calEvent.startTime).toLocaleString() : '—'}
+                    {fmtDateTime(calEvent.startTime, tz)}
                     {calEvent.endTime && (
                       <span className="muted">
                         {' '}
-                        – {new Date(calEvent.endTime).toLocaleTimeString()}
+                        – {fmtTime(calEvent.endTime, tz)}
                       </span>
                     )}
                   </div>
@@ -499,7 +553,7 @@ export default function LotDetail() {
               </div>
               {calEvent.lastSyncedAt && (
                 <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-                  Last synced {new Date(calEvent.lastSyncedAt).toLocaleString()}
+                  Last synced {fmtDateTime(calEvent.lastSyncedAt, tz)}
                 </div>
               )}
             </div>
@@ -509,10 +563,11 @@ export default function LotDetail() {
 
       <CallWithAria
         lot={lot}
-        ariaCfg={ariaCfg}
+        ariaCfg={cfg?.aria || null}
         calling={calling}
         callMsg={callMsg}
         onCall={callWithAria}
+        tz={tz}
       />
 
       <div className="card">
@@ -602,52 +657,106 @@ export default function LotDetail() {
       </div>
 
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>Send now</h2>
+        <h2 style={{ marginTop: 0 }}>Send a message</h2>
         <div className="muted" style={{ marginBottom: 6 }}>
-          Reminder count: {lot.reminderCount}. Use this to push a one-off message to this lot.
+          Queue a one-off email or text to this lot's buyers using any template. Reminders sent so far:{' '}
+          {lot.reminderCount}
+          {cfg?.schedule?.maxReminders != null ? ` of ${cfg.schedule.maxReminders}` : ''}.{' '}
+          {windowNote}
         </div>
         <div className="row">
-          <select id="sendNowTpl" defaultValue="">
-            <option value="">Pick template…</option>
+          <select value={sendTpl} onChange={(e) => setSendTpl(e.target.value)}>
+            <option value="">Pick a template…</option>
             {templates.map((t) => (
               <option key={t._id} value={t._id}>
-                [{t.type}] {t.name}
+                [{t.type === 'sms' ? 'text' : 'email'}] {t.name}
               </option>
             ))}
           </select>
-          <button
-            onClick={() => sendNow(document.getElementById('sendNowTpl').value)}
-          >
-            Queue send
-          </button>
+          <div style={{ alignSelf: 'end' }}>
+            <button onClick={queueSend} disabled={sendBusy || !sendTpl}>
+              {sendBusy ? 'Queueing…' : 'Queue send'}
+            </button>
+          </div>
         </div>
+        {sendMsg && (
+          <div className={sendMsg.startsWith('Error') || sendMsg.startsWith('Warning') ? 'error' : 'success'}>
+            {sendMsg}
+          </div>
+        )}
       </div>
 
       {queued.length > 0 && (
         <div className="card">
-          <h2 style={{ marginTop: 0 }}>Queued ({queued.length})</h2>
-          <table>
+          <h2 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
+            Waiting to go out ({queued.length})
+            <Link to={`/queue?lot=${lot._id}`} style={{ fontSize: 13, fontWeight: 400 }}>
+              open in the queue →
+            </Link>
+          </h2>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+            Times in {tz} ({tzAbbrev(tz)}). <em>Send now</em> skips the send window; <em>Cancel</em>{' '}
+            removes the message.
+          </div>
+          <table className="compact-table">
             <thead>
               <tr>
+                <th>Goes out</th>
                 <th>Type</th>
                 <th>To</th>
-                <th>Send after</th>
+                <th>Message</th>
                 <th>Status</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {queued.map((q) => (
                 <tr key={q._id}>
-                  <td>{q.type}</td>
-                  <td>{q.to}</td>
-                  <td className="nowrap">{new Date(q.sendAfter).toLocaleString()}</td>
+                  <td className="nowrap">
+                    <strong>
+                      {fmtDayLabel(q.sendAfter, tz)} {fmtTime(q.sendAfter, tz)}
+                    </strong>
+                    <div className="muted" style={{ fontSize: 11 }}>
+                      {q.sendNow ? 'send now' : relativeTime(q.sendAfter)}
+                    </div>
+                  </td>
+                  <td>
+                    <span className={`badge type-${q.type}`}>{q.type === 'sms' ? 'SMS' : 'Email'}</span>
+                  </td>
+                  <td style={{ overflowWrap: 'anywhere' }}>{q.to}</td>
+                  <td style={{ maxWidth: 320 }}>
+                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {q.renderedSubject || (q.type === 'sms' ? String(q.renderedBody || '').slice(0, 90) : '')}
+                    </div>
+                    <div className="muted" style={{ fontSize: 11 }}>
+                      {q.templateId?.name ? `template: ${q.templateId.name} · ` : ''}
+                      {q.isReminder ? `reminder #${q.reminderIndex || 1}` : 'first send'}
+                    </div>
+                  </td>
                   <td>
                     <StatusBadge status={q.status} />
+                  </td>
+                  <td className="nowrap">
+                    <button
+                      className="secondary small"
+                      disabled={q.status !== 'pending' || q.sendNow}
+                      onClick={() => queueAction(q, 'send-now')}
+                    >
+                      Send now
+                    </button>{' '}
+                    <button className="danger small" disabled={q.status !== 'pending'} onClick={() => queueAction(q, 'cancel')}>
+                      Cancel
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {queueMsg && (
+            <div className={queueMsg.startsWith('Error') ? 'error' : 'success'} style={{ marginTop: 6 }}>
+              {queueMsg}
+            </div>
+          )}
         </div>
       )}
 
@@ -693,7 +802,7 @@ export default function LotDetail() {
               </div>
               {item.subtitle && <div className="timeline-sub muted">{item.subtitle}</div>}
               {item.error && <div className="error" style={{ fontSize: 11 }}>{item.error}</div>}
-              <div className="timeline-when muted">{new Date(item.at).toLocaleString()}</div>
+              <div className="timeline-when muted">{fmtDateTime(item.at, tz)}</div>
             </div>
           </div>
         ))}

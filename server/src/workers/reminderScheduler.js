@@ -3,7 +3,7 @@ const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
 const Project = require('../models/Project');
 const Outbox = require('../models/Outbox');
-const { enqueueBroadcast, bumpReminderCount } = require('../services/enqueue');
+const { enqueueBroadcast, bumpReminderCount, queueTail } = require('../services/enqueue');
 const { resolveDefaultsForProject } = require('../services/templateResolver');
 
 // Hourly: find lots that have been manually contacted at least once and are
@@ -56,18 +56,18 @@ async function runOnce() {
   let totalEnqueued = 0;
   const touched = new Set();
   let anyTemplateFound = false;
+  // Reminders pace on after whatever is already queued, and email → SMS →
+  // next project chain on one line instead of all starting "now".
+  let cursor = await queueTail();
 
   for (const [pid, ids] of byProject) {
     const { emailTpl, smsTpl } = await resolveDefaultsForProject(pid);
     if (!emailTpl && !smsTpl) continue;
     anyTemplateFound = true;
-    if (emailTpl) {
-      const r = await enqueueBroadcast({ lotIds: ids, templateId: emailTpl._id, isReminder: true });
-      totalEnqueued += r.queued.length;
-      for (const id of r.touchedLotIds) touched.add(id);
-    }
-    if (smsTpl) {
-      const r = await enqueueBroadcast({ lotIds: ids, templateId: smsTpl._id, isReminder: true });
+    for (const tpl of [emailTpl, smsTpl]) {
+      if (!tpl) continue;
+      const r = await enqueueBroadcast({ lotIds: ids, templateId: tpl._id, isReminder: true, startAt: cursor });
+      cursor = r.nextCursor;
       totalEnqueued += r.queued.length;
       for (const id of r.touchedLotIds) touched.add(id);
     }

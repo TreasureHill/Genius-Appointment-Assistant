@@ -13,6 +13,10 @@ const SettingSchema = new mongoose.Schema(
     },
     // Global sending schedule (single-owner system, applies across all projects)
     schedule: {
+      // IANA zone the send windows below are written in ("09:00" means 9 AM
+      // here, never on the server's clock). Blank = fall back to Aria's zone,
+      // then America/New_York; the boot migration fills it in once.
+      timezone: { type: String, default: '' },
       reminderIntervalDays: { type: Number, default: env.defaults.reminderDays, min: 0 },
       maxReminders: { type: Number, default: env.defaults.maxReminders, min: 0 },
       pacing: {

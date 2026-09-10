@@ -5,7 +5,7 @@ const Setting = require('../models/Setting');
 const Project = require('../models/Project');
 const { sendEmail } = require('../services/mailer');
 const { sendSms } = require('../services/sms');
-const { isWithinSendWindow, nextSendOpening } = require('../services/sendWindow');
+const { isWithinSendWindow, nextSendOpening, resolveScheduleTimezone, formatInTimezone } = require('../services/sendWindow');
 const { logStatusChange } = require('../services/lotEventLogger');
 
 const POLL_MS = 10_000;
@@ -20,20 +20,22 @@ async function drainOnce() {
     if (setting.senderPaused) return;
 
     const now = new Date();
+    const timezone = resolveScheduleTimezone(setting);
     const pendingFilter = { status: 'pending', sendAfter: { $lte: now } };
+    // Reminder holds: the master switch parks every reminder; a per-project
+    // pause parks that project's reminders (they stay pending and go out when
+    // resumed). Manual sends always go, and so does a row the owner forced
+    // with "Send now".
+    let hold = null;
     if (setting.remindersPaused) {
-      pendingFilter.isReminder = { $ne: true };
+      hold = { isReminder: { $ne: true } };
     } else {
-      // Per-project pause: hold queued reminders for paused projects (they stay
-      // pending and go out when the project is resumed). Manual sends still go.
       const pausedProjectIds = await Project.find({ remindersPaused: true }).distinct('_id');
       if (pausedProjectIds.length) {
-        pendingFilter.$or = [
-          { isReminder: { $ne: true } },
-          { project: { $nin: pausedProjectIds } },
-        ];
+        hold = { $or: [{ isReminder: { $ne: true } }, { project: { $nin: pausedProjectIds } }] };
       }
     }
+    if (hold) pendingFilter.$or = [{ sendNow: true }, hold];
     const batch = await Outbox.find(pendingFilter)
       .sort({ sendAfter: 1 })
       .limit(20);
@@ -74,13 +76,15 @@ async function drainOnce() {
         await claimed.save();
         continue;
       }
-      if (!isWithinSendWindow(sched.sendWindows, new Date())) {
-        // Defer to the next open window (next enabled weekday's start time).
-        // Falls back to a 30-minute nudge if every day is disabled.
-        const next = nextSendOpening(sched.sendWindows, new Date());
+      if (!claimed.sendNow && !isWithinSendWindow(sched.sendWindows, new Date(), timezone)) {
+        // Outside the send window (evaluated in the schedule's timezone, never
+        // the server clock). Defer to the next opening; if every day is
+        // disabled, nudge 30 minutes and look again.
+        const next = nextSendOpening(sched.sendWindows, new Date(), timezone);
         claimed.status = 'pending';
         claimed.sendAfter = next || new Date(Date.now() + 30 * 60 * 1000);
         await claimed.save();
+        if (next) console.log(`[sender] outside send window; deferred ${claimed.type} to ${formatInTimezone(next, timezone)}`);
         continue;
       }
 

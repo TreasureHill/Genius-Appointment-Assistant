@@ -5,6 +5,10 @@ const MessageLog = require('../models/MessageLog');
 const Outbox = require('../models/Outbox');
 const Setting = require('../models/Setting');
 const CalendlyUnmatch = require('../models/CalendlyUnmatch');
+const CallQueueItem = require('../models/CallQueueItem');
+const env = require('../config/env');
+const { resolveScheduleTimezone } = require('../services/sendWindow');
+const { scheduleStatus } = require('../services/outboxPlanner');
 
 const router = express.Router();
 
@@ -26,6 +30,8 @@ router.get('/', async (req, res) => {
     unmatchedCalendlyList,
     bouncedLots,
     recentFailures,
+    nextSend,
+    callCounts,
   ] = await Promise.all([
     Lot.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
     Outbox.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
@@ -116,6 +122,11 @@ router.get('/', async (req, res) => {
       .populate('project', 'name')
       .populate('lot', 'lotNumber address')
       .lean(),
+    Outbox.findOne({ status: 'pending' }).sort({ sendAfter: 1 }).select('sendAfter type').lean(),
+    CallQueueItem.aggregate([
+      { $match: { status: { $in: ['queued', 'calling'] } } },
+      { $group: { _id: '$status', n: { $sum: 1 } } },
+    ]),
   ]);
 
   const shape = (rows) => {
@@ -134,9 +145,16 @@ router.get('/', async (req, res) => {
   const outboxByStatus = {};
   for (const r of outboxCounts) outboxByStatus[r._id] = r.n;
 
+  const callsByStatus = {};
+  for (const r of callCounts) callsByStatus[r._id] = r.n;
+
   res.json({
     lotsByStatus: lotByStatus,
     outboxByStatus,
+    timezone: resolveScheduleTimezone(setting),
+    schedule: await scheduleStatus(setting),
+    nextSendAt: nextSend ? nextSend.sendAfter : null,
+    callQueue: { calling: callsByStatus.calling || 0, queued: callsByStatus.queued || 0 },
     messages: {
       last24h: shape(messages24h),
       last7d: shape(messages7d),
@@ -154,6 +172,15 @@ router.get('/', async (req, res) => {
       calendly: setting.calendlyHealth,
       lastCalendlySync: setting.lastCalendlySync,
       senderPaused: setting.senderPaused,
+      remindersPaused: !!setting.remindersPaused,
+      aria: {
+        ok: env.elevenlabs.dispatchable,
+        message: env.elevenlabs.dispatchable
+          ? 'ready to call'
+          : env.elevenlabs.configured
+            ? 'agent id / phone id missing in .env'
+            : 'ELEVENLABS_API_KEY not set',
+      },
     },
   });
 });
