@@ -183,7 +183,9 @@ shows them (with an *Enable on the agent* button), and *Preview what Aria
 will say* renders the first message + prompt for a real lot and flags any
 placeholder that would be spoken literally. Placeholders can be written as
 `{{first_name}}` or `{first_name}`; they are filled in server-side before the
-call. Each call records the opening line it was given (lot page → Call with
+call. *Use recommended* next to each field inserts a prompt written for Eleven
+v3 Conversational (tone rules, a limited `[slow]` / `[excited]` tag policy, no
+filler sounds, times in words) that you can edit before saving. Each call records the opening line it was given (lot page → Call with
 Aria), and a call ElevenLabs refuses now fails loudly instead of sitting in
 "calling".
 
