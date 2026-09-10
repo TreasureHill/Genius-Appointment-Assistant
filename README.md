@@ -40,16 +40,46 @@ npm start         # Express serves the SPA + API on $PORT
 | HTML email + SMS editors | `client/src/components/EmailEditor.jsx`, `SmsEditor.jsx` |
 | Sheet import (diff: add new only) / export | `server/src/services/sheetParser.js`, `sheetExporter.js` |
 | Paced sender (random jitter) | `server/src/workers/senderWorker.js` + `Outbox` collection |
+| Send windows + timezone | `server/src/services/sendWindow.js`, `server/src/services/outboxPlanner.js` |
+| **Queue tab (every queued email / SMS / call)** | `server/src/routes/queue.js`, `client/src/pages/Queue.jsx` |
 | Scheduled reminders | `server/src/workers/reminderScheduler.js` |
 | Calendly webhook + poll (multi-event warning) | `server/src/services/calendly.js`, `server/src/workers/calendlyPoller.js`, `server/src/routes/webhooks.js` |
 | **Aria voice calls (ElevenLabs) + transcript/recording/booking** | `server/src/services/elevenlabs.js`, `server/src/services/ariaCall.js`, `server/src/routes/aria.js`, `client/src/pages/LotDetail.jsx` |
-| Dashboard + message history | `server/src/routes/dashboard.js`, `client/src/pages/Dashboard.jsx`, `History.jsx` |
+| Dashboard + activity log | `server/src/routes/dashboard.js`, `server/src/routes/activity.js`, `client/src/pages/Dashboard.jsx`, `Activity.jsx` |
 
 ## How messages are paced (anti-junk)
 When you bulk send or the scheduler enqueues reminders, each message gets a
-`sendAfter` timestamp staggered by `random(project.pacing.minSec..maxSec)`
-seconds from the previous one. A worker drains the outbox every 10 s. Default
-window is 30–120 s — override per project.
+`sendAfter` timestamp staggered by `random(pacing.minSec..maxSec)` seconds
+from the previous one (Settings → Sending schedule; default 30–120 s). Pacing
+is one global line: a new batch starts after whatever is already queued, and
+email + SMS + the hourly reminders all chain on the same line. A worker
+drains the outbox every 10 s.
+
+## Send windows and the timezone
+Send windows ("09:00–21:00", per weekday) are wall-clock times in **one
+explicit IANA timezone** — Settings → Sending schedule → Timezone. The server's
+own clock never matters: a 9 AM window means 9 AM in Toronto whether the box
+runs in UTC, Pacific, or anywhere else. Every queued message is planned into
+the window *when it is queued*, so the Queue tab shows the real send time
+immediately; the worker only re-checks at send time. Saving the schedule
+(windows, pacing, or timezone) re-plans everything still queued, and the first
+boot after this change pins the zone (Aria's zone, else `America/New_York`) and
+re-plans the existing queue once.
+
+## The Queue tab
+`/queue` lists every email and text waiting in the outbox and every Aria call
+waiting in the call queue, in the order they will happen, grouped by day, with
+times in the schedule timezone. Per message: **Send now** (skips the window,
+pacing and reminder holds; only "Pause sending" still stops it) and **Cancel**;
+bulk cancel; **Re-plan queue**; pause/resume sending. Rows expand to the full
+rendered message. The old History page is folded into Activity (`/history`
+redirects), which now filters by channel, replies received, failed sends, and
+status changes.
+
+## Tests
+```bash
+npm test            # pure-function suites: Calendly matching + send-window timezone math
+```
 
 ## How the sheet diff works
 - **Key** = `(project, lotNumber)`.

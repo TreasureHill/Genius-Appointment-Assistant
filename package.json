@@ -12,6 +12,7 @@
     "build": "npm run build -w client",
     "start": "npm start -w server",
     "seed": "npm run seed -w server",
+    "test": "npm run test -w server",
     "lint": "echo \"(no linter configured)\""
   },
   "devDependencies": {

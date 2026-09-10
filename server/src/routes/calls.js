@@ -28,4 +28,10 @@ router.delete('/queue', async (req, res) => {
   res.json({ ...result, status: await callQueue.getStatus() });
 });
 
+// Cancel one queued call (not the in-flight one).
+router.delete('/queue/:id', async (req, res) => {
+  const result = await callQueue.cancelItem(req.params.id);
+  res.json({ ...result, status: await callQueue.getStatus() });
+});
+
 module.exports = router;

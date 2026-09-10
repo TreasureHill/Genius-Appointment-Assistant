@@ -1,8 +1,42 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
+import { useTimezone } from '../timezone.jsx';
+import { fmtDateTime, tzAbbrev } from '../time';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
+
+const TYPE_LABELS = { email: 'Email', sms: 'SMS', call: 'Call', calendly: 'Calendly' };
+
+// One "Show" dropdown instead of the old Activity/History split.
+const SHOW_OPTIONS = [
+  { value: '', label: 'All activity' },
+  { value: 'email', label: 'Emails' },
+  { value: 'sms', label: 'Texts (SMS)' },
+  { value: 'call', label: 'Aria calls' },
+  { value: 'calendly', label: 'Calendly' },
+  { value: 'inbound', label: 'Replies received' },
+  { value: 'failed', label: 'Failed sends' },
+  { value: 'events', label: 'Status changes' },
+];
+function showFromParams(sp) {
+  if (sp.get('status') === 'failed') return 'failed';
+  if (sp.get('kind') === 'events') return 'events';
+  if (sp.get('direction') === 'in') return 'inbound';
+  const type = sp.get('type');
+  if (type && TYPE_LABELS[type]) return type;
+  return sp.get('show') || '';
+}
+function applyShow(show, qs) {
+  if (!show) return;
+  if (show === 'events') qs.append('kind', 'events');
+  else {
+    qs.append('kind', 'messages');
+    if (show === 'failed') qs.append('status', 'failed');
+    else if (show === 'inbound') qs.append('direction', 'in');
+    else qs.append('type', show);
+  }
+}
 
 // Email bodies are stored as rendered HTML; show them as readable text.
 function stripHtml(html) {
@@ -19,9 +53,6 @@ function stripHtml(html) {
     .trim();
 }
 
-function fmt(d) {
-  return d ? new Date(d).toLocaleString() : '—';
-}
 
 function statusClass(status) {
   if (status === 'sent' || status === 'received' || status === 'delivered') return 'ok';
@@ -46,7 +77,9 @@ function LotCell({ lot }) {
 // Click a row to expand the full detail (recipient, error, message body).
 export function ActivityRow({ item }) {
   const [open, setOpen] = useState(false);
-  const when = new Date(item.createdAt).toLocaleString();
+  const { timezone } = useTimezone();
+  const fmt = (d) => fmtDateTime(d, timezone);
+  const when = fmt(item.createdAt);
   const lot = <LotCell lot={item.lot} />;
 
   if (item.kind === 'event') {
@@ -79,11 +112,11 @@ export function ActivityRow({ item }) {
         title={open ? 'Hide details' : 'Show details'}
       >
         <td className="nowrap">{when}</td>
-        <td>
-          {item.type}
+        <td className="nowrap">
+          {TYPE_LABELS[item.type] || item.type}
           <span className="muted" style={{ fontSize: 11 }}>
             {' '}
-            {item.direction}
+            {item.direction === 'in' ? 'in' : 'out'}
           </span>
         </td>
         <td>{item.project?.name || ''}</td>
@@ -193,11 +226,11 @@ export default function Activity() {
   const [loading, setLoading] = useState(false);
   const [projects, setProjects] = useState([]);
   const [searchParams] = useSearchParams();
-  // /activity?status=failed (linked from the Dashboard) opens straight on
-  // the failed sends.
+  const { timezone } = useTimezone();
+  // Deep links: /activity?status=failed (Dashboard), ?type=sms, ?kind=events…
   const [filter, setFilter] = useState({
     project: searchParams.get('project') || '',
-    kind: searchParams.get('status') === 'failed' ? 'failed' : searchParams.get('kind') || '',
+    show: showFromParams(searchParams),
     q: searchParams.get('q') || '',
   });
 
@@ -205,12 +238,7 @@ export default function Activity() {
     setLoading(true);
     const qs = new URLSearchParams();
     if (filter.project) qs.append('project', filter.project);
-    if (filter.kind === 'failed') {
-      qs.append('kind', 'messages');
-      qs.append('status', 'failed');
-    } else if (filter.kind) {
-      qs.append('kind', filter.kind);
-    }
+    applyShow(filter.show, qs);
     if (filter.q) qs.append('q', filter.q);
     qs.append('page', String(page));
     qs.append('pageSize', String(pageSize));
@@ -229,7 +257,7 @@ export default function Activity() {
   }, []);
   useEffect(() => {
     load();
-  }, [filter.project, filter.kind, page, pageSize]);
+  }, [filter.project, filter.show, page, pageSize]);
 
   const startRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const endRow = Math.min(total, page * pageSize);
@@ -238,10 +266,12 @@ export default function Activity() {
     <div>
       <div className="page-head">
         <div>
-          <h1 style={{ margin: 0 }}>Activity log</h1>
+          <h1 style={{ margin: 0 }}>Activity</h1>
           <div className="muted" style={{ fontSize: 13 }}>
-            Every message, call, Calendly match, and status change across all lots. Click a row for
-            the full detail.
+            Every email, text, Aria call, Calendly match and status change across all lots — newest
+            first. Click a row for the full message. Times in {timezone || 'your local zone'}
+            {timezone ? ` (${tzAbbrev(timezone)})` : ''}. Waiting to go out? See the{' '}
+            <Link to="/queue">Queue</Link>.
           </div>
         </div>
       </div>
@@ -262,19 +292,20 @@ export default function Activity() {
           ))}
         </select>
         <select
-          value={filter.kind}
+          value={filter.show}
           onChange={(e) => {
-            setFilter((f) => ({ ...f, kind: e.target.value }));
+            setFilter((f) => ({ ...f, show: e.target.value }));
             setPage(1);
           }}
         >
-          <option value="">All activity</option>
-          <option value="messages">Messages &amp; calls</option>
-          <option value="failed">Failed sends only</option>
-          <option value="events">Status changes</option>
+          {SHOW_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
         </select>
         <input
-          placeholder="Search recipient / subject / note…"
+          placeholder="Search recipient / subject / error / note…"
           value={filter.q}
           onChange={(e) => setFilter((f) => ({ ...f, q: e.target.value }))}
           onKeyDown={(e) => e.key === 'Enter' && (setPage(1), load())}

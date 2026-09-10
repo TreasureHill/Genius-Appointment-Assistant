@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
+import { useTimezone } from '../timezone.jsx';
+import { browserTimezone, calendarDays, fmtClock, fmtDateTime, isValidTimezone, timezoneOptions, tzAbbrev } from '../time';
 
 const DAY_DEFS = [
   { key: 'monday', label: 'Monday' },
@@ -24,22 +27,16 @@ function normalizeSendWindows(sw) {
   return out;
 }
 
-function nextSevenDays(sendWindows) {
-  const SUN_TO_SAT = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const out = [];
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() + i);
-    const key = SUN_TO_SAT[d.getDay()];
-    out.push({ date: d, key, window: sendWindows[key] || DEFAULT_WINDOW });
-  }
-  return out;
+// The next 7 calendar days *in the schedule timezone* (not the browser's),
+// each paired with that weekday's window.
+function nextSevenDays(sendWindows, tz, now) {
+  return calendarDays(tz, 7, now).map((d) => ({ ...d, window: sendWindows[d.weekdayKey] || DEFAULT_WINDOW }));
 }
 
 function ScheduleCard({ schedule, templates, onSaved }) {
+  const { refresh: refreshTimezone } = useTimezone();
   const [form, setForm] = useState({
+    timezone: schedule.timezone || browserTimezone(),
     reminderIntervalDays: schedule.reminderIntervalDays ?? 14,
     maxReminders: schedule.maxReminders ?? 3,
     pacingMin: schedule.pacing?.minSec ?? 30,
@@ -50,6 +47,19 @@ function ScheduleCard({ schedule, templates, onSaved }) {
   });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  // A slow clock so "right now it is …" stays honest while the page is open.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const tzValid = isValidTimezone(form.timezone);
+  const tz = tzValid ? form.timezone : browserTimezone();
+  const browserTz = browserTimezone();
+  const tzOptions = useMemo(() => timezoneOptions(), []);
+  const preview = useMemo(() => nextSevenDays(form.sendWindows, tz, now), [form.sendWindows, tz, now]);
+  const inherited = schedule.timezoneSource && schedule.timezoneSource !== 'schedule';
 
   function setWindow(day, patch) {
     setForm((f) => ({
@@ -59,10 +69,15 @@ function ScheduleCard({ schedule, templates, onSaved }) {
   }
 
   async function save() {
+    if (!tzValid) {
+      setMsg('Error: pick a valid timezone first (for example America/Toronto).');
+      return;
+    }
     setBusy(true);
     setMsg('');
     try {
-      await api.patch('/api/settings/schedule', {
+      const r = await api.patch('/api/settings/schedule', {
+        timezone: form.timezone,
         reminderIntervalDays: Number(form.reminderIntervalDays),
         maxReminders: Number(form.maxReminders),
         pacing: { minSec: Number(form.pacingMin), maxSec: Number(form.pacingMax) },
@@ -70,7 +85,16 @@ function ScheduleCard({ schedule, templates, onSaved }) {
         defaultEmailTemplate: form.defaultEmailTemplate || null,
         defaultSmsTemplate: form.defaultSmsTemplate || null,
       });
-      setMsg('Saved.');
+      const rp = r?.replan || {};
+      let text = 'Saved.';
+      if (rp.total) {
+        const n = `${rp.total} queued message${rp.total === 1 ? '' : 's'}`;
+        text += rp.moved
+          ? ` Re-planned ${n} to match — the first goes out ${fmtDateTime(rp.firstSendAt, form.timezone)} ${tzAbbrev(form.timezone, rp.firstSendAt)}.`
+          : ` The ${n} already matched this schedule.`;
+      }
+      setMsg(text);
+      refreshTimezone();
       onSaved && onSaved();
     } catch (ex) {
       setMsg('Error: ' + ex.message);
@@ -79,18 +103,62 @@ function ScheduleCard({ schedule, templates, onSaved }) {
     }
   }
 
-  const preview = nextSevenDays(form.sendWindows);
-
   return (
     <div className="card">
       <h2 style={{ marginTop: 0 }}>Sending schedule</h2>
-      <p className="muted">
-        Applies system-wide. After a lot's first manual send, a reminder is queued every{' '}
-        <strong>{form.reminderIntervalDays}</strong> day
-        {form.reminderIntervalDays === 1 ? '' : 's'} until either max reminders is hit, the lot is
-        marked <span className="badge scheduled">scheduled</span>, or the buyer opts out. Pacing
-        adds a random gap between consecutive sends so a batch doesn't trip spam filters.
+      <p className="muted" style={{ marginTop: 0 }}>
+        Applies to every project. Queued emails and texts only go out on enabled days, inside the
+        window, in the timezone below, spaced by the pacing gap so a batch doesn't trip spam filters.
+        After a lot's first send, a reminder is queued every <strong>{form.reminderIntervalDays}</strong>{' '}
+        day{Number(form.reminderIntervalDays) === 1 ? '' : 's'} until max reminders is hit, the lot is
+        marked <span className="badge scheduled">scheduled</span>, or the buyer opts out.
       </p>
+
+      <div className="tz-box">
+        <div className="row">
+          <div style={{ flex: 2 }}>
+            <label style={{ marginTop: 0 }}>Timezone — send windows and every queued time use this zone</label>
+            <input
+              list="tz-options"
+              value={form.timezone}
+              onChange={(e) => setForm({ ...form, timezone: e.target.value.trim() })}
+              placeholder="America/Toronto"
+              style={{ borderColor: tzValid ? undefined : 'var(--danger)' }}
+              spellCheck={false}
+            />
+            <datalist id="tz-options">
+              {tzOptions.map((z) => (
+                <option key={z} value={z} />
+              ))}
+            </datalist>
+          </div>
+          {form.timezone !== browserTz && (
+            <div style={{ alignSelf: 'end', flex: 1 }}>
+              <button type="button" className="secondary" onClick={() => setForm({ ...form, timezone: browserTz })}>
+                Use my browser's zone ({browserTz})
+              </button>
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: 12.5, marginTop: 6 }}>
+          {tzValid ? (
+            <>
+              Right now it is <strong>{fmtDateTime(now, tz)} {tzAbbrev(tz, now)}</strong> in {tz}.
+              {inherited && form.timezone === schedule.timezone ? (
+                <span className="muted"> This zone is inherited — save once to pin it.</span>
+              ) : null}
+              {form.timezone !== browserTz ? (
+                <span className="muted"> Your browser is in {browserTz}; the app still shows times in {tz}.</span>
+              ) : null}
+            </>
+          ) : (
+            <span className="error" style={{ margin: 0 }}>
+              “{form.timezone}” is not a valid timezone. Start typing a city, e.g. Toronto.
+            </span>
+          )}
+        </div>
+      </div>
+
       <div className="row">
         <div>
           <label>Reminder interval (days)</label>
@@ -161,10 +229,10 @@ function ScheduleCard({ schedule, templates, onSaved }) {
       </div>
 
       <div style={{ marginTop: 18 }}>
-        <h3 style={{ marginBottom: 4 }}>Send windows</h3>
+        <h3 style={{ marginBottom: 4 }}>Send windows ({tz})</h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          Reminders + queued sends only fire on enabled days, inside the window. Outside the window,
-          messages defer to the next opening rather than dropping.
+          Queued messages and reminders only go out on enabled days, inside the window. Anything queued
+          outside it waits for the next opening instead of being dropped.
         </p>
         <div className="schedule-grid">
           {DAY_DEFS.map(({ key, label }) => {
@@ -193,7 +261,7 @@ function ScheduleCard({ schedule, templates, onSaved }) {
                   onChange={(e) => setWindow(key, { end: e.target.value })}
                 />
                 <span className="muted schedule-summary">
-                  {w.enabled ? `${w.start}–${w.end}` : 'no sending'}
+                  {w.enabled ? `${fmtClock(w.start)} – ${fmtClock(w.end)}` : 'no sending'}
                 </span>
               </div>
             );
@@ -204,26 +272,35 @@ function ScheduleCard({ schedule, templates, onSaved }) {
       <div style={{ marginTop: 16 }}>
         <h3 style={{ marginBottom: 4 }}>Next 7 days</h3>
         <p className="muted" style={{ marginTop: 0 }}>
-          Preview of when the sender worker will be allowed to dispatch.
+          When messages are allowed to go out, day by day, in {tz}.
         </p>
         <div className="schedule-preview">
           {preview.map((d) => (
-            <div key={d.date.toISOString()} className={`schedule-preview-cell${d.window.enabled ? '' : ' is-off'}`}>
-              <div className="schedule-preview-day">
-                {d.date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-              </div>
+            <div key={d.key} className={`schedule-preview-cell${d.window.enabled ? '' : ' is-off'}`}>
+              <div className="schedule-preview-day">{d.isToday ? 'Today' : d.label}</div>
               <div className="schedule-preview-time">
-                {d.window.enabled ? `${d.window.start}–${d.window.end}` : '—'}
+                {d.window.enabled ? (
+                  <>
+                    {fmtClock(d.window.start)}
+                    <br />
+                    – {fmtClock(d.window.end)}
+                  </>
+                ) : (
+                  '—'
+                )}
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center' }}>
-        <button onClick={save} disabled={busy}>
+      <div style={{ marginTop: 14, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={save} disabled={busy || !tzValid}>
           {busy ? 'Saving…' : 'Save schedule'}
         </button>
+        <span className="muted" style={{ fontSize: 12 }}>
+          Saving re-plans everything already in the <Link to="/queue">Queue</Link> to match.
+        </span>
         {msg && <span className={msg.startsWith('Error') ? 'error' : 'success'}>{msg}</span>}
       </div>
     </div>
@@ -685,36 +762,47 @@ export default function Settings() {
 
   return (
     <div>
-      <h1>Settings & system health</h1>
+      <div className="page-head">
+        <div>
+          <h1 style={{ margin: 0 }}>Settings</h1>
+          <div className="muted" style={{ fontSize: 13 }}>
+            The sending schedule and timezone come first — they decide when queued emails and texts go
+            out. Provider connections, Calendly and Aria are below.
+          </div>
+        </div>
+        <Link to="/queue" className="btn-link">
+          Open the queue →
+        </Link>
+      </div>
 
       {msg && <div className="card">{msg}</div>}
-
-      <OwnerCard owner={s.owner || {}} onSaved={load} />
 
       <ScheduleCard schedule={s.schedule || {}} templates={templates} onSaved={load} />
 
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>Sender</h2>
-        <p className="muted">
-          Pause to stop the worker from processing the outbox. New messages keep getting queued while
-          paused, they just don't go out.
+        <h2 style={{ marginTop: 0 }}>Sending controls</h2>
+        <p className="muted" style={{ marginTop: 0 }}>
+          Pause sending to hold every queued email and text — they stay in the{' '}
+          <Link to="/queue">Queue</Link> and go out when you resume. You can keep queueing while paused.
         </p>
-        <button onClick={togglePause} className={s.senderPaused ? '' : 'secondary'}>
-          {s.senderPaused ? 'Resume sending' : 'Pause sending'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={togglePause} className={s.senderPaused ? '' : 'secondary'}>
+            {s.senderPaused ? 'Resume sending' : 'Pause sending'}
+          </button>
+          <span className={`badge ${s.senderPaused ? 'err' : 'ok'}`}>{s.senderPaused ? 'paused' : 'running'}</span>
+        </div>
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
           <div className="muted" style={{ marginBottom: 6 }}>
-            Master reminder switch — when on, the hourly scheduler stops queuing new reminders and
-            any reminders already sitting in the outbox are skipped. Manual one-off sends from the
-            Board still go through. To pause reminders for a single project instead, use the
-            toggle on that project's page.
+            Master reminder switch — when paused, the hourly scheduler stops queuing new reminders and
+            reminders already in the queue are held. Manual sends from the Board still go through. To
+            pause reminders for a single project instead, use the toggle on that project's page.
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               onClick={toggleRemindersPause}
               className={s.remindersPaused ? '' : 'secondary'}
             >
-              {s.remindersPaused ? 'Resume reminders' : 'Stop all reminders'}
+              {s.remindersPaused ? 'Resume reminders' : 'Pause all reminders'}
             </button>
             <span className={`badge ${s.remindersPaused ? 'err' : 'ok'}`}>
               {s.remindersPaused ? 'paused' : 'active'}
@@ -723,8 +811,10 @@ export default function Settings() {
         </div>
       </div>
 
+      <OwnerCard owner={s.owner || {}} onSaved={load} />
+
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>SMTP</h2>
+        <h2 style={{ marginTop: 0 }}>Email (SMTP)</h2>
         <div className="muted" style={{ marginBottom: 8 }}>
           Host: {s.smtp.host || '—'} · From: {s.smtp.from || '—'} ·{' '}
           {s.smtp.configured ? 'configured in .env' : 'not configured'}
@@ -767,7 +857,7 @@ export default function Settings() {
       </div>
 
       <div className="card">
-        <h2 style={{ marginTop: 0 }}>Twilio</h2>
+        <h2 style={{ marginTop: 0 }}>SMS (Twilio)</h2>
         <div className="muted" style={{ marginBottom: 8 }}>
           From: {s.twilio.from || '—'} ·{' '}
           {s.twilio.configured ? 'configured in .env' : 'not configured'}
@@ -819,8 +909,6 @@ export default function Settings() {
 
       <AriaCard aria={s.aria || {}} onSaved={load} />
 
-      <DangerZone onDone={load} />
-
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Defaults (.env)</h2>
         <ul className="muted" style={{ marginTop: 0 }}>
@@ -833,6 +921,8 @@ export default function Settings() {
           they take priority over the system-wide defaults above.
         </p>
       </div>
+
+      <DangerZone onDone={load} />
     </div>
   );
 }

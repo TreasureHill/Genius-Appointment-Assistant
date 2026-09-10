@@ -5,15 +5,23 @@ const { verifyTwilio, sendSms } = require('../services/sms');
 const { verifyCalendly, syncAll, listEventTypes } = require('../services/calendly');
 const ariaCall = require('../services/ariaCall');
 const env = require('../config/env');
+const { isValidTimezone, resolveScheduleTimezone } = require('../services/sendWindow');
+const { replanPendingOutbox, scheduleStatus } = require('../services/outboxPlanner');
 
 const router = express.Router();
 
 router.get('/', async (req, res) => {
   const s = await Setting.getSingleton();
   const sched = (s.schedule && s.schedule.toObject ? s.schedule.toObject() : s.schedule) || {};
+  const timezone = resolveScheduleTimezone(s);
   res.json({
     owner: s.owner || {},
     schedule: {
+      // The zone send windows are written in. `timezoneSource` says whether it
+      // was set explicitly or is still inherited (Aria's zone / Eastern).
+      timezone,
+      timezoneSource: isValidTimezone(sched.timezone) ? 'schedule' : isValidTimezone(s.aria?.timezone) ? 'aria' : 'default',
+      window: await scheduleStatus(s),
       reminderIntervalDays: sched.reminderIntervalDays ?? env.defaults.reminderDays,
       maxReminders: sched.maxReminders ?? env.defaults.maxReminders,
       pacing: sched.pacing || { minSec: env.defaults.pacingMin, maxSec: env.defaults.pacingMax },
@@ -71,10 +79,14 @@ router.patch('/owner', async (req, res) => {
 const DAY_KEYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 
 router.patch('/schedule', async (req, res) => {
-  const { reminderIntervalDays, maxReminders, pacing, sendWindows, defaultEmailTemplate, defaultSmsTemplate } =
+  const { reminderIntervalDays, maxReminders, pacing, sendWindows, defaultEmailTemplate, defaultSmsTemplate, timezone } =
     req.body || {};
+  if (timezone != null && !isValidTimezone(String(timezone).trim())) {
+    return res.status(400).json({ error: 'invalid_timezone', message: `"${timezone}" is not a valid IANA timezone (e.g. America/Toronto).` });
+  }
   const s = await Setting.getSingleton();
   s.schedule = s.schedule || {};
+  if (timezone != null) s.schedule.timezone = String(timezone).trim();
   if (reminderIntervalDays != null) s.schedule.reminderIntervalDays = Number(reminderIntervalDays);
   if (maxReminders != null) s.schedule.maxReminders = Number(maxReminders);
   if (pacing) {
@@ -96,7 +108,11 @@ router.patch('/schedule', async (req, res) => {
   if (defaultEmailTemplate !== undefined) s.schedule.defaultEmailTemplate = defaultEmailTemplate || null;
   if (defaultSmsTemplate !== undefined) s.schedule.defaultSmsTemplate = defaultSmsTemplate || null;
   await s.save();
-  res.json(s.schedule);
+  // The windows / pacing / timezone just changed: move everything still
+  // queued so the Queue page reflects the new schedule immediately.
+  const replan = await replanPendingOutbox();
+  const out = s.schedule && s.schedule.toObject ? s.schedule.toObject() : s.schedule;
+  res.json({ ...out, timezone: resolveScheduleTimezone(s), replan, window: await scheduleStatus(s) });
 });
 
 router.post('/pause', async (req, res) => {

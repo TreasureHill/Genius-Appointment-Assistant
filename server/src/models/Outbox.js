@@ -22,6 +22,10 @@ const OutboxSchema = new mongoose.Schema(
     lastError: { type: String, default: '' },
     isReminder: { type: Boolean, default: false },
     reminderIndex: { type: Number, default: 0 },
+    // Set by "Send now" on the Queue / lot page: skip the send window and any
+    // reminder hold and go out on the next worker tick. Only the global
+    // "Pause sending" switch still stops it.
+    sendNow: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

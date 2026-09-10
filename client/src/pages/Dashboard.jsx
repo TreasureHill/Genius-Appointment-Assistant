@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { ActivityRow } from './Activity.jsx';
+import { useTimezone } from '../timezone.jsx';
+import { fmtDateTime, fmtDayLabel, fmtTime, relativeTime } from '../time';
 
 function RecentActivity() {
   const [items, setItems] = useState([]);
@@ -82,7 +84,7 @@ function RecentActivity() {
   );
 }
 
-function Tile({ label, value, hint, accent, to }) {
+function Tile({ label, value, hint, accent, to, title }) {
   const inner = (
     <div className={`tile ${accent ? `tile-${accent}` : ''}`} style={to ? { cursor: 'pointer' } : undefined}>
       <div className="label">{label}</div>
@@ -92,7 +94,7 @@ function Tile({ label, value, hint, accent, to }) {
   );
   if (!to) return inner;
   return (
-    <Link to={to} style={{ textDecoration: 'none', color: 'inherit' }} title="Open in the activity log">
+    <Link to={to} style={{ textDecoration: 'none', color: 'inherit' }} title={title || 'Open'}>
       {inner}
     </Link>
   );
@@ -119,6 +121,7 @@ function Health({ name, h }) {
 export default function Dashboard() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
+  const { timezone: ctxTz } = useTimezone();
 
   useEffect(() => {
     api.get('/api/dashboard').then(setD).catch((e) => setErr(e.message));
@@ -127,8 +130,17 @@ export default function Dashboard() {
   if (err) return <div className="error">{err}</div>;
   if (!d) return <div className="muted">Loading…</div>;
 
+  const tz = d.timezone || ctxTz;
   const m24 = d.messages.last24h;
   const m7 = d.messages.last7d;
+  const queued = d.outboxByStatus.pending || 0;
+  const callsWaiting = (d.callQueue?.queued || 0) + (d.callQueue?.calling || 0);
+  const sched = d.schedule || {};
+  const windowHint = sched.open
+    ? `send window open until ${fmtTime(sched.closesAt, tz)}`
+    : sched.nextOpening
+      ? `send window closed · opens ${fmtDayLabel(sched.nextOpening, tz)} ${fmtTime(sched.nextOpening, tz)}`
+      : 'send window: no days enabled';
 
   return (
     <div>
@@ -139,28 +151,36 @@ export default function Dashboard() {
             Live status of your campaigns, providers, and Calendly sync.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Link to="/projects" className="btn-link">
-            Open projects →
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Link to="/board" className="btn-link">
+            Board →
+          </Link>
+          <Link to="/queue" className="btn-link">
+            Queue{queued + callsWaiting > 0 ? ` (${queued + callsWaiting})` : ''} →
           </Link>
         </div>
       </div>
 
       <div className="card health-card">
         <div className="health-row">
-          <Health name="SMTP" h={d.health.smtp} />
-          <Health name="Twilio" h={d.health.twilio} />
+          <Health name="Email (SMTP)" h={d.health.smtp} />
+          <Health name="SMS (Twilio)" h={d.health.twilio} />
+          <Health name="Aria calls" h={d.health.aria} />
           <Health name="Calendly" h={d.health.calendly} />
           <div className="health-cell">
             <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-              Sender
+              Sending
             </div>
             <span className={`badge ${d.health.senderPaused ? 'err' : 'ok'}`}>
               {d.health.senderPaused ? 'paused' : 'running'}
             </span>
+            <div className="muted" style={{ fontSize: 11, marginTop: 2, maxWidth: 260 }}>
+              {windowHint}
+              {d.health.remindersPaused ? ' · reminders paused' : ''}
+            </div>
             {d.health.lastCalendlySync && (
               <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
-                Last Calendly sync: {new Date(d.health.lastCalendlySync).toLocaleString()}
+                Last Calendly sync: {fmtDateTime(d.health.lastCalendlySync, tz)}
               </div>
             )}
           </div>
@@ -179,22 +199,46 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <h2>Sending activity</h2>
+      <h2>Waiting to go out</h2>
       <div className="tiles">
-        <Tile label="Emails sent (24h)" value={m24.email.out} />
-        <Tile label="SMS sent (24h)" value={m24.sms.out} />
-        <Tile label="Inbound SMS (24h)" value={m24.sms.in} />
-        <Tile label="Calendly matches (24h)" value={m24.calendly.in} />
-        <Tile label="Emails sent (7d)" value={m7.email.out} />
-        <Tile label="SMS sent (7d)" value={m7.sms.out} />
-        <Tile label="Queued" value={d.outboxByStatus.pending || 0} />
         <Tile
-          label="Failed (queue)"
+          label="Emails & texts queued"
+          value={queued}
+          to="/queue"
+          title="Open the queue"
+          hint={
+            d.nextSendAt
+              ? `next: ${fmtDayLabel(d.nextSendAt, tz)} ${fmtTime(d.nextSendAt, tz)} (${relativeTime(d.nextSendAt)})`
+              : 'nothing queued'
+          }
+        />
+        <Tile
+          label="Calls queued"
+          value={callsWaiting}
+          to="/queue"
+          title="Open the queue"
+          hint={d.callQueue?.calling ? 'one call in progress' : callsWaiting ? 'Aria dials one at a time' : 'no calls waiting'}
+        />
+        <Tile
+          label="Failed sends"
           value={d.outboxByStatus.failed || 0}
-          accent="err"
+          accent={(d.outboxByStatus.failed || 0) > 0 ? 'err' : ''}
           to="/activity?status=failed"
+          title="Open the activity log filtered to failed sends"
           hint={(d.outboxByStatus.failed || 0) > 0 ? 'click to see which lots' : undefined}
         />
+      </div>
+
+      <h2>Sent</h2>
+      <div className="tiles">
+        <Tile label="Emails (24h)" value={m24.email.out} to="/activity?type=email" title="Emails in the activity log" />
+        <Tile label="Texts (24h)" value={m24.sms.out} to="/activity?type=sms" title="Texts in the activity log" />
+        <Tile label="Aria calls (24h)" value={m24.call?.out || 0} to="/activity?type=call" title="Calls in the activity log" />
+        <Tile label="Replies received (24h)" value={m24.sms.in} to="/activity?direction=in" title="Inbound texts" />
+        <Tile label="Calendly matches (24h)" value={m24.calendly.in} to="/activity?type=calendly" title="Calendly activity" />
+        <Tile label="Emails (7d)" value={m7.email.out} />
+        <Tile label="Texts (7d)" value={m7.sms.out} />
+        <Tile label="Aria calls (7d)" value={m7.call?.out || 0} />
       </div>
 
       {d.recentFailures && d.recentFailures.length > 0 && (
@@ -259,9 +303,7 @@ export default function Dashboard() {
                     <td>{b.project?.name}</td>
                     <td>{b.bounceCount}</td>
                     <td className="error" style={{ fontSize: 12 }}>{b.lastBounceError}</td>
-                    <td className="nowrap">
-                      {b.lastBounceAt ? new Date(b.lastBounceAt).toLocaleString() : '—'}
-                    </td>
+                    <td className="nowrap">{fmtDateTime(b.lastBounceAt, tz)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -290,9 +332,7 @@ export default function Dashboard() {
               <tbody>
                 {d.unmatchedCalendly.recent.map((e) => (
                   <tr key={e._id}>
-                    <td className="nowrap">
-                      {e.eventStartTime ? new Date(e.eventStartTime).toLocaleString() : '—'}
-                    </td>
+                    <td className="nowrap">{fmtDateTime(e.eventStartTime, tz)}</td>
                     <td>
                       <div>
                         <strong>{e.inviteeName || '—'}</strong>
@@ -326,7 +366,7 @@ export default function Dashboard() {
                 </Link>
                 {w.calendlyEvent?.startTime && (
                   <span className="muted" style={{ fontSize: 12, marginLeft: 6 }}>
-                    booked {new Date(w.calendlyEvent.startTime).toLocaleString()}
+                    booked {fmtDateTime(w.calendlyEvent.startTime, tz)}
                   </span>
                 )}{' '}
                 — <span className="muted">{w.calendlyWarning}</span>

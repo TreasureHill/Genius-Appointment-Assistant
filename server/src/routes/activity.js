@@ -24,7 +24,7 @@ const ACTOR_LABELS = {
 router.get('/', async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const pageSize = Math.min(200, Math.max(5, Number(req.query.pageSize) || 25));
-  const { project, kind, q, status } = req.query;
+  const { project, kind, q, status, type, direction } = req.query;
 
   const msgFilter = {};
   const evFilter = {};
@@ -41,8 +41,13 @@ router.get('/', async (req, res) => {
   // status=failed (etc.) narrows to messages only — status changes have no
   // delivery status to filter on.
   if (status) msgFilter.status = status;
+  // type=email|sms|call|calendly and direction=in|out likewise narrow to
+  // messages only.
+  if (type) msgFilter.type = type;
+  if (direction) msgFilter.direction = direction;
+  const messagesOnly = Boolean(status || type || direction);
   const wantMessages = !kind || kind === 'all' || kind === 'messages';
-  const wantEvents = !status && (!kind || kind === 'all' || kind === 'events');
+  const wantEvents = !messagesOnly && (!kind || kind === 'all' || kind === 'events');
   const limitN = page * pageSize;
 
   const [msgs, events, msgCount, evCount] = await Promise.all([

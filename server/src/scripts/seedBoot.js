@@ -2,7 +2,10 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Template = require('../models/Template');
 const Lot = require('../models/Lot');
+const Setting = require('../models/Setting');
 const env = require('../config/env');
+const { resolveScheduleTimezone } = require('../services/sendWindow');
+const { replanPendingOutbox } = require('../services/outboxPlanner');
 
 async function migrateBookedToScheduled() {
   // 'booked' was an early redundant status; it now collapses into 'scheduled'.
@@ -40,6 +43,24 @@ async function migrateCalendlyWarnings() {
   if (n > 0) console.log(`[migration] cleared ${n} stale Calendly warning(s)`);
 }
 
+// Send windows used to be evaluated on the server's clock. They now live in an
+// explicit timezone (Settings → Sending schedule). The first boot after that
+// change pins the zone (Aria's zone, else Eastern) and re-plans anything still
+// queued so a "9 AM" window really means 9 AM for the owner. Runs once: the
+// timezone field is non-empty afterwards.
+async function migrateScheduleTimezone() {
+  const setting = await Setting.getSingleton();
+  if (setting.schedule && setting.schedule.timezone) return;
+  const timezone = resolveScheduleTimezone(setting);
+  setting.schedule = setting.schedule || {};
+  setting.schedule.timezone = timezone;
+  await setting.save();
+  const r = await replanPendingOutbox();
+  console.log(
+    `[migration] send windows are now evaluated in ${timezone}; re-planned ${r.moved} of ${r.total} queued message(s)`
+  );
+}
+
 async function seedAdmin() {
   const count = await User.countDocuments();
   if (count > 0) return;
@@ -75,4 +96,10 @@ at {{lot.address}}. You can pick a time here:
   console.log('[seed] inserted starter templates');
 }
 
-module.exports = { seedAdmin, seedStarterTemplates, migrateBookedToScheduled, migrateCalendlyWarnings };
+module.exports = {
+  seedAdmin,
+  seedStarterTemplates,
+  migrateBookedToScheduled,
+  migrateCalendlyWarnings,
+  migrateScheduleTimezone,
+};

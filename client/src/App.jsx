@@ -10,7 +10,7 @@ import LotDetail from './pages/LotDetail.jsx';
 import Templates from './pages/Templates.jsx';
 import TemplateEditor from './pages/TemplateEditor.jsx';
 import SheetImport from './pages/SheetImport.jsx';
-import History from './pages/History.jsx';
+import Queue from './pages/Queue.jsx';
 import Activity from './pages/Activity.jsx';
 import Settings from './pages/Settings.jsx';
 import CalendlyEvents from './pages/CalendlyEvents.jsx';
@@ -46,8 +46,10 @@ export default function App() {
         <Route path="/templates/new" element={<TemplateEditor />} />
         <Route path="/templates/:id" element={<TemplateEditor />} />
         <Route path="/import" element={<SheetImport />} />
+        <Route path="/queue" element={<Queue />} />
         <Route path="/activity" element={<Activity />} />
-        <Route path="/history" element={<History />} />
+        {/* The old History page is folded into Activity (same data, more filters). */}
+        <Route path="/history" element={<Navigate to="/activity" replace />} />
         <Route path="/calendly" element={<CalendlyEvents />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/settings" element={<Settings />} />

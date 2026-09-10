@@ -8,7 +8,13 @@ const cors = require('cors');
 const env = require('./config/env');
 const { connect: connectDb } = require('./config/db');
 const { requireAuth } = require('./middleware/auth');
-const { seedAdmin, seedStarterTemplates, migrateBookedToScheduled, migrateCalendlyWarnings } = require('./scripts/seedBoot');
+const {
+  seedAdmin,
+  seedStarterTemplates,
+  migrateBookedToScheduled,
+  migrateCalendlyWarnings,
+  migrateScheduleTimezone,
+} = require('./scripts/seedBoot');
 const { startWorkers } = require('./workers');
 
 // Routes
@@ -19,6 +25,7 @@ const templatesRoutes = require('./routes/templates');
 const sheetsRoutes = require('./routes/sheets');
 const messagesRoutes = require('./routes/messages');
 const callsRoutes = require('./routes/calls');
+const queueRoutes = require('./routes/queue');
 const activityRoutes = require('./routes/activity');
 const dashboardRoutes = require('./routes/dashboard');
 const settingsRoutes = require('./routes/settings');
@@ -56,6 +63,7 @@ app.use('/api/templates', templatesRoutes);
 app.use('/api/sheets', sheetsRoutes);
 app.use('/api/messages', messagesRoutes);
 app.use('/api/calls', callsRoutes);
+app.use('/api/queue', queueRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
@@ -85,6 +93,7 @@ async function main() {
   await seedStarterTemplates();
   await migrateBookedToScheduled();
   await migrateCalendlyWarnings();
+  await migrateScheduleTimezone();
   app.listen(env.port, () => {
     console.log(`[server] listening on :${env.port} (${env.nodeEnv})`);
     startWorkers();

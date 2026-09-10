@@ -155,22 +155,68 @@ async function advance() {
   }
 }
 
-// Snapshot for the UI: the active call, the pending queue (in order), and counts.
+// Snapshot for the UI: the active call, the pending queue (in order), and
+// counts. Each item carries the lot (number + address), the project, and the
+// buyer that will be dialled, so the Queue tab can show who's being called.
+const POPULATE_LOT = 'lotNumber address buyers call status';
+
+function shapeItem(item) {
+  if (!item) return null;
+  const lot = item.lot && typeof item.lot === 'object' ? item.lot : null;
+  const buyers = lot?.buyers || [];
+  const buyer =
+    (item.buyerRole && buyers.find((b) => b.role === item.buyerRole && b.phone && !b.optedOut)) ||
+    buyers.find((b) => b.phone && !b.optedOut) ||
+    null;
+  const project = item.project && typeof item.project === 'object' ? item.project : null;
+  return {
+    _id: item._id,
+    status: item.status,
+    createdAt: item.createdAt,
+    startedAt: item.startedAt,
+    buyerRole: item.buyerRole || '',
+    conversationId: item.conversationId || '',
+    lot: lot
+      ? { _id: lot._id, lotNumber: lot.lotNumber, address: lot.address || '', status: lot.status, call: lot.call || null }
+      : { _id: item.lot, lotNumber: '', address: '', deleted: true },
+    project: project ? { _id: project._id, name: project.name } : null,
+    buyer: buyer ? { name: buyer.name || '', phone: buyer.phone || '', role: buyer.role } : null,
+  };
+}
+
 async function getStatus() {
   const [active, pending, counts] = await Promise.all([
-    CallQueueItem.findOne({ status: 'calling' }).populate('lot', 'lotNumber').lean(),
-    CallQueueItem.find({ status: 'queued' }).sort({ createdAt: 1 }).populate('lot', 'lotNumber').lean(),
+    CallQueueItem.findOne({ status: 'calling' }).populate('lot', POPULATE_LOT).populate('project', 'name').lean(),
+    CallQueueItem.find({ status: 'queued' })
+      .sort({ createdAt: 1 })
+      .populate('lot', POPULATE_LOT)
+      .populate('project', 'name')
+      .lean(),
     CallQueueItem.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
   ]);
   const byStatus = {};
   for (const c of counts) byStatus[c._id] = c.n;
+  const shapedPending = pending.map(shapeItem);
   return {
-    active: active || null,
-    pending,
-    queuedCount: pending.length,
+    active: shapeItem(active),
+    pending: shapedPending,
+    queuedCount: shapedPending.length,
     activeCount: active ? 1 : 0,
     byStatus,
   };
+}
+
+// Cancel a single queued item (never the in-flight call). Resets the lot's
+// call badge back to idle.
+async function cancelItem(id) {
+  const item = await CallQueueItem.findOneAndUpdate(
+    { _id: id, status: 'queued' },
+    { $set: { status: 'cancelled', endedAt: new Date() } },
+    { new: true }
+  );
+  if (!item) return { cancelled: 0 };
+  await Lot.updateOne({ _id: item.lot, 'call.status': 'queued' }, { $set: { 'call.status': 'idle' } });
+  return { cancelled: 1 };
 }
 
 // Cancel everything still queued (not the in-flight call). Resets those lots'
@@ -191,4 +237,4 @@ async function clear() {
   return { cancelled: r.modifiedCount || 0 };
 }
 
-module.exports = { enqueue, advance, reconcileActive, getStatus, clear };
+module.exports = { enqueue, advance, reconcileActive, getStatus, clear, cancelItem };

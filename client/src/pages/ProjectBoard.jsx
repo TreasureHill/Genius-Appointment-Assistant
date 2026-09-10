@@ -3,6 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
 import MultiSelect from '../components/MultiSelect.jsx';
+import { useTimezone } from '../timezone.jsx';
+import { fmtDayLabel, fmtTime, tzAbbrev } from '../time';
 
 const BOARD_PAGE_SIZES = [25, 50, 100, 200];
 
@@ -325,6 +327,7 @@ export default function ProjectBoard() {
       return prevKey === key ? prev : new Set(ids);
     });
   }, [urlProjectKey]);
+  const { timezone: ctxTz } = useTimezone();
   const [maxReminders, setMaxReminders] = useState(null);
   const [lots, setLots] = useState([]);
   const [filter, setFilter] = useState({ status: '', q: '' });
@@ -691,12 +694,26 @@ export default function ProjectBoard() {
         return;
       }
 
+      // Say exactly when the batch goes out (send window + pacing, in the
+      // schedule timezone) instead of "spread over minutes".
+      const tz = result.timezone || ctxTz;
+      const when = (d) => `${fmtDayLabel(d, tz)} ${fmtTime(d, tz)}`;
+      let timing = '';
+      if (result.firstSendAt) {
+        const sameSlot = !result.lastSendAt || result.lastSendAt === result.firstSendAt;
+        timing = sameSlot
+          ? `Goes out ${when(result.firstSendAt)} ${tzAbbrev(tz)}.`
+          : `First goes out ${when(result.firstSendAt)}, last ${when(result.lastSendAt)} ${tzAbbrev(tz)}.`;
+        if (result.schedule && !result.schedule.open) {
+          timing += ' The send window is closed right now, so they wait for the next opening.';
+        }
+      }
       setSendMsg(
         `Queued ${result.queued.length} message${result.queued.length === 1 ? '' : 's'} across ` +
           `${touchedCount} lot${touchedCount === 1 ? '' : 's'} ` +
           `(${tplBits.join(' + ')}). ` +
           (result.skipped.length ? `Skipped ${result.skipped.length}${skipNote ? `: ${skipNote}` : ''}. ` : '') +
-          'They go out spread over minutes per your pacing settings — the row counters will update as each message sends.'
+          timing
       );
       setSelected(new Set());
 
@@ -745,7 +762,8 @@ export default function ProjectBoard() {
         <div style={{ flex: 1 }} />
         <button onClick={() => setShowAdd(true)}>+ Add lot</button>
         <div className="muted" style={{ fontSize: 12 }}>
-          Sending schedule lives in <Link to="/settings">Settings</Link>.
+          Queued messages go out inside the send window — see when on the <Link to="/queue">Queue</Link>,
+          change the window in <Link to="/settings">Settings</Link>.
         </div>
       </div>
 
@@ -880,6 +898,12 @@ export default function ProjectBoard() {
           style={{ marginBottom: 10 }}
         >
           {sendMsg}
+          {sendMsg.startsWith('Queued') && (
+            <>
+              {' '}
+              <Link to="/queue">Open the queue →</Link>
+            </>
+          )}
         </div>
       )}
 
@@ -946,13 +970,14 @@ export default function ProjectBoard() {
                       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                         <StatusBadge status={lot.status} />
                         {lot.pendingMessages > 0 && (
-                          <span
+                          <Link
+                            to={`/queue?lot=${lot._id}`}
                             className="badge pending"
-                            title="Messages queued for this lot — they'll send over the next few minutes per pacing"
+                            title="Messages waiting for this lot — click to see exactly when they go out"
                             style={{ fontSize: 10 }}
                           >
                             {lot.pendingMessages} queued
-                          </span>
+                          </Link>
                         )}
                       </div>
                       <select
@@ -1075,13 +1100,14 @@ export default function ProjectBoard() {
       )}
 
       <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-        <strong>How sending works:</strong> Select lots above, pick a template, click <em>Send</em>.
-        Each selected lot's buyers are queued with the project's pacing jitter. Once sent, the lot
-        flips to <span className="badge contacted">contacted</span> and automatic reminders begin
-        after the configured interval — until the lot is marked{' '}
-        <span className="badge scheduled">scheduled</span> (manually, by Calendly match, or manual
-        mapping) or <span className="badge opted_out">opted out</span>, or the max reminder count
-        is reached.
+        <strong>How sending works:</strong> tick lots and click <em>Send to selected</em> (or{' '}
+        <em>Send to all pending</em>). Every buyer on those lots gets the project's default email and
+        text, queued a pacing gap apart and only inside the send window — the{' '}
+        <Link to="/queue">Queue</Link> shows exactly when each one goes out. Once the first message is
+        sent the lot flips to <span className="badge contacted">contacted</span> and reminders repeat on
+        the schedule until the lot is <span className="badge scheduled">scheduled</span> (by hand, a
+        Calendly match, or an Aria booking), <span className="badge opted_out">opted out</span>, or the
+        reminder cap is reached. <em>Call selected</em> queues Aria to phone each lot in turn.
       </div>
     </div>
   );

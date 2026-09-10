@@ -246,8 +246,9 @@ export default function ProjectDetail() {
           {remErr && <span className="error">{remErr}</span>}
         </div>
         <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>
-          Pacing, reminder interval, max reminders, send windows, and the master reminder switch
-          are configured system-wide on the <Link to="/settings">Settings</Link> page.
+          Pacing, reminder interval, max reminders, send windows, the timezone, and the master
+          reminder switch are configured system-wide on the <Link to="/settings">Settings</Link>{' '}
+          page. Everything waiting to go out is listed on the <Link to="/queue">Queue</Link>.
         </p>
       </div>
 
