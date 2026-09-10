@@ -201,13 +201,19 @@ async function dispatchCall({ lotId, buyerRole }) {
   const aria = (setting.aria && setting.aria.toObject?.()) || setting.aria || {};
 
   // Best-effort: hand Aria the next few open slots up front so it can offer
-  // times immediately, even before it calls the availability tool.
+  // times immediately, even before it calls the availability tool. Capped at
+  // 3 seconds — a slow calendar must never delay dialling, and this also
+  // warms the availability cache so the agent's mid-call get_availability
+  // tool answers instantly instead of timing out on a cold lookup.
   let slotsText = '';
   try {
-    const avail = await calendly.listAvailableTimes({ limit: 5 });
+    const avail = await calendly.listAvailableTimes({ limit: 5, budgetMs: 3_000 });
     if (avail.ok && avail.slots.length) {
       slotsText = avail.slots.map((s) => s.label).join('; ');
     }
+    // The budget ran out before the whole horizon was read; finish the read in
+    // the background so the cache is complete by the time Aria asks.
+    if (avail.partial) calendly.primeAvailability({ limit: 6 });
   } catch {
     /* availability is a nicety, never block the call on it */
   }
@@ -309,16 +315,24 @@ async function applyPostCall(normalised) {
   return { ok: true, status: normalised.status };
 }
 
-// Answer the get_availability tool. `lotId` is optional (used only for logs).
-async function getAvailability({ limit = 6 } = {}) {
-  const avail = await calendly.listAvailableTimes({ limit });
+// Answer the get_availability tool. Aria is mid-conversation with a real
+// person, so this must answer fast: the lookup runs under a time budget and
+// returns the soonest slots it has rather than making the agent wait (and
+// time out). `budgetMs` is deliberately short for the same reason.
+async function getAvailability({ limit = 6, budgetMs = 6_000 } = {}) {
+  const avail = await calendly.listAvailableTimes({ limit, budgetMs });
   if (!avail.ok) {
     return { available: false, message: avail.message, slots: [] };
   }
   if (!avail.slots.length) {
+    // Nothing found inside the budget. Finish the read in the background so an
+    // immediate retry is answered from the warm cache.
+    if (avail.partial) calendly.primeAvailability({ limit });
     return {
       available: false,
-      message: 'I don’t see any open times on the calendar right now.',
+      message: avail.partial
+        ? 'I’m still pulling up the calendar — give me one moment and I’ll check again.'
+        : 'I don’t see any open times on the calendar right now.',
       slots: [],
     };
   }

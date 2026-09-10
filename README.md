@@ -160,6 +160,16 @@ Aria-held slots keep an empty `calendlyEventUri`, so the cancellation handler
 (which keys off the event URI) never disturbs them. A stuck-call janitor
 force-fails any call left "calling" for 30 min (dropped webhook safety net).
 
+**Availability, and why it used to time out:** Calendly's
+`event_type_available_times` endpoint only accepts a 7-day window, so a
+60-day horizon is up to nine requests. Those are now fetched concurrently
+under a hard time budget (about 6 s for the in-call tool, 3 s for the
+pre-call fetch), returning the soonest slots found rather than making the
+agent wait, and the result is cached for 90 s so a retry — or the mid-call
+tool hit right after dispatch warmed it — is instant. Reading them one after
+another is what made the agent's first `get_availability` call time out and
+the second one succeed.
+
 **Setup** (Settings → *Aria voice calling*, plus `.env`):
 - `.env`: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`,
   `ELEVENLABS_AGENT_PHONE_NUMBER_ID`, `ELEVENLABS_WEBHOOK_SECRET`,

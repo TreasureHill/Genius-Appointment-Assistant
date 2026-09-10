@@ -15,7 +15,8 @@
     "test:sendwindow": "node src/services/__tests__/sendWindow.test.js",
     "test:render": "node src/services/__tests__/templateRender.test.js",
     "test:elevenlabs": "node src/services/__tests__/elevenlabs.helpers.test.js",
-    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render && npm run test:elevenlabs"
+    "test:availability": "node src/services/__tests__/availability.test.js",
+    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render && npm run test:elevenlabs && npm run test:availability"
   },
   "dependencies": {
     "axios": "^1.7.7",

@@ -129,17 +129,72 @@ function formatSlotLabel(startTimeIso, timeZone = 'America/New_York') {
   }
 }
 
-// Pull real open slots from Calendly's event_type_available_times endpoint.
-// That endpoint only accepts a window of <= 7 days starting in the future, so
-// we chunk `days` into <=7-day requests, walking forward until we've collected
-// `limit` slots or run out the horizon. Default horizon is 60 days so an empty
-// next week doesn't hide the next actual opening (Calendly caps this at the
-// event type's own rolling scheduling window anyway). Chunks are chronological,
-// so the soonest slots always come first.
-// Returns { ok, message, slots: [{ startTime, label, schedulingUrl }] }.
-async function listAvailableTimes({ eventTypeUri, days = 60, limit = 6, timeZone } = {}) {
-  const c = client();
-  if (!c) return { ok: false, message: 'Calendly is not connected yet.', slots: [] };
+// ---- Availability for the phone agent -------------------------------------
+//
+// Calendly's event_type_available_times endpoint only accepts a window of
+// <= 7 days, so a 60-day horizon means up to nine requests. Doing those one
+// after another is what made Aria's get_availability tool time out on a cold
+// call (and then "work on the second try", once Calendly answered warm).
+//
+// So: the windows are fetched CONCURRENTLY in small waves, the whole lookup
+// runs under a hard time budget and returns whatever it has when the budget
+// is spent, and the result is cached briefly so a retry — or the mid-call
+// tool hit right after the pre-call fetch — is instant.
+
+const AVAIL_CHUNK_DAYS = 7;
+const AVAIL_WAVE = 3; // windows fetched in parallel per wave
+const AVAIL_CACHE_TTL_MS = 90_000;
+const AVAIL_CACHE_MAX = 12; // keep a few extra slots so a bigger limit still hits
+const AVAIL_BUDGET_MS = 6_000; // stay well under the agent's tool timeout
+// Don't start another wave on a sliver of budget — a wave that can't finish
+// in time only delays the answer.
+const AVAIL_MIN_WAVE_MS = 750;
+
+const availabilityCache = new Map(); // `${uri}|${tz}` -> { at, slots, complete }
+
+function availabilityCacheKey(uri, tz) {
+  return `${uri}|${tz}`;
+}
+
+// Chronological <=7-day windows covering `days` ahead. Starts 2 minutes out —
+// Calendly rejects a start_time that isn't in the future.
+function buildAvailabilityWindows(days = 60, now = Date.now()) {
+  const out = [];
+  const hardEnd = now + days * 24 * 60 * 60 * 1000;
+  let start = now + 2 * 60 * 1000;
+  while (start < hardEnd) {
+    const end = Math.min(start + AVAIL_CHUNK_DAYS * 24 * 60 * 60 * 1000, hardEnd);
+    out.push({ start: new Date(start), end: new Date(end) });
+    start = end;
+  }
+  return out;
+}
+
+function clearAvailabilityCache() {
+  availabilityCache.clear();
+}
+
+// Pull real open slots from Calendly. Returns
+// { ok, message, slots: [{ startTime, label, schedulingUrl }], partial, cached }.
+// `partial` means the time budget ran out before the whole horizon was read,
+// so there may be later openings we haven't seen — the slots returned are
+// still real and still the soonest ones found.
+//
+// `now` only decides which calendar windows to ask Calendly for; the time
+// budget and the cache always use the real clock. `fetchWindow` is injectable
+// for tests; by default it hits Calendly.
+async function listAvailableTimes({
+  eventTypeUri,
+  days = 60,
+  limit = 6,
+  timeZone,
+  budgetMs = AVAIL_BUDGET_MS,
+  refresh = false,
+  now = Date.now(),
+  fetchWindow = null,
+} = {}) {
+  const c = fetchWindow ? null : client();
+  if (!fetchWindow && !c) return { ok: false, message: 'Calendly is not connected yet.', slots: [] };
   const uri = eventTypeUri || (await resolveEventTypeUri());
   if (!uri) {
     return {
@@ -149,42 +204,112 @@ async function listAvailableTimes({ eventTypeUri, days = 60, limit = 6, timeZone
     };
   }
   const tz = timeZone || (await resolveTimezone());
-  const slots = [];
-  const CHUNK_DAYS = 7;
-  // Start 2 minutes out — Calendly rejects a start_time that isn't in the future.
-  let windowStart = new Date(Date.now() + 2 * 60 * 1000);
-  const hardEnd = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  const key = availabilityCacheKey(uri, tz);
 
-  try {
-    while (windowStart < hardEnd && slots.length < limit) {
-      const windowEnd = new Date(
-        Math.min(windowStart.getTime() + CHUNK_DAYS * 24 * 60 * 60 * 1000, hardEnd.getTime())
-      );
+  // Serve from cache when it can answer this request: either it already holds
+  // enough slots, or it read the whole horizon and that's all there is.
+  if (!refresh) {
+    const hit = availabilityCache.get(key);
+    // "Complete" only counts for a horizon at least as wide as this request —
+    // a fully-read week can't answer a question about the next two months.
+    const answers = hit && (hit.slots.length >= limit || (hit.complete && hit.days >= days));
+    if (hit && answers && Date.now() - hit.at < AVAIL_CACHE_TTL_MS) {
+      return { ok: true, slots: hit.slots.slice(0, limit), cached: true, partial: false };
+    }
+  }
+
+  const readWindow =
+    fetchWindow ||
+    (async (win, timeout) => {
       const params = new URLSearchParams({
         event_type: uri,
-        start_time: windowStart.toISOString(),
-        end_time: windowEnd.toISOString(),
+        start_time: win.start.toISOString(),
+        end_time: win.end.toISOString(),
       });
-      const { data } = await c.get(`/event_type_available_times?${params.toString()}`);
-      for (const s of data.collection || []) {
-        if (s.status && s.status !== 'available') continue;
-        slots.push({
-          startTime: s.start_time,
-          label: formatSlotLabel(s.start_time, tz),
-          schedulingUrl: s.scheduling_url || '',
-        });
-        if (slots.length >= limit) break;
+      const { data } = await c.get(`/event_type_available_times?${params.toString()}`, { timeout });
+      return data;
+    });
+
+  const windows = buildAvailabilityWindows(days, now);
+  const deadline = Date.now() + budgetMs;
+  const slots = [];
+  let complete = true; // did we read the whole horizon?
+  let firstError = null;
+
+  try {
+    for (let i = 0; i < windows.length; i += AVAIL_WAVE) {
+      if (slots.length >= AVAIL_CACHE_MAX) {
+        complete = false;
+        break;
       }
-      windowStart = windowEnd;
+      const remaining = deadline - Date.now();
+      if (remaining < AVAIL_MIN_WAVE_MS) {
+        complete = false;
+        break;
+      }
+      const wave = windows.slice(i, i + AVAIL_WAVE);
+      // A single slow window can never outlive the budget.
+      const perRequest = Math.max(1_500, remaining);
+      const results = await Promise.all(
+        wave.map((win) =>
+          readWindow(win, perRequest).catch((err) => {
+            if (!firstError) firstError = err;
+            return null;
+          })
+        )
+      );
+      // Windows are chronological, so merging in wave order keeps the
+      // soonest slots first.
+      for (const data of results) {
+        if (!data) {
+          complete = false;
+          continue;
+        }
+        for (const s of data.collection || []) {
+          if (s.status && s.status !== 'available') continue;
+          slots.push({
+            startTime: s.start_time,
+            label: formatSlotLabel(s.start_time, tz),
+            schedulingUrl: s.scheduling_url || '',
+          });
+          if (slots.length >= AVAIL_CACHE_MAX) break;
+        }
+      }
+      if (slots.length >= limit) {
+        // We have what the caller asked for; anything beyond is unread.
+        if (i + AVAIL_WAVE < windows.length) complete = false;
+        break;
+      }
     }
-    return { ok: true, slots };
   } catch (err) {
+    // Every window failed before producing anything usable.
+    if (!slots.length) {
+      return {
+        ok: false,
+        message: err.response?.data?.message || err.message || 'Could not read Calendly availability.',
+        slots: [],
+      };
+    }
+    complete = false;
+  }
+
+  if (!slots.length && firstError) {
     return {
       ok: false,
-      message: err.response?.data?.message || err.message || 'Could not read Calendly availability.',
-      slots,
+      message:
+        firstError.response?.data?.message || firstError.message || 'Could not read Calendly availability.',
+      slots: [],
     };
   }
+
+  availabilityCache.set(key, { at: Date.now(), slots: slots.slice(0, AVAIL_CACHE_MAX), complete, days });
+  return { ok: true, slots: slots.slice(0, limit), partial: !complete, cached: false };
+}
+
+// Warm the availability cache without making anyone wait — called when a call
+// is dispatched so the agent's mid-call get_availability hit is instant.
+function primeAvailability(opts = {}) {
+  return listAvailableTimes({ ...opts, refresh: true }).catch(() => null);
 }
 
 // List the owner's Calendly event types so the UI can offer a picker instead
@@ -1359,6 +1484,9 @@ module.exports = {
   resolveTimezone,
   formatSlotLabel,
   listAvailableTimes,
+  primeAvailability,
+  buildAvailabilityWindows,
+  clearAvailabilityCache,
   createSchedulingLink,
   bookOnCalendly,
   getEventType,
