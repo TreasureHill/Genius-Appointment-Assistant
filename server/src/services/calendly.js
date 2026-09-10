@@ -142,15 +142,29 @@ function formatSlotLabel(startTimeIso, timeZone = 'America/New_York') {
 // tool hit right after the pre-call fetch — is instant.
 
 const AVAIL_CHUNK_DAYS = 7;
-const AVAIL_WAVE = 3; // windows fetched in parallel per wave
-const AVAIL_CACHE_TTL_MS = 90_000;
+// 5 windows at a time covers 35 days per round trip, so a 60-day horizon is
+// two round trips even when the next opening is weeks out.
+const AVAIL_WAVE = 5;
 const AVAIL_CACHE_MAX = 12; // keep a few extra slots so a bigger limit still hits
 const AVAIL_BUDGET_MS = 6_000; // stay well under the agent's tool timeout
+// One slow window can never eat the whole budget.
+const AVAIL_REQUEST_MAX_MS = 4_000;
 // Don't start another wave on a sliver of budget — a wave that can't finish
 // in time only delays the answer.
 const AVAIL_MIN_WAVE_MS = 750;
+// Stale-while-revalidate: inside FRESH we just answer; between FRESH and STALE
+// we answer instantly AND refresh behind the scenes. Openings weeks out don't
+// change minute to minute, and book_appointment re-validates with Calendly
+// anyway (a slot taken in the meantime is already handled).
+const AVAIL_FRESH_MS = 90_000;
+const AVAIL_STALE_MS = 10 * 60_000;
 
-const availabilityCache = new Map(); // `${uri}|${tz}` -> { at, slots, complete }
+const availabilityCache = new Map(); // `${uri}|${tz}` -> { at, slots, complete, days }
+const availabilityRefreshing = new Set(); // keys with a background refresh in flight
+// The last lookup that actually produced slots, for any event type. Used as a
+// last resort when a fresh read is too slow — real times the agent can offer
+// beat "the calendar took too long".
+let lastGoodAvailability = null; // { at, slots }
 
 function availabilityCacheKey(uri, tz) {
   return `${uri}|${tz}`;
@@ -172,6 +186,8 @@ function buildAvailabilityWindows(days = 60, now = Date.now()) {
 
 function clearAvailabilityCache() {
   availabilityCache.clear();
+  availabilityRefreshing.clear();
+  lastGoodAvailability = null;
 }
 
 // Pull real open slots from Calendly. Returns
@@ -208,13 +224,25 @@ async function listAvailableTimes({
 
   // Serve from cache when it can answer this request: either it already holds
   // enough slots, or it read the whole horizon and that's all there is.
-  if (!refresh) {
-    const hit = availabilityCache.get(key);
-    // "Complete" only counts for a horizon at least as wide as this request —
-    // a fully-read week can't answer a question about the next two months.
-    const answers = hit && (hit.slots.length >= limit || (hit.complete && hit.days >= days));
-    if (hit && answers && Date.now() - hit.at < AVAIL_CACHE_TTL_MS) {
-      return { ok: true, slots: hit.slots.slice(0, limit), cached: true, partial: false };
+  const cached = availabilityCache.get(key);
+  // "Complete" only counts for a horizon at least as wide as this request —
+  // a fully-read week can't answer a question about the next two months.
+  const cacheAnswers = cached && (cached.slots.length >= limit || (cached.complete && cached.days >= days));
+  if (!refresh && cacheAnswers) {
+    const age = Date.now() - cached.at;
+    if (age < AVAIL_STALE_MS) {
+      // Aging but usable: answer now, refresh behind the scenes so the next
+      // caller gets fresh times without anyone waiting.
+      if (age >= AVAIL_FRESH_MS) {
+        refreshAvailabilityInBackground(key, { eventTypeUri: uri, days, limit, timeZone: tz, fetchWindow });
+      }
+      return {
+        ok: true,
+        slots: cached.slots.slice(0, limit),
+        cached: true,
+        stale: age >= AVAIL_FRESH_MS,
+        partial: false,
+      };
     }
   }
 
@@ -231,10 +259,12 @@ async function listAvailableTimes({
     });
 
   const windows = buildAvailabilityWindows(days, now);
-  const deadline = Date.now() + budgetMs;
+  const startedAt = Date.now();
+  const deadline = startedAt + budgetMs;
   const slots = [];
   let complete = true; // did we read the whole horizon?
   let firstError = null;
+  let windowsRead = 0;
 
   try {
     for (let i = 0; i < windows.length; i += AVAIL_WAVE) {
@@ -249,7 +279,8 @@ async function listAvailableTimes({
       }
       const wave = windows.slice(i, i + AVAIL_WAVE);
       // A single slow window can never outlive the budget.
-      const perRequest = Math.max(1_500, remaining);
+      const perRequest = Math.min(Math.max(1_500, remaining), AVAIL_REQUEST_MAX_MS);
+      windowsRead += wave.length;
       const results = await Promise.all(
         wave.map((win) =>
           readWindow(win, perRequest).catch((err) => {
@@ -282,28 +313,53 @@ async function listAvailableTimes({
       }
     }
   } catch (err) {
-    // Every window failed before producing anything usable.
-    if (!slots.length) {
-      return {
-        ok: false,
-        message: err.response?.data?.message || err.message || 'Could not read Calendly availability.',
-        slots: [],
-      };
-    }
+    if (!slots.length) return availabilityFailure(err, cached, limit, startedAt);
     complete = false;
   }
 
-  if (!slots.length && firstError) {
-    return {
-      ok: false,
-      message:
-        firstError.response?.data?.message || firstError.message || 'Could not read Calendly availability.',
-      slots: [],
-    };
-  }
+  if (!slots.length && firstError) return availabilityFailure(firstError, cached, limit, startedAt);
 
   availabilityCache.set(key, { at: Date.now(), slots: slots.slice(0, AVAIL_CACHE_MAX), complete, days });
+  if (slots.length) lastGoodAvailability = { at: Date.now(), slots: slots.slice(0, AVAIL_CACHE_MAX) };
+  logAvailability(startedAt, windowsRead, slots.length, complete ? '' : ' (partial)');
   return { ok: true, slots: slots.slice(0, limit), partial: !complete, cached: false };
+}
+
+// Nothing readable this time. Fall back to whatever we last knew rather than
+// telling the homeowner the calendar is broken — booking re-checks anyway.
+function availabilityFailure(err, cached, limit, startedAt) {
+  const message =
+    err?.response?.data?.message || err?.message || 'Could not read Calendly availability.';
+  if (cached && cached.slots.length) {
+    logAvailability(startedAt, 0, cached.slots.length, ` (failed, served ${cached.slots.length} cached)`);
+    return { ok: true, slots: cached.slots.slice(0, limit), cached: true, stale: true, partial: true };
+  }
+  logAvailability(startedAt, 0, 0, ` (failed: ${message})`);
+  return { ok: false, message, slots: [] };
+}
+
+function logAvailability(startedAt, windowsRead, slotCount, note) {
+  console.log(
+    `[calendly] availability: ${Date.now() - startedAt} ms, ${windowsRead} window(s), ${slotCount} slot(s)${note}`
+  );
+}
+
+// Refresh one cache entry without making anyone wait. At most one refresh per
+// key is in flight.
+function refreshAvailabilityInBackground(key, opts) {
+  if (availabilityRefreshing.has(key)) return;
+  availabilityRefreshing.add(key);
+  listAvailableTimes({ ...opts, limit: AVAIL_CACHE_MAX, refresh: true })
+    .catch(() => null)
+    .finally(() => availabilityRefreshing.delete(key));
+}
+
+// The most recent slots we successfully read, for any event type. `maxAgeMs`
+// guards against offering times from hours ago.
+function lastKnownAvailability({ limit = 6, maxAgeMs = AVAIL_STALE_MS } = {}) {
+  if (!lastGoodAvailability) return null;
+  if (Date.now() - lastGoodAvailability.at > maxAgeMs) return null;
+  return { ok: true, slots: lastGoodAvailability.slots.slice(0, limit), cached: true, stale: true };
 }
 
 // Warm the availability cache without making anyone wait — called when a call
@@ -1487,6 +1543,9 @@ module.exports = {
   primeAvailability,
   buildAvailabilityWindows,
   clearAvailabilityCache,
+  lastKnownAvailability,
+  // Tests reach in to backdate entries; nothing in the app uses this.
+  __availabilityCacheForTests: () => availabilityCache,
   createSchedulingLink,
   bookOnCalendly,
   getEventType,
