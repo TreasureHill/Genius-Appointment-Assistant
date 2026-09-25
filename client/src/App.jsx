@@ -15,6 +15,7 @@ import Activity from './pages/Activity.jsx';
 import Settings from './pages/Settings.jsx';
 import CalendlyEvents from './pages/CalendlyEvents.jsx';
 import Reports from './pages/Reports.jsx';
+import Reviews from './pages/Reviews.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 function Protected({ children }) {
@@ -52,6 +53,7 @@ export default function App() {
         <Route path="/history" element={<Navigate to="/activity" replace />} />
         <Route path="/calendly" element={<CalendlyEvents />} />
         <Route path="/reports" element={<Reports />} />
+        <Route path="/reviews" element={<Reviews />} />
         <Route path="/settings" element={<Settings />} />
         {/* Unknown paths get a real 404 inside the app shell instead of a
             silent redirect to the dashboard. */}

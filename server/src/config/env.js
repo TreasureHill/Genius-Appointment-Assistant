@@ -66,6 +66,12 @@ const env = {
   aria: {
     toolSecret: process.env.ARIA_TOOL_SECRET || '',
   },
+  // Google reviews (Reviews tab). The SerpApi key can also be pasted into
+  // the Reviews tab itself (stored in Settings); this is the headless fallback.
+  reviews: {
+    serpapiKey: process.env.SERPAPI_KEY || '',
+    placeId: process.env.GOOGLE_PLACE_ID || '',
+  },
   defaults: {
     pacingMin: toInt(process.env.DEFAULT_PACING_MIN_SEC, 30),
     pacingMax: toInt(process.env.DEFAULT_PACING_MAX_SEC, 120),

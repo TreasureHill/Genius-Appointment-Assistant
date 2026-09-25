@@ -16,7 +16,8 @@
     "test:render": "node src/services/__tests__/templateRender.test.js",
     "test:elevenlabs": "node src/services/__tests__/elevenlabs.helpers.test.js",
     "test:availability": "node src/services/__tests__/availability.test.js",
-    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render && npm run test:elevenlabs && npm run test:availability"
+    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render && npm run test:elevenlabs && npm run test:availability && npm run test:reviews",
+    "test:reviews": "node src/services/__tests__/reviews.test.js"
   },
   "dependencies": {
     "axios": "^1.7.7",
@@ -33,6 +34,7 @@
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.16",
+    "pptxgenjs": "^4.0.1",
     "twilio": "^5.3.5",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },

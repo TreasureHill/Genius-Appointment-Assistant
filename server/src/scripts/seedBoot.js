@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Template = require('../models/Template');
 const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
+const Rep = require('../models/Rep');
 const env = require('../config/env');
 const { resolveScheduleTimezone } = require('../services/sendWindow');
 const { replanPendingOutbox } = require('../services/outboxPlanner');
@@ -96,9 +97,32 @@ at {{lot.address}}. You can pick a time here:
   console.log('[seed] inserted starter templates');
 }
 
+// The Reviews tab credits Google reviews to our reps by the names / nicknames
+// reviewers use. Start with the Genius technicians the weekly deck tracked;
+// everything is editable in the Reviews tab (Reps & matching).
+const DEFAULT_REPS = [
+  { name: 'Jason', aliases: ['jason', 'jeson'] },
+  { name: 'Salman', aliases: ['salman', 'solman', 'syed', 'syed salman', 'syedsalman'] },
+  { name: 'Alvee', aliases: ['alvee', 'alvi', 'alvy'] },
+];
+
+async function seedReviewReps() {
+  if ((await Rep.countDocuments()) > 0) return;
+  await Rep.create(
+    DEFAULT_REPS.map((r, i) => ({
+      name: r.name,
+      aliases: Rep.normalizeAliases(r.name, r.aliases),
+      color: Rep.COLORS[i % Rep.COLORS.length],
+      sortOrder: i,
+    }))
+  );
+  console.log(`[seed] inserted ${DEFAULT_REPS.length} reps for the Reviews tab`);
+}
+
 module.exports = {
   seedAdmin,
   seedStarterTemplates,
+  seedReviewReps,
   migrateBookedToScheduled,
   migrateCalendlyWarnings,
   migrateScheduleTimezone,
