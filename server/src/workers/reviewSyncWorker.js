@@ -4,6 +4,7 @@ const sync = require('../services/reviews/sync');
 
 const MS_HOUR = 60 * 60 * 1000;
 const MS_DAY = 24 * MS_HOUR;
+const BACKFILL_RETRY_MS = MS_DAY;
 
 // Keeps the Reviews tab fresh without anyone clicking Sync: an incremental
 // read every `autoSyncHours` (1–3 SerpApi searches) and, when enabled, a
@@ -16,16 +17,19 @@ async function runIfDue({ now = Date.now() } = {}) {
   if (sync.isRunning()) return { skipped: 'running' };
   const hours = Number(rv.autoSyncHours) || 0;
   const fullDays = Number(rv.fullSyncDays) || 0;
-  const lastFull = rv.lastFullSyncAt ? new Date(rv.lastFullSyncAt).getTime() : 0;
-  const last = rv.lastSyncAt ? new Date(rv.lastSyncAt).getTime() : 0;
+  const at = (d) => (d ? new Date(d).getTime() : 0);
+  const last = at(rv.lastSyncAt);
+  // Full reads are paced by the last ATTEMPT (complete, partial or failed):
+  // an incomplete listing must never turn into a ~40-search read every tick.
+  const lastFullAttempt = Math.max(at(rv.lastFullAttemptAt), at(rv.lastFullSyncAt));
   const incrementalDue = hours > 0 && now - last >= hours * MS_HOUR;
-  // A store holding far fewer reviews than the listing reports (a backfill
-  // that only got Google's newest-first feed) is re-read in full as soon as
-  // any sync is due, whatever the full-read cadence says.
-  const partial = (incrementalDue || fullDays > 0) && (await sync.storeLooksPartial(setting));
-  const fullDue = (fullDays > 0 && now - lastFull >= fullDays * MS_DAY) || partial;
+  const fullByCadence = fullDays > 0 && now - lastFullAttempt >= fullDays * MS_DAY;
+  // A store holding far fewer reviews than the listing reports is re-read in
+  // full ahead of the cadence, but at most once a day.
+  const backfillDue = now - lastFullAttempt >= BACKFILL_RETRY_MS && (await sync.storeLooksPartial(setting));
+  const fullDue = fullByCadence || backfillDue;
   if (!fullDue && !incrementalDue) return { skipped: 'fresh' };
-  return sync.runSync({ full: fullDue, trigger: partial ? 'scheduled:backfill' : 'scheduled' });
+  return sync.runSync({ full: fullDue, trigger: backfillDue && !fullByCadence ? 'scheduled:backfill' : 'scheduled' });
 }
 
 function start() {

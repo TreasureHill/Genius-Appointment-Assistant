@@ -128,6 +128,34 @@ const SettingSchema = new mongoose.Schema(
       // Treasure Hill - Corporate listing.
       placeId: { type: String, default: '' },
       geniusTerms: { type: [String], default: ['genius', 'genious', 'genuis', 'genus'] },
+      // Words that suggest a Genius job in a review that names nobody and
+      // never says Genius. They never tag a review; they only surface it
+      // under "Possibly Genius" so it can be mapped by hand.
+      hintTerms: {
+        type: [String],
+        default: [
+          'google home',
+          'smart home',
+          'smart tech',
+          'security camera',
+          'security cameras',
+          'cameras',
+          'nvr',
+          'alarm panel',
+          'doorbell',
+          'thermostat',
+          'sonos',
+          'speakers',
+          'wifi',
+          'wi-fi',
+          'router',
+          'network',
+          'smart lock',
+          'garage opener',
+          'remote garage',
+          'devices',
+        ],
+      },
       // Incremental sync cadence in hours (0 = only when you click Sync now).
       autoSyncHours: { type: Number, default: 12, min: 0 },
       // Every N days also re-read the whole listing (~40–50 searches) so edits
@@ -137,7 +165,12 @@ const SettingSchema = new mongoose.Schema(
       companyName: { type: String, default: 'TREASURE HILL' },
       reportTitle: { type: String, default: 'Genius Google Reviews' },
       lastSyncAt: { type: Date, default: null },
+      // Last COMPLETE full read (drives "last full read" on the page).
       lastFullSyncAt: { type: Date, default: null },
+      // Last full read attempted at all, complete or partial or failed — the
+      // cadence and the backfill retry are measured from this so an
+      // incomplete listing never turns into a full read every 15 minutes.
+      lastFullAttemptAt: { type: Date, default: null },
       lastSync: {
         ok: { type: Boolean, default: false },
         full: { type: Boolean, default: false },

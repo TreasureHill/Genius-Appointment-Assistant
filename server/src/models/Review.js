@@ -44,6 +44,10 @@ const ReviewSchema = new mongoose.Schema(
       terms: { type: [String], default: [] },
       termHit: { type: Boolean, default: false },
       genius: { type: Boolean, default: false },
+      // Smart-home words found in a review that is NOT Genius-tagged: a
+      // "possibly Genius" candidate for someone to map by hand.
+      hints: { type: [String], default: [] },
+      hint: { type: Boolean, default: false },
     },
     manual: {
       repsSet: { type: Boolean, default: false },
@@ -62,6 +66,7 @@ const ReviewSchema = new mongoose.Schema(
 );
 
 ReviewSchema.index({ genius: 1, effectiveAt: -1 });
+ReviewSchema.index({ genius: 1, 'auto.hint': 1 });
 ReviewSchema.index({ rating: 1, effectiveAt: -1 });
 
 module.exports = mongoose.model('Review', ReviewSchema);

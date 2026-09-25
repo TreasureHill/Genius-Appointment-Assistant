@@ -96,15 +96,17 @@ function RepRow({ rep, onChanged }) {
   );
 }
 
-export default function RepsManageCard({ reps, geniusTerms, onChanged }) {
+export default function RepsManageCard({ reps, geniusTerms, hintTerms, onChanged }) {
   const [add, setAdd] = useState({ name: '', aliases: '', role: 'Genius technician' });
   const [terms, setTerms] = useState((geniusTerms || []).join(', '));
+  const [hints, setHints] = useState((hintTerms || []).join(', '));
   const [phrase, setPhrase] = useState('');
   const [tried, setTried] = useState(null);
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
 
   const termsDirty = terms !== (geniusTerms || []).join(', ');
+  const hintsDirty = hints !== (hintTerms || []).join(', ');
 
   async function run(label, fn) {
     setBusy(label);
@@ -229,6 +231,32 @@ export default function RepsManageCard({ reps, geniusTerms, onChanged }) {
         </div>
       </div>
 
+      <div className="row" style={{ marginTop: 12, alignItems: 'flex-end' }}>
+        <div style={{ flex: 2 }}>
+          <label style={{ marginTop: 0 }}>
+            "Possibly Genius" hint words — flag untagged reviews that mention smart-home work (never tags them; you decide and map)
+          </label>
+          <input value={hints} onChange={(e) => setHints(e.target.value)} placeholder="google home, cameras, wifi, doorbell, thermostat" />
+        </div>
+        <div style={{ flex: '0 0 auto' }}>
+          <button
+            type="button"
+            className="secondary"
+            disabled={busy === 'hints' || !hintsDirty}
+            onClick={() =>
+              run('hints', async () => {
+                const r = await api.patch('/api/reviews/config', { hintTerms: hints });
+                setHints((r.hintTerms || []).join(', '));
+                setMsg(r.rematch ? `Saved hint words · re-checked ${plural(r.rematch.scanned, 'review')}, ${r.rematch.changed} changed.` : 'Saved hint words.');
+                onChanged();
+              })
+            }
+          >
+            {busy === 'hints' ? 'Saving…' : 'Save hint words'}
+          </button>
+        </div>
+      </div>
+
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -260,6 +288,7 @@ export default function RepsManageCard({ reps, geniusTerms, onChanged }) {
           {' · '}
           Genius-related: <strong>{tried.genius ? 'yes' : 'no'}</strong>
           {tried.termHit ? ` (term "${tried.terms.join('", "')}")` : ''}
+          {!tried.genius && tried.hint ? ` · possibly Genius (mentions "${tried.hints.join('", "')}")` : ''}
         </div>
       )}
       {msg && (

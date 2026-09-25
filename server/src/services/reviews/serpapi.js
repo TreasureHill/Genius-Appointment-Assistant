@@ -95,6 +95,15 @@ async function fetchAccount(apiKey, { http = axios } = {}) {
   };
 }
 
+// A page is "short" when Google's feed appears to end while the listing
+// still has plenty more: no token or no items, but we hold well under the
+// listing's own review count. SerpApi's paginated requests are known to fail
+// intermittently (public-roadmap #3939, #2794) and its cache keeps a bad page
+// for an hour, so such a page is re-fetched with no_cache before we believe
+// it. Retries cost one search each, so they are capped.
+const PAGE_RETRIES = 2;
+const isShortEnd = (items, token, kept, total) => (!token || items.length === 0) && total && kept + items.length < total * 0.9;
+
 // Page through the listing in `sortBy` order. With `since` (newest-first
 // only), stop at the first review whose last edit is older than it — everything
 // after is older still. Returns the normalised reviews, the listing's own
@@ -109,11 +118,13 @@ async function fetchReviews({
   http = axios,
   pauseMs = 1000,
   onPage = null,
+  pageRetries = PAGE_RETRIES,
 } = {}) {
   if (!apiKey) throw new Error('SerpApi key not configured');
   const reviews = [];
   const meta = {};
   let searches = 0;
+  let retries = 0;
   let nextToken = null;
   let stopped = false;
   let exhausted = false;
@@ -130,17 +141,48 @@ async function fetchReviews({
       params.next_page_token = nextToken;
       params.num = 20; // only allowed after the first page (which is always 8)
     }
-    const { data } = await http.get(SEARCH_URL, { params, timeout: 60_000 });
-    searches += 1;
-    if (!data || data.error) throw new Error(`SerpApi: ${(data && data.error) || 'empty response'}`);
-    if (searches === 1) {
-      const p = data.place_info || {};
-      meta.title = p.title || '';
-      meta.address = p.address || '';
-      meta.rating = p.rating != null ? Number(p.rating) : null;
-      meta.total = p.reviews != null ? Number(p.reviews) : null;
+
+    // Fetch this page; on an error or a suspiciously short end, try again
+    // (fresh, not from SerpApi's cache) up to `pageRetries` times.
+    let data = null;
+    let items = [];
+    let token = null;
+    let lastError = null;
+    for (let attempt = 0; attempt <= pageRetries; attempt++) {
+      const p = attempt === 0 ? params : { ...params, no_cache: true };
+      try {
+        const res = await http.get(SEARCH_URL, { params: p, timeout: 60_000 });
+        searches += 1;
+        data = res && res.data;
+        if (!data || data.error) throw new Error(`SerpApi: ${(data && data.error) || 'empty response'}`);
+        lastError = null;
+      } catch (err) {
+        lastError = err;
+        data = null;
+      }
+      if (data) {
+        if (searches === 1 || (!meta.total && data.place_info)) {
+          const pi = data.place_info || {};
+          meta.title = pi.title || meta.title || '';
+          meta.address = pi.address || meta.address || '';
+          meta.rating = pi.rating != null ? Number(pi.rating) : meta.rating ?? null;
+          meta.total = pi.reviews != null ? Number(pi.reviews) : meta.total ?? null;
+        }
+        items = Array.isArray(data.reviews) ? data.reviews : [];
+        token = nextTokenOf(data);
+        // Only a page that is neither the true end nor a genuine full page is
+        // worth another search; a first page with a Google error is retried too.
+        if (!isShortEnd(items, token, reviews.length, meta.total)) break;
+      } else if (searches === 1 && attempt === pageRetries) {
+        break; // the listing itself is unreadable; give up below
+      }
+      if (attempt < pageRetries) {
+        retries += 1;
+        await sleep(pauseMs ? pauseMs * (attempt + 1) : 0);
+      }
     }
-    const items = Array.isArray(data.reviews) ? data.reviews : [];
+    if (!data) throw lastError || new Error('SerpApi: empty response');
+
     for (const item of items) {
       const r = normalizeItem(item);
       if (!r) continue;
@@ -152,7 +194,7 @@ async function fetchReviews({
     }
     if (onPage) onPage({ page: searches, got: items.length, kept: reviews.length });
     if (stopped) break;
-    nextToken = nextTokenOf(data);
+    nextToken = token;
     if (!nextToken || items.length === 0) {
       exhausted = true;
       break;
@@ -163,6 +205,7 @@ async function fetchReviews({
     reviews,
     meta,
     searches,
+    retries,
     sortBy,
     reachedSince: stopped,
     exhausted,
@@ -182,7 +225,7 @@ async function readListing({ apiKey, placeId = DEFAULT_PLACE_ID, since = null, .
   if (incremental && !result.reachedSince && !result.truncated) {
     escalated = true;
     const all = await fetchReviews({ apiKey, placeId, since: null, sortBy: SORT_ALL, ...rest });
-    result = { ...all, meta: { ...result.meta, ...all.meta }, searches: result.searches + all.searches };
+    result = { ...all, meta: { ...result.meta, ...all.meta }, searches: result.searches + all.searches, retries: result.retries + all.retries };
   }
   return { ...result, full: !incremental || escalated, escalated };
 }

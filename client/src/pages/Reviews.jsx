@@ -230,13 +230,18 @@ export default function Reviews() {
       </div>
     );
   } else {
-    const partial = ls && ls.warning;
+    const partial = stats.partial || (ls && ls.warning);
     strip = (
       <div className={`card alert ${partial || stale ? 'alert-warn' : ''}`} style={{ padding: '10px 16px', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <span>
-          {partial ? (
+          {stats.partial ? (
             <>
-              <strong>Incomplete:</strong> {ls.warning}{' '}
+              <strong>Incomplete:</strong> {stats.stored.toLocaleString()} of the listing's {Number(stats.listingTotal).toLocaleString()} reviews are stored, so
+              all-time numbers are low. A full re-read runs automatically (or use <em>Full resync now</em> under Setup).{' '}
+            </>
+          ) : ls && ls.warning ? (
+            <>
+              <strong>Note:</strong> {ls.warning}{' '}
             </>
           ) : null}
           {stats.lastSyncAt ? (
@@ -335,6 +340,7 @@ export default function Reviews() {
         <Tile label={`5★ Genius ${period}`} value={w.geniusFiveStar} hint={w.genius ? `${Number(w.geniusAvgRating).toFixed(2)} average` : undefined} accent={w.genius && w.geniusFiveStar === w.genius ? 'ok' : ''} onClick={() => goToLog('five')} title={`Show the five-star reviews ${period}`} />
         <Tile label={`Other reviews ${period}`} value={w.other} hint="not Genius-related" onClick={() => goToLog('other')} title={`Show the non-Genius reviews ${period}`} />
         <Tile label="Needs mapping" value={w.unmapped} hint={w.unmapped ? 'Genius-related, credited to nobody' : 'every Genius review has a rep'} accent={w.unmapped ? 'err' : ''} onClick={() => goToLog('unmapped')} title="Genius-related reviews the matcher could not credit — map them by hand" />
+        <Tile label="Possibly Genius" value={w.hinted} hint={w.hinted ? 'mentions smart-home work, not tagged' : 'nothing untagged looks like Genius work'} accent={w.hinted ? 'warn' : ''} onClick={() => goToLog('hint')} title="Reviews that name no rep and never say Genius but mention cameras, Google Home, wifi… — map them if they were Genius jobs" />
         <Tile label="Rated 3★ or less" value={w.lowRated} hint={w.lowRated ? `${w.lowUnreplied} without an owner reply` : `none ${period}`} accent={w.lowRated ? 'err' : ''} onClick={() => goToLog('low')} title={`Show the low-rated reviews ${period}`} />
         <Tile label="Genius reviews all time" value={stats.allTime.genius.toLocaleString()} hint={`${stats.allTime.geniusFiveStar.toLocaleString()} five-star · ${stats.allTime.total.toLocaleString()} reviews stored`} />
         {listing && listing.total ? <Tile label="On Google" value={Number(listing.total).toLocaleString()} hint={listing.rating ? `${Number(listing.rating).toFixed(1)}★ listing average` : undefined} /> : null}
@@ -372,9 +378,10 @@ export default function Reviews() {
           <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>
             {plural(reps.filter((r) => r.active !== false).length, 'active rep')} · Genius terms: {(config.geniusTerms || []).join(', ') || 'none'}
             {config.counts.unmapped ? ` · ${plural(config.counts.unmapped, 'review')} still need mapping` : ''}
+            {config.counts.hinted ? ` · ${plural(config.counts.hinted, 'untagged review')} look like Genius work` : ''}
           </span>
         </summary>
-        {repsOpen && <RepsManageCard reps={reps} geniusTerms={config.geniusTerms} onChanged={refreshAll} />}
+        {repsOpen && <RepsManageCard reps={reps} geniusTerms={config.geniusTerms} hintTerms={config.hintTerms} onChanged={refreshAll} />}
       </details>
       <details id="reviews-setup" className="rv-details" open={setupOpen} onToggle={(e) => setSetupOpen(e.target.open)}>
         <summary>

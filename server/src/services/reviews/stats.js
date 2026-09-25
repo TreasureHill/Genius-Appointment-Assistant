@@ -133,6 +133,8 @@ function summarize(list) {
     lowUnreplied: list.filter((r) => Number(r.rating) > 0 && Number(r.rating) <= 3 && !(r.reply && r.reply.text)).length,
     // Genius-related but credited to nobody — the ones to map by hand.
     unmapped: genius.filter((r) => !(r.reps && r.reps.length)).length,
+    // Not Genius-tagged, but the text mentions smart-home work — worth a look.
+    hinted: list.filter((r) => !r.genius && r.auto && r.auto.hint).length,
     manual: list.filter((r) => r.mappingSource === 'manual').length,
     ratings: ratingMix(list),
     geniusRatings: ratingMix(genius),

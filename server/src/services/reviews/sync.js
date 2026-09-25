@@ -35,13 +35,17 @@ function isRunning() {
 async function loadMatchers(setting) {
   const reps = await Rep.find({ active: true }).lean();
   const s = setting || (await Setting.getSingleton());
-  return compileMatchers({ reps, geniusTerms: (s.reviews && s.reviews.geniusTerms) || [] });
+  return compileMatchers({
+    reps,
+    geniusTerms: (s.reviews && s.reviews.geniusTerms) || [],
+    hintTerms: (s.reviews && s.reviews.hintTerms) || [],
+  });
 }
 
 // Recompute the automatic tags on a document and refresh its effective fields.
 function applyClassification(doc, matchers) {
   const c = classifyText(doc.text, matchers);
-  doc.auto = { reps: c.reps, aliases: c.aliases, terms: c.terms, termHit: c.termHit, genius: c.genius };
+  doc.auto = { reps: c.reps, aliases: c.aliases, terms: c.terms, termHit: c.termHit, genius: c.genius, hints: c.hints, hint: c.hint };
   refreshEffective(doc);
 }
 
@@ -137,6 +141,14 @@ async function runSync({ full = false, trigger = 'manual' } = {}) {
       else full = true; // nothing stored yet: the first sync is the backfill
     }
     const startedAt = Date.now();
+    if (full) {
+      // Stamp the attempt first: a read that fails or comes back partial
+      // still counts against the cadence, so a bad day costs one full read,
+      // not one per worker tick.
+      setting.reviews = setting.reviews || {};
+      setting.reviews.lastFullAttemptAt = new Date();
+      await setting.save();
+    }
     try {
       const read = await serpapi.readListing({ apiKey, placeId, since });
       const { reviews, meta, searches, truncated, escalated } = read;
@@ -152,9 +164,12 @@ async function runSync({ full = false, trigger = 'manual' } = {}) {
       const warning = completenessWarning({ full, fetched: reviews.length, total: meta.total });
       setting.reviews = setting.reviews || {};
       setting.reviews.lastSyncAt = now;
-      // A partial full read must not count as one, or the worker would wait a
-      // month before trying again.
-      if (full && !warning) setting.reviews.lastFullSyncAt = now;
+      if (full) {
+        // An incremental read that escalated is a full read too.
+        setting.reviews.lastFullAttemptAt = now;
+        // Only a complete read counts as "the last full read".
+        if (!warning) setting.reviews.lastFullSyncAt = now;
+      }
       if (meta.total != null || meta.rating != null) {
         setting.reviews.listing = {
           title: meta.title || '',
@@ -203,9 +218,10 @@ async function rematchAll() {
   const cursor = Review.find({}).cursor();
   for await (const doc of cursor) {
     scanned += 1;
-    const before = JSON.stringify([doc.reps.map(String), doc.genius, doc.mappingSource, (doc.auto && doc.auto.reps || []).map(String), doc.auto && doc.auto.termHit]);
+    const snapshot = (d) => JSON.stringify([d.reps.map(String), d.genius, d.mappingSource, ((d.auto && d.auto.reps) || []).map(String), d.auto && d.auto.termHit, d.auto && d.auto.hint, (d.auto && d.auto.hints) || []]);
+    const before = snapshot(doc);
     applyClassification(doc, matchers);
-    const after = JSON.stringify([doc.reps.map(String), doc.genius, doc.mappingSource, doc.auto.reps.map(String), doc.auto.termHit]);
+    const after = snapshot(doc);
     if (before !== after) {
       changed += 1;
       await doc.save();

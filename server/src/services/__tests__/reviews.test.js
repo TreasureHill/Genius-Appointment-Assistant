@@ -77,6 +77,19 @@ t('regex-special characters in aliases are escaped', () => {
   assert.deepStrictEqual(classifyText('A.J. was here', m).reps, ['x']);
   assert.deepStrictEqual(classifyText('AXJX was here', m).reps, []);
 });
+t('hint words flag an untagged smart-home review as "possibly Genius" without tagging it', () => {
+  const m = compileMatchers({ reps: REPS, geniusTerms: TERMS, hintTerms: ['google home', 'cameras', 'wifi'] });
+  const c = classifyText('Amazing job setting up google home, remote garage opening and Sonos speakers.', m);
+  assert.strictEqual(c.genius, false);
+  assert.strictEqual(c.hint, true);
+  assert.deepStrictEqual(c.hints, ['google home']);
+  // A tagged review can carry hints too; the page only shows the badge when it is NOT Genius.
+  const g = classifyText('Jason set up our cameras and wifi.', m);
+  assert.strictEqual(g.genius, true);
+  assert.deepStrictEqual(g.hints, ['cameras', 'wifi']);
+  assert.strictEqual(classifyText('Great house, no issues.', m).hint, false);
+  assert.strictEqual(classifyText('x', compileMatchers({ reps: REPS, geniusTerms: TERMS })).hint, false);
+});
 t('accented / unicode word boundaries', () => {
   const m = compileMatchers({ reps: [{ _id: 'j', name: 'José', aliases: [] }], geniusTerms: [] });
   assert.deepStrictEqual(classifyText('Merci José!', m).reps, ['j']);
@@ -171,6 +184,7 @@ const REP_DOCS = [
 const S = computeStats({ reviews: REVIEWS, reps: REP_DOCS, tz: TZ, now: NOW });
 t('week counts use the local window end (exclusive)', () => {
   assert.strictEqual(S.week.total, 5);
+  assert.strictEqual(S.week.hinted, 0);
   assert.strictEqual(S.week.genius, 4);
   assert.strictEqual(S.week.other, 1);
   assert.strictEqual(S.week.geniusFiveStar, 3);
@@ -255,9 +269,10 @@ function fakeHttp(pages) {
   };
 }
 const day = (d) => `2026-09-${String(d).padStart(2, '0')}T12:00:00Z`;
+// A five-review listing whose feed genuinely ends after three pages.
 const PAGES = [
   {
-    place_info: { title: 'Treasure Hill', address: '101 Bradwick Dr', rating: 4.4, reviews: 770 },
+    place_info: { title: 'Treasure Hill', address: '101 Bradwick Dr', rating: 4.4, reviews: 5 },
     reviews: [{ review_id: 'p0a', iso_date: day(20), rating: 5, snippet: 'a' }, { review_id: 'p0b', iso_date: day(18), rating: 4, snippet: 'b' }],
     serpapi_pagination: { next_page_token: 'T1' },
   },
@@ -272,7 +287,8 @@ t('a full read pages through the whole listing in "most relevant" order, no num 
   const r = await serpapi.fetchReviews({ apiKey: 'k', placeId: 'P', http, pauseMs: 0 });
   assert.deepStrictEqual(r.reviews.map((x) => x.reviewId), ['p0a', 'p0b', 'p1a', 'p1b', 'p2a']);
   assert.strictEqual(r.searches, 3);
-  assert.deepStrictEqual(r.meta, { title: 'Treasure Hill', address: '101 Bradwick Dr', rating: 4.4, total: 770 });
+  assert.deepStrictEqual(r.meta, { title: 'Treasure Hill', address: '101 Bradwick Dr', rating: 4.4, total: 5 });
+  assert.strictEqual(r.retries, 0);
   assert.strictEqual(http.calls[0].params.engine, 'google_maps_reviews');
   assert.strictEqual(http.calls[0].params.place_id, 'P');
   assert.strictEqual(http.calls[0].params.sort_by, 'qualityScore');
@@ -341,13 +357,57 @@ t('readListing: when the newest-first feed runs out before `since`, the whole li
   const r = await serpapi.readListing({ apiKey: 'k', http, pauseMs: 0, since: new Date(day(1)) });
   assert.strictEqual(r.escalated, true);
   assert.strictEqual(r.full, true);
-  assert.strictEqual(r.searches, 4); // 1 newest-first page + 3 "most relevant" pages
+  // 1 newest-first page (+2 no_cache retries, since it ended at 2 of 5) + 3 "most relevant" pages
+  assert.strictEqual(r.searches, 6);
+  assert.strictEqual(r.retries, 2);
   assert.deepStrictEqual(r.reviews.map((x) => x.reviewId), ['p0a', 'p0b', 'p1a', 'p1b', 'p2a']);
-  assert.strictEqual(r.meta.total, 770);
+  assert.strictEqual(r.meta.total, 5);
 });
-t('SerpApi errors surface as errors', async () => {
+t('a page that ends the feed far below the listing total is re-fetched with no_cache, then accepted', async () => {
+  // Same three pages, but the listing claims 770 reviews: page 3 (no token, 5 kept) looks like a cut-off.
+  const big = PAGES.map((pg, i) => (i === 0 ? { ...pg, place_info: { ...pg.place_info, reviews: 770 } } : pg));
+  const http = fakeHttp(big);
+  const r = await serpapi.fetchReviews({ apiKey: 'k', http, pauseMs: 0 });
+  assert.strictEqual(r.reviews.length, 5);
+  assert.strictEqual(r.retries, 2);
+  assert.strictEqual(r.searches, 5); // 3 pages + 2 retries of the last one
+  const last3 = http.calls.slice(-3).map((c) => c.params);
+  assert.strictEqual(last3[0].no_cache, undefined);
+  assert.strictEqual(last3[1].no_cache, true);
+  assert.strictEqual(last3[2].no_cache, true);
+  assert.ok(last3.every((p) => p.next_page_token === 'T2'));
+  assert.strictEqual(r.exhausted, true);
+});
+t('a transient empty page recovers on retry and pagination continues', async () => {
+  const big = PAGES.map((pg, i) => (i === 0 ? { ...pg, place_info: { ...pg.place_info, reviews: 770 } } : pg));
+  let flaky = true;
+  const http = {
+    calls: [],
+    async get(url, { params }) {
+      http.calls.push({ url, params });
+      const idx = params.next_page_token ? Number(params.next_page_token.slice(1)) : 0;
+      if (idx === 1 && flaky) {
+        flaky = false;
+        return { data: { search_metadata: { status: 'Success' }, reviews: [] } }; // Google hiccup: empty, no token
+      }
+      return { data: big[idx] };
+    },
+  };
+  const r = await serpapi.fetchReviews({ apiKey: 'k', http, pauseMs: 0 });
+  assert.deepStrictEqual(r.reviews.map((x) => x.reviewId), ['p0a', 'p0b', 'p1a', 'p1b', 'p2a']);
+  assert.strictEqual(r.retries, 3); // one for the hiccup on page 2, two for the genuine end on page 3
+  assert.strictEqual(http.calls[2].params.no_cache, true);
+});
+t('a SerpApi error mid-walk is retried, then surfaces if it persists', async () => {
+  const pages = [PAGES[0], { error: 'Google hasn\'t returned any results for this query.' }];
+  const http = fakeHttp(pages);
+  await assert.rejects(() => serpapi.fetchReviews({ apiKey: 'k', http, pauseMs: 0 }), /hasn't returned any results/);
+  assert.strictEqual(http.calls.length, 4); // page 1 + 3 attempts at page 2
+});
+t('SerpApi errors surface as errors (an unreadable listing is retried, then given up on)', async () => {
   const http = fakeHttp([{ error: 'Invalid API key.' }]);
   await assert.rejects(() => serpapi.fetchReviews({ apiKey: 'bad', http, pauseMs: 0 }), /Invalid API key/);
+  assert.strictEqual(http.calls.length, 3);
   assert.strictEqual(serpapi.describeError({ response: { data: { error: 'nope' } } }), 'nope');
   assert.strictEqual(serpapi.describeError({ response: { status: 503 } }), 'SerpApi HTTP 503');
   assert.strictEqual(serpapi.describeError({ code: 'ECONNABORTED', message: 'timeout of 60000ms exceeded' }), 'SerpApi timed out');

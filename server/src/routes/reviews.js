@@ -44,14 +44,15 @@ function normalizeTerms(input) {
 }
 
 async function counts() {
-  const [reviews, genius, unmapped, reps, manual] = await Promise.all([
+  const [reviews, genius, unmapped, reps, manual, hinted] = await Promise.all([
     Review.countDocuments(),
     Review.countDocuments({ genius: true }),
     Review.countDocuments({ genius: true, reps: { $size: 0 } }),
     Rep.countDocuments({ active: true }),
     Review.countDocuments({ mappingSource: 'manual' }),
+    Review.countDocuments({ genius: false, 'auto.hint': true }),
   ]);
-  return { reviews, genius, unmapped, reps, manual };
+  return { reviews, genius, unmapped, reps, manual, hinted };
 }
 
 // The schema gives lastSync defaults (ok:false, at:null) before any run — the
@@ -69,6 +70,7 @@ function configJson(setting, c) {
     placeIdSource: rv.placeId ? 'settings' : env.reviews.placeId ? 'env' : 'default',
     defaultPlaceId: serpapi.DEFAULT_PLACE_ID,
     geniusTerms: rv.geniusTerms || [],
+    hintTerms: rv.hintTerms || [],
     autoSyncHours: rv.autoSyncHours ?? 12,
     fullSyncDays: rv.fullSyncDays ?? 30,
     companyName: rv.companyName || 'TREASURE HILL',
@@ -102,7 +104,7 @@ router.get('/config', async (req, res) => {
 });
 
 router.patch('/config', async (req, res) => {
-  const { serpapiKey, placeId, geniusTerms, autoSyncHours, fullSyncDays, companyName, reportTitle } = req.body || {};
+  const { serpapiKey, placeId, geniusTerms, hintTerms, autoSyncHours, fullSyncDays, companyName, reportTitle } = req.body || {};
   const setting = await Setting.getSingleton();
   setting.reviews = setting.reviews || {};
   let rematch = false;
@@ -112,6 +114,13 @@ router.patch('/config', async (req, res) => {
     const terms = normalizeTerms(geniusTerms);
     if (JSON.stringify(terms) !== JSON.stringify(setting.reviews.geniusTerms || [])) {
       setting.reviews.geniusTerms = terms;
+      rematch = true;
+    }
+  }
+  if (hintTerms != null) {
+    const terms = normalizeTerms(hintTerms);
+    if (JSON.stringify(terms) !== JSON.stringify(setting.reviews.hintTerms || [])) {
+      setting.reviews.hintTerms = terms;
       rematch = true;
     }
   }
@@ -164,15 +173,22 @@ router.get('/sync/status', (req, res) => {
 router.get('/stats', async (req, res) => {
   const { setting, tz, stats, rv } = await gather(req);
   const { weekReviews, ...rest } = stats;
+  const listingTotal = (rv.listing && rv.listing.total) || null;
   res.json({
     ...rest,
     timezone: tz,
     lastSync: lastSyncOf(rv),
     lastSyncAt: rv.lastSyncAt || null,
+    lastFullSyncAt: rv.lastFullSyncAt || null,
     autoSyncHours: rv.autoSyncHours ?? 12,
+    fullSyncDays: rv.fullSyncDays ?? 30,
     syncRunning: sync.isRunning(),
     keySet: Boolean(sync.resolveKey(setting)),
     stored: stats.allTime.total,
+    // The store holds far fewer reviews than Google reports for the listing:
+    // shown as a standing notice until a full read completes.
+    partial: Boolean(listingTotal && stats.allTime.total < listingTotal * 0.9),
+    listingTotal,
   });
 });
 
@@ -218,6 +234,10 @@ router.get('/', async (req, res) => {
       break;
     case 'manual':
       filter.mappingSource = 'manual';
+      break;
+    case 'hint':
+      filter.genius = false;
+      filter['auto.hint'] = true;
       break;
     default:
       break;

@@ -14,6 +14,7 @@ const MAIN_FILTERS = [
 ];
 const MORE_FILTERS = [
   ['', 'More filters…'],
+  ['hint', 'Possibly Genius (not tagged)'],
   ['five', '5-star only'],
   ['low', 'Rated 3 or less'],
   ['unreplied', 'No owner reply'],
@@ -174,6 +175,11 @@ export function ReviewCard({ item, reps, tz, onSaved }) {
             </span>
           )}
           {item.genius && effectiveReps.length === 0 && <span className="badge err">needs mapping</span>}
+          {!item.genius && item.auto?.hint && (
+            <span className="badge hint" title={`Mentions ${(item.auto.hints || []).map((h) => `"${h}"`).join(', ')} — a Genius job? Map it to a rep if so.`}>
+              possibly Genius
+            </span>
+          )}
         </span>
         <span style={{ flex: 1 }} />
         {item.link && (
@@ -214,7 +220,10 @@ export function ReviewCard({ item, reps, tz, onSaved }) {
               {item.auto?.reps?.length || item.auto?.termHit ? ` (auto would say: ${autoSummary(item, reps)})` : ''}
             </>
           ) : (
-            <>Auto: {autoSummary(item, reps)}</>
+            <>
+              Auto: {autoSummary(item, reps)}
+              {!item.genius && item.auto?.hint ? ` · mentions "${(item.auto.hints || []).join('", "')}" — a Genius job? Map it to a rep if so` : ''}
+            </>
           )}
         </span>
         <span style={{ flex: 1 }} />
