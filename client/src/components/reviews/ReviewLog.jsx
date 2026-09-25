@@ -27,11 +27,18 @@ const SORTS = [
   ['rating_high', 'Highest rating first'],
 ];
 
+// Google's profile thumbnails don't always load (hotlink limits, offline);
+// fall back to the reviewer's initial rather than a broken-image icon.
 function Avatar({ item }) {
+  const [failed, setFailed] = useState(false);
   const initial = (item.reviewer || '?').trim().slice(0, 1).toUpperCase();
   return (
     <span className="rv-avatar" aria-hidden="true">
-      {item.reviewerAvatar ? <img src={item.reviewerAvatar} alt="" loading="lazy" referrerPolicy="no-referrer" /> : initial}
+      {item.reviewerAvatar && !failed ? (
+        <img src={item.reviewerAvatar} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+      ) : (
+        initial
+      )}
     </span>
   );
 }
