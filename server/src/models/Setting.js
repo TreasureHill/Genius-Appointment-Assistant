@@ -118,6 +118,45 @@ const SettingSchema = new mongoose.Schema(
       firstMessage: { type: String, default: '' },
       systemPrompt: { type: String, default: '' },
     },
+    // Google reviews (Reviews tab): SerpApi source, the listing to track, the
+    // words that mark a review as Genius-related, and the sync bookkeeping.
+    reviews: {
+      // Pasted in the UI; falls back to SERPAPI_KEY in .env when blank. Never
+      // echoed back in full by the API (only a "…b4f9" hint).
+      serpapiKey: { type: String, default: '' },
+      // Google Maps place_id. Blank = GOOGLE_PLACE_ID from .env, else the
+      // Treasure Hill - Corporate listing.
+      placeId: { type: String, default: '' },
+      geniusTerms: { type: [String], default: ['genius', 'genious', 'genuis', 'genus'] },
+      // Incremental sync cadence in hours (0 = only when you click Sync now).
+      autoSyncHours: { type: Number, default: 12, min: 0 },
+      // Every N days also re-read the whole listing (~40–50 searches) so edits
+      // to old reviews, which a newest-first incremental read can't see, are
+      // picked up. 0 = only when you click "Full resync".
+      fullSyncDays: { type: Number, default: 30, min: 0 },
+      companyName: { type: String, default: 'TREASURE HILL' },
+      reportTitle: { type: String, default: 'Genius Google Reviews' },
+      lastSyncAt: { type: Date, default: null },
+      lastFullSyncAt: { type: Date, default: null },
+      lastSync: {
+        ok: { type: Boolean, default: false },
+        full: { type: Boolean, default: false },
+        message: { type: String, default: '' },
+        added: { type: Number, default: 0 },
+        updated: { type: Number, default: 0 },
+        searches: { type: Number, default: 0 },
+        at: { type: Date, default: null },
+        trigger: { type: String, default: '' },
+      },
+      // What the listing itself reports (total review count + average).
+      listing: {
+        title: { type: String, default: '' },
+        address: { type: String, default: '' },
+        rating: { type: Number, default: null },
+        total: { type: Number, default: null },
+        updatedAt: { type: Date, default: null },
+      },
+    },
     lastCalendlySync: { type: Date, default: null },
     senderPaused: { type: Boolean, default: false },
     remindersPaused: { type: Boolean, default: false },

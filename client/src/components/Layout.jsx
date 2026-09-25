@@ -62,6 +62,7 @@ function Icon({ name }) {
         <rect x="16" y="13" width="3" height="5" rx="0.5" />
       </>
     ),
+    star: <path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z" />,
     settings: (
       <>
         <circle cx="12" cy="12" r="3" />
@@ -98,6 +99,7 @@ const links = [
   { to: '/import', label: 'Import / Export', icon: 'importExport' },
   { to: '/calendly', label: 'Calendly events', icon: 'calendar' },
   { to: '/reports', label: 'Reports', icon: 'reports' },
+  { to: '/reviews', label: 'Reviews', icon: 'star' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
 

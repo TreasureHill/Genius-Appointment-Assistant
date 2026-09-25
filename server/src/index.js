@@ -14,6 +14,7 @@ const {
   migrateBookedToScheduled,
   migrateCalendlyWarnings,
   migrateScheduleTimezone,
+  seedReviewReps,
 } = require('./scripts/seedBoot');
 const { startWorkers } = require('./workers');
 
@@ -33,6 +34,7 @@ const webhooksRoutes = require('./routes/webhooks');
 const ariaRoutes = require('./routes/aria');
 const calendlyRoutes = require('./routes/calendly');
 const reportsRoutes = require('./routes/reports');
+const reviewsRoutes = require('./routes/reviews');
 const adminRoutes = require('./routes/admin');
 
 const app = express();
@@ -69,6 +71,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/calendly', calendlyRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/reviews', reviewsRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Serve built client in production
@@ -94,6 +97,7 @@ async function main() {
   await migrateBookedToScheduled();
   await migrateCalendlyWarnings();
   await migrateScheduleTimezone();
+  await seedReviewReps();
   app.listen(env.port, () => {
     console.log(`[server] listening on :${env.port} (${env.nodeEnv})`);
     startWorkers();

@@ -9,7 +9,7 @@ Calendly confirms the invitee.
 - **MongoDB** (Mongoose 8)
 - **Express 4** on Node 20
 - **React 18 + Vite 5** (plain JSX), React Router 6
-- `nodemailer`, `twilio`, `xlsx` (SheetJS), `node-cron`, `handlebars`, `react-quill-new`
+- `nodemailer`, `twilio`, `xlsx` (SheetJS), `node-cron`, `handlebars`, `react-quill-new`, `pptxgenjs`
 - **ElevenLabs Conversational AI** ("Aria") for outbound voice calls that book over the phone
 
 ## Quick start
@@ -46,6 +46,7 @@ npm start         # Express serves the SPA + API on $PORT
 | Calendly webhook + poll (multi-event warning) | `server/src/services/calendly.js`, `server/src/workers/calendlyPoller.js`, `server/src/routes/webhooks.js` |
 | **Aria voice calls (ElevenLabs) + transcript/recording/booking** | `server/src/services/elevenlabs.js`, `server/src/services/ariaCall.js`, `server/src/routes/aria.js`, `client/src/pages/LotDetail.jsx` |
 | Dashboard + activity log | `server/src/routes/dashboard.js`, `server/src/routes/activity.js`, `client/src/pages/Dashboard.jsx`, `Activity.jsx` |
+| **Reviews tab (Google reviews → reps, weekly deck)** | `server/src/routes/reviews.js`, `server/src/services/reviews/`, `server/src/workers/reviewSyncWorker.js`, `client/src/pages/Reviews.jsx`, `client/src/components/reviews/` |
 
 ## How messages are paced (anti-junk)
 When you bulk send or the scheduler enqueues reminders, each message gets a
@@ -91,7 +92,7 @@ status changes.
 
 ## Tests
 ```bash
-npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers
+npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers, Google reviews (matcher, windows, SerpApi, deck)
 ```
 
 ## How the sheet diff works
@@ -215,6 +216,56 @@ Aria), and a call ElevenLabs refuses now fails loudly instead of sitting in
 
 Everything degrades gracefully: with no ElevenLabs keys the Call button is
 disabled and the rest of the app is unaffected.
+
+## Google reviews (the Reviews tab)
+
+`/reviews` replaces the hand-built weekly "Genius Google Reviews" deck. It
+keeps every review on the Treasure Hill Google listing — Genius-related or
+not — credits each one to the reps it mentions, and shows the same numbers
+the deck reports, live: Genius reviews this week / five-star / all time, the
+listing's own total and rating, a 12-week trend, per-rep mentions and
+averages, and the week's review log. **Download deck (.pptx)** builds the
+deck (cover → Key Metrics → Technician Performance Highlights → All-Time
+Technician Review → Customer Review Log) for whatever window is shown;
+**Export Excel** writes a workbook with the summary, the reps, the window's
+log and every stored review.
+
+**Where the reviews come from.** SerpApi's Google Maps Reviews engine reads
+the public listing (no Google Business Profile approval needed). Paste the
+key under *Reviews → Setup* (stored in Settings, never echoed back) or set
+`SERPAPI_KEY` in `.env` as the headless fallback; *Test connection* checks
+the key against SerpApi's free account endpoint and shows the searches
+left. `GOOGLE_PLACE_ID` / the Setup place_id default to the *Treasure Hill -
+Corporate* listing. Each page of 20 reviews is one SerpApi search: the
+first read of the whole listing is ~40 searches, a routine sync 1–3. A
+worker runs an incremental sync every *Auto-sync* hours (default 12) and a
+full re-read every *Full re-read* days (default 30, catches edits to old
+reviews); Setup shows the monthly search budget those settings imply, and
+*Sync now* / *Full resync now* run on demand. A failed sync keeps the last
+good data and says why on the page. Reviews can also be imported from JSON
+(a manual export, or the Python tool's fixture shape).
+
+**Matching.** A review is credited to a rep when its text contains the
+rep's name or one of their nicknames (*Reps & matching*: whole words only,
+any case, multi-word aliases allowed, e.g. `syed salman`), and it is
+Genius-related when it names a rep **or** uses a Genius term (`genius`,
+`genious`, …). One review can credit several reps. Editing reps, aliases or
+terms re-runs the matcher over every stored review; *Try a phrase* shows
+what the matcher makes of a sentence. The seeded reps are Jason, Salman and
+Alvee with the nicknames from the old `technicians.json`.
+
+**Mapping by hand.** *Map to a rep* / *Edit mapping* on any review — Genius
+or not — credits it to exactly the reps you pick (or nobody), optionally
+forces the Genius flag on or off, and keeps a note. Manual mappings win
+over the matcher and survive every sync and re-match; *Reset to automatic*
+drops them. *Needs mapping* lists Genius-related reviews the matcher could
+not credit; *Mapped by hand* lists the overrides. The stats, deck and
+export all use the effective (manual-first) classification.
+
+Week boundaries ("Monday of the current week through today", past weeks
+Monday–Sunday) and every date use the sending-schedule timezone from
+Settings. A review counts for the date it was last edited, like the manual
+log did with "Edited 5 days ago" reviews.
 
 ## Branch
 Work lives on `claude/mern-appointment-booking-app-sxX2C`.
