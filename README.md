@@ -245,6 +245,16 @@ reviews); Setup shows the monthly search budget those settings imply, and
 good data and says why on the page. Reviews can also be imported from JSON
 (a manual export, or the Python tool's fixture shape).
 
+Two Google quirks shape the sync. Google's *newest first* feed only exposes
+a few dozen of the latest reviews, so a full read pages through the listing
+in Google's default *most relevant* order instead, and newest-first is used
+only for the incremental check (stopping at the last review already
+stored); if that feed runs out before getting there, the sync re-reads the
+whole listing. And when a full read still comes back with far fewer reviews
+than the listing reports, the page says so ("Incomplete: Google served 25 of
+the listing's 770 reviews…") and the worker re-reads the listing on its next
+run instead of waiting for the full-read cadence.
+
 **Matching.** A review is credited to a rep when its text contains the
 rep's name or one of their nicknames (*Reps & matching*: whole words only,
 any case, multi-word aliases allowed, e.g. `syed salman`), and it is

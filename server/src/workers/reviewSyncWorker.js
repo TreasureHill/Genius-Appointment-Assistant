@@ -18,10 +18,14 @@ async function runIfDue({ now = Date.now() } = {}) {
   const fullDays = Number(rv.fullSyncDays) || 0;
   const lastFull = rv.lastFullSyncAt ? new Date(rv.lastFullSyncAt).getTime() : 0;
   const last = rv.lastSyncAt ? new Date(rv.lastSyncAt).getTime() : 0;
-  const fullDue = fullDays > 0 && now - lastFull >= fullDays * MS_DAY;
   const incrementalDue = hours > 0 && now - last >= hours * MS_HOUR;
+  // A store holding far fewer reviews than the listing reports (a backfill
+  // that only got Google's newest-first feed) is re-read in full as soon as
+  // any sync is due, whatever the full-read cadence says.
+  const partial = (incrementalDue || fullDays > 0) && (await sync.storeLooksPartial(setting));
+  const fullDue = (fullDays > 0 && now - lastFull >= fullDays * MS_DAY) || partial;
   if (!fullDue && !incrementalDue) return { skipped: 'fresh' };
-  return sync.runSync({ full: fullDue, trigger: 'scheduled' });
+  return sync.runSync({ full: fullDue, trigger: partial ? 'scheduled:backfill' : 'scheduled' });
 }
 
 function start() {

@@ -142,6 +142,9 @@ const SettingSchema = new mongoose.Schema(
         ok: { type: Boolean, default: false },
         full: { type: Boolean, default: false },
         message: { type: String, default: '' },
+        // Set when a full read came back with far fewer reviews than the
+        // listing reports (Google only served part of it).
+        warning: { type: String, default: '' },
         added: { type: Number, default: 0 },
         updated: { type: Number, default: 0 },
         searches: { type: Number, default: 0 },
