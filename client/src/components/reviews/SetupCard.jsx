@@ -110,7 +110,8 @@ export default function SetupCard({ config, tz, onSaved, onSync, syncing }) {
           SerpApi
         </a>{' '}
         (no Google Business Profile approval needed). Each page of 20 reviews is one SerpApi search: a first
-        full read of the listing is ~{perFull} searches, a routine sync 1–3.
+        full read of the listing is ~{perFull} searches (in Google's "most relevant" order, which pages through
+        everything), a routine sync 1–3 (newest first, stopping at the last review already stored).
       </div>
 
       <div className="row">
@@ -221,6 +222,7 @@ export default function SetupCard({ config, tz, onSaved, onSync, syncing }) {
         <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
           Last sync {fmtDateTime(ls.at, tz)}: {ls.ok ? ls.message : `failed — ${ls.message}`}
           {ls.trigger ? ` (${ls.trigger.replace('manual:', 'by ')})` : ''}
+          {ls.warning ? <span className="error" style={{ display: 'block', margin: '4px 0 0' }}>{ls.warning}</span> : null}
         </div>
       )}
     </div>

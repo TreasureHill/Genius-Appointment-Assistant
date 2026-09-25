@@ -100,8 +100,15 @@ async function upsertReviews(list, matchers) {
 
 async function recordSync(setting, patch) {
   setting.reviews = setting.reviews || {};
-  setting.reviews.lastSync = { added: 0, updated: 0, searches: 0, ...patch };
+  setting.reviews.lastSync = { added: 0, updated: 0, searches: 0, warning: '', ...patch };
   await setting.save();
+}
+
+// A full read that came back with far fewer reviews than the listing reports
+// is not "done" — say so, rather than presenting four weeks of data as all time.
+function completenessWarning({ full, fetched, total }) {
+  if (!full || !total || fetched >= total * 0.9) return '';
+  return `Google served ${fetched} of the listing's ${total} reviews on this read — all-time numbers are incomplete. Try Full resync again later.`;
 }
 
 // full = re-read the whole listing (first run, or to catch edits to old
@@ -131,15 +138,23 @@ async function runSync({ full = false, trigger = 'manual' } = {}) {
     }
     const startedAt = Date.now();
     try {
-      const { reviews, meta, searches, truncated } = await serpapi.fetchReviews({ apiKey, placeId, since });
+      const read = await serpapi.readListing({ apiKey, placeId, since });
+      const { reviews, meta, searches, truncated, escalated } = read;
+      full = read.full;
       const matchers = await loadMatchers(setting);
       const counts = await upsertReviews(reviews, matchers);
       const now = new Date();
       const stored = await Review.countDocuments();
-      const summary = `${counts.added} new, ${counts.updated} updated · ${searches} search${searches === 1 ? '' : 'es'}`;
+      const summary =
+        `${counts.added} new, ${counts.updated} updated · ${searches} search${searches === 1 ? '' : 'es'}` +
+        (escalated ? ' · newest-first feed ran out, re-read the whole listing' : '') +
+        (truncated ? ' · stopped at the page limit' : '');
+      const warning = completenessWarning({ full, fetched: reviews.length, total: meta.total });
       setting.reviews = setting.reviews || {};
       setting.reviews.lastSyncAt = now;
-      if (full) setting.reviews.lastFullSyncAt = now;
+      // A partial full read must not count as one, or the worker would wait a
+      // month before trying again.
+      if (full && !warning) setting.reviews.lastFullSyncAt = now;
       if (meta.total != null || meta.rating != null) {
         setting.reviews.listing = {
           title: meta.title || '',
@@ -149,9 +164,9 @@ async function runSync({ full = false, trigger = 'manual' } = {}) {
           updatedAt: now,
         };
       }
-      await recordSync(setting, { ok: true, full, message: summary, added: counts.added, updated: counts.updated, searches, at: now, trigger });
-      console.log(`[reviews] ${full ? 'full' : 'incremental'} sync (${trigger}): ${summary}, ${stored} stored, ${Date.now() - startedAt} ms`);
-      return { ok: true, full, ...counts, fetched: reviews.length, searches, truncated, stored, at: now, listing: setting.reviews.listing };
+      await recordSync(setting, { ok: true, full, message: summary, warning, added: counts.added, updated: counts.updated, searches, at: now, trigger });
+      console.log(`[reviews] ${full ? 'full' : 'incremental'} sync (${trigger}): ${summary}, ${stored} stored, ${Date.now() - startedAt} ms${warning ? ` — ${warning}` : ''}`);
+      return { ok: true, full, ...counts, fetched: reviews.length, searches, truncated, escalated, warning, stored, at: now, listing: setting.reviews.listing };
     } catch (err) {
       const message = serpapi.describeError(err);
       await recordSync(setting, { ok: false, full, message, at: new Date(), trigger });
@@ -166,6 +181,17 @@ async function runSync({ full = false, trigger = 'manual' } = {}) {
   } finally {
     inflight = null;
   }
+}
+
+// True when the store holds clearly fewer reviews than the listing reports —
+// e.g. a backfill made while the newest-first feed was the only source. The
+// worker then treats the next run as a full read.
+async function storeLooksPartial(setting) {
+  const rv = (setting && setting.reviews) || {};
+  const total = rv.listing && rv.listing.total;
+  if (!total) return false;
+  const stored = await Review.countDocuments();
+  return stored < total * 0.9;
 }
 
 // Re-run the matcher over every stored review (after reps / aliases / Genius
@@ -245,6 +271,8 @@ module.exports = {
   rematchAll,
   importReviews,
   isRunning,
+  storeLooksPartial,
+  completenessWarning,
   resolveKey,
   keySource,
   resolvePlaceId,

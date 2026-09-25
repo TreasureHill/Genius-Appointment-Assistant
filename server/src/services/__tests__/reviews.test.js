@@ -267,7 +267,7 @@ const PAGES = [
   },
   { reviews: [{ review_id: 'p2a', iso_date: day(5), rating: 5, snippet: 'e' }] },
 ];
-t('fetchReviews follows pagination, keeps listing meta, counts searches', async () => {
+t('a full read pages through the whole listing in "most relevant" order, no num on page 1', async () => {
   const http = fakeHttp(PAGES);
   const r = await serpapi.fetchReviews({ apiKey: 'k', placeId: 'P', http, pauseMs: 0 });
   assert.deepStrictEqual(r.reviews.map((x) => x.reviewId), ['p0a', 'p0b', 'p1a', 'p1b', 'p2a']);
@@ -275,23 +275,75 @@ t('fetchReviews follows pagination, keeps listing meta, counts searches', async 
   assert.deepStrictEqual(r.meta, { title: 'Treasure Hill', address: '101 Bradwick Dr', rating: 4.4, total: 770 });
   assert.strictEqual(http.calls[0].params.engine, 'google_maps_reviews');
   assert.strictEqual(http.calls[0].params.place_id, 'P');
-  assert.strictEqual(http.calls[0].params.sort_by, 'newestFirst');
+  assert.strictEqual(http.calls[0].params.sort_by, 'qualityScore');
   assert.strictEqual(http.calls[0].params.next_page_token, undefined);
+  assert.strictEqual(http.calls[0].params.num, undefined);
   assert.strictEqual(http.calls[1].params.next_page_token, 'T1');
   assert.strictEqual(http.calls[1].params.num, 20);
+  assert.strictEqual(http.calls[1].params.sort_by, 'qualityScore');
+  assert.strictEqual(r.exhausted, true);
+  assert.strictEqual(r.reachedSince, false);
   assert.strictEqual(r.truncated, false);
 });
-t('incremental sync stops at the first review older than `since`', async () => {
+t('an incremental read walks newest-first and stops at the first review older than `since`', async () => {
   const http = fakeHttp(PAGES);
   const r = await serpapi.fetchReviews({ apiKey: 'k', http, pauseMs: 0, since: new Date(day(15)) });
   assert.deepStrictEqual(r.reviews.map((x) => x.reviewId), ['p0a', 'p0b', 'p1a']);
   assert.strictEqual(r.searches, 2);
+  assert.strictEqual(http.calls[0].params.sort_by, 'newestFirst');
+  assert.strictEqual(r.reachedSince, true);
+  assert.strictEqual(r.exhausted, false);
+});
+t('the page token is also taken from the `next` URL when next_page_token is absent', async () => {
+  const pages = [{ ...PAGES[0], serpapi_pagination: { next: 'https://serpapi.com/search.json?engine=google_maps_reviews&next_page_token=T1&api_key=k' } }, PAGES[1], PAGES[2]];
+  const http = fakeHttp(pages);
+  const r = await serpapi.fetchReviews({ apiKey: 'k', http, pauseMs: 0 });
+  assert.strictEqual(r.reviews.length, 5);
+  assert.strictEqual(serpapi.nextTokenOf({ serpapi_pagination: { next: 'not a url' } }), null);
+  assert.strictEqual(serpapi.nextTokenOf({}), null);
 });
 t('maxPages caps a runaway read and reports it', async () => {
   const http = fakeHttp(PAGES);
   const r = await serpapi.fetchReviews({ apiKey: 'k', http, pauseMs: 0, maxPages: 1 });
   assert.strictEqual(r.reviews.length, 2);
   assert.strictEqual(r.truncated, true);
+  assert.strictEqual(r.exhausted, false);
+});
+t('readListing: full read = one pass in "most relevant" order', async () => {
+  const http = fakeHttp(PAGES);
+  const r = await serpapi.readListing({ apiKey: 'k', http, pauseMs: 0 });
+  assert.strictEqual(r.full, true);
+  assert.strictEqual(r.escalated, false);
+  assert.strictEqual(r.reviews.length, 5);
+  assert.ok(http.calls.every((c) => c.params.sort_by === 'qualityScore'));
+});
+t('readListing: incremental read that reaches `since` stays incremental', async () => {
+  const http = fakeHttp(PAGES);
+  const r = await serpapi.readListing({ apiKey: 'k', http, pauseMs: 0, since: new Date(day(15)) });
+  assert.strictEqual(r.full, false);
+  assert.strictEqual(r.escalated, false);
+  assert.strictEqual(r.searches, 2);
+  assert.deepStrictEqual(r.reviews.map((x) => x.reviewId), ['p0a', 'p0b', 'p1a']);
+});
+t('readListing: when the newest-first feed runs out before `since`, the whole listing is re-read', async () => {
+  // Google's newest-first feed: only the two latest reviews, then no token.
+  const newest = { place_info: PAGES[0].place_info, reviews: PAGES[0].reviews };
+  const calls = [];
+  const http = {
+    calls,
+    async get(url, { params }) {
+      calls.push({ url, params });
+      if (params.sort_by === 'newestFirst') return { data: newest };
+      const idx = params.next_page_token ? Number(params.next_page_token.slice(1)) : 0;
+      return { data: PAGES[idx] };
+    },
+  };
+  const r = await serpapi.readListing({ apiKey: 'k', http, pauseMs: 0, since: new Date(day(1)) });
+  assert.strictEqual(r.escalated, true);
+  assert.strictEqual(r.full, true);
+  assert.strictEqual(r.searches, 4); // 1 newest-first page + 3 "most relevant" pages
+  assert.deepStrictEqual(r.reviews.map((x) => x.reviewId), ['p0a', 'p0b', 'p1a', 'p1b', 'p2a']);
+  assert.strictEqual(r.meta.total, 770);
 });
 t('SerpApi errors surface as errors', async () => {
   const http = fakeHttp([{ error: 'Invalid API key.' }]);
@@ -299,6 +351,15 @@ t('SerpApi errors surface as errors', async () => {
   assert.strictEqual(serpapi.describeError({ response: { data: { error: 'nope' } } }), 'nope');
   assert.strictEqual(serpapi.describeError({ response: { status: 503 } }), 'SerpApi HTTP 503');
   assert.strictEqual(serpapi.describeError({ code: 'ECONNABORTED', message: 'timeout of 60000ms exceeded' }), 'SerpApi timed out');
+});
+
+console.log('sync bookkeeping');
+const { completenessWarning } = require('../reviews/sync');
+t('a full read that got far fewer reviews than the listing reports is flagged', () => {
+  assert.ok(/25 of the listing's 770/.test(completenessWarning({ full: true, fetched: 25, total: 770 })));
+  assert.strictEqual(completenessWarning({ full: true, fetched: 700, total: 770 }), '');
+  assert.strictEqual(completenessWarning({ full: false, fetched: 3, total: 770 }), '');
+  assert.strictEqual(completenessWarning({ full: true, fetched: 25, total: null }), '');
 });
 
 console.log('import');

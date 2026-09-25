@@ -166,7 +166,10 @@ export default function Reviews() {
     setSyncMsg('');
     try {
       const r = await api.post('/api/reviews/sync', { full });
-      setSyncMsg(`${full ? 'Full read' : 'Synced'}: ${r.added} new, ${r.updated} updated · ${plural(r.searches, 'search', 'searches')} · ${plural(r.stored, 'review')} stored.`);
+      setSyncMsg(
+        `${r.full ? 'Full read' : 'Synced'}: ${r.added} new, ${r.updated} updated · ${plural(r.searches, 'search', 'searches')} · ${plural(r.stored, 'review')} stored.` +
+          (r.warning ? ` ${r.warning}` : '')
+      );
     } catch (e) {
       setSyncMsg(`Error: ${e.message}`);
       if (e.status === 400) setSetupOpen(true);
@@ -205,6 +208,8 @@ export default function Reviews() {
     document.getElementById('review-log')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  const period = win.isCurrentWeek ? 'this week' : 'in window';
+
   let strip = null;
   if (!config.serpapiKeySet && noData) {
     strip = (
@@ -225,9 +230,15 @@ export default function Reviews() {
       </div>
     );
   } else {
+    const partial = ls && ls.warning;
     strip = (
-      <div className={`card alert ${stale ? 'alert-warn' : ''}`} style={{ padding: '10px 16px', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div className={`card alert ${partial || stale ? 'alert-warn' : ''}`} style={{ padding: '10px 16px', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <span>
+          {partial ? (
+            <>
+              <strong>Incomplete:</strong> {ls.warning}{' '}
+            </>
+          ) : null}
           {stats.lastSyncAt ? (
             <>
               Reviews as of <strong>{fmtDateTime(stats.lastSyncAt, tz)}</strong> ({relativeTime(stats.lastSyncAt)})
@@ -320,11 +331,11 @@ export default function Reviews() {
       </div>
 
       <div className="tiles">
-        <Tile label="Genius reviews this week" value={w.genius} hint={w.total ? `of ${plural(w.total, 'review')} on the listing` : 'none this week yet'} onClick={() => goToLog('genius')} title="Show this week's Genius-related reviews" />
-        <Tile label="5★ Genius this week" value={w.geniusFiveStar} hint={w.genius ? `${Number(w.geniusAvgRating).toFixed(2)} average` : undefined} accent={w.genius && w.geniusFiveStar === w.genius ? 'ok' : ''} onClick={() => goToLog('five')} title="Show this week's five-star reviews" />
-        <Tile label="Other reviews this week" value={w.other} hint="not Genius-related" onClick={() => goToLog('other')} title="Show this week's non-Genius reviews" />
+        <Tile label={`Genius reviews ${period}`} value={w.genius} hint={w.total ? `of ${plural(w.total, 'review')} on the listing` : `none ${period}${win.isCurrentWeek ? ' yet' : ''}`} onClick={() => goToLog('genius')} title={`Show the Genius-related reviews ${period}`} />
+        <Tile label={`5★ Genius ${period}`} value={w.geniusFiveStar} hint={w.genius ? `${Number(w.geniusAvgRating).toFixed(2)} average` : undefined} accent={w.genius && w.geniusFiveStar === w.genius ? 'ok' : ''} onClick={() => goToLog('five')} title={`Show the five-star reviews ${period}`} />
+        <Tile label={`Other reviews ${period}`} value={w.other} hint="not Genius-related" onClick={() => goToLog('other')} title={`Show the non-Genius reviews ${period}`} />
         <Tile label="Needs mapping" value={w.unmapped} hint={w.unmapped ? 'Genius-related, credited to nobody' : 'every Genius review has a rep'} accent={w.unmapped ? 'err' : ''} onClick={() => goToLog('unmapped')} title="Genius-related reviews the matcher could not credit — map them by hand" />
-        <Tile label="Rated 3★ or less" value={w.lowRated} hint={w.lowRated ? `${w.lowUnreplied} without an owner reply` : 'none this week'} accent={w.lowRated ? 'err' : ''} onClick={() => goToLog('low')} title="Show this week's low-rated reviews" />
+        <Tile label="Rated 3★ or less" value={w.lowRated} hint={w.lowRated ? `${w.lowUnreplied} without an owner reply` : `none ${period}`} accent={w.lowRated ? 'err' : ''} onClick={() => goToLog('low')} title={`Show the low-rated reviews ${period}`} />
         <Tile label="Genius reviews all time" value={stats.allTime.genius.toLocaleString()} hint={`${stats.allTime.geniusFiveStar.toLocaleString()} five-star · ${stats.allTime.total.toLocaleString()} reviews stored`} />
         {listing && listing.total ? <Tile label="On Google" value={Number(listing.total).toLocaleString()} hint={listing.rating ? `${Number(listing.rating).toFixed(1)}★ listing average` : undefined} /> : null}
       </div>
