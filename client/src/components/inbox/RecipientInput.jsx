@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { api } from '../../api';
 import { Avatar } from '../../mailUtil.jsx';
 import Icon from '../ui/Icon.jsx';
@@ -16,7 +16,10 @@ function parseOne(text) {
 
 // Recipients as chips. Typing an address then Enter / Tab / comma (or
 // leaving the field) adds it; suggestions come from past mail and lot buyers.
-export default function RecipientInput({ label, value, onChange, autoFocus, placeholder }) {
+// The ref's commit() turns whatever is still typed into recipients and
+// returns the full list (null if the typed text isn't a valid address), so
+// Send never drops an address that wasn't "chipped" yet.
+const RecipientInput = forwardRef(function RecipientInput({ label, value, onChange, autoFocus, placeholder }, ref) {
   const [text, setText] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [highlight, setHighlight] = useState(0);
@@ -55,13 +58,14 @@ export default function RecipientInput({ label, value, onChange, autoFocus, plac
     return true;
   }
 
-  function commitText() {
-    const parts = text.split(/[,;\n]+/).map((p) => p.trim()).filter(Boolean);
-    if (!parts.length) return true;
+  function commitText(raw = text) {
+    const parts = String(raw).split(/[,;\n]+/).map((p) => p.trim()).filter(Boolean);
+    if (!parts.length) return value;
     const parsed = parts.map(parseOne);
     if (parsed.some((p) => !p)) {
+      setText(raw);
       setInvalid(true);
-      return false;
+      return null;
     }
     const next = [...value];
     for (const p of parsed) if (!next.some((v) => v.email === p.email)) next.push(p);
@@ -69,8 +73,10 @@ export default function RecipientInput({ label, value, onChange, autoFocus, plac
     setText('');
     setSuggestions([]);
     setInvalid(false);
-    return true;
+    return next;
   }
+
+  useImperativeHandle(ref, () => ({ commit: () => commitText() }));
 
   function onKeyDown(e) {
     if (suggestions.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
@@ -129,8 +135,7 @@ export default function RecipientInput({ label, value, onChange, autoFocus, plac
             const pasted = e.clipboardData.getData('text');
             if (/[,;\n]/.test(pasted)) {
               e.preventDefault();
-              setText((t) => t + pasted);
-              setTimeout(commitText, 0);
+              commitText(text + pasted);
             }
           }}
           onBlur={() => setTimeout(() => (text.trim() ? commitText() : setSuggestions([])), 150)}
@@ -162,4 +167,6 @@ export default function RecipientInput({ label, value, onChange, autoFocus, plac
       )}
     </div>
   );
-}
+});
+
+export default RecipientInput;

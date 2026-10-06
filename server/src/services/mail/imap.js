@@ -249,16 +249,41 @@ async function setFlags(account, message, { isRead, isFlagged }) {
 
 // target: 'archive' | 'trash' | 'inbox'. Returns false when the server has no
 // such folder (archiving then stays local to the app).
+// Where the message is now: its stored location if it's still there,
+// otherwise looked up by Message-ID in Archive / All Mail / INBOX (it may
+// have been moved in another mail client).
+async function locate(client, message, folders) {
+  const candidates = [message.imapPath, folders.archive, folders.inbox, folders.trash].filter(Boolean);
+  for (const path of [...new Set(candidates)]) {
+    const lock = await client.getMailboxLock(path);
+    try {
+      if (path === message.imapPath && message.uid) {
+        const hit = await client.search({ uid: String(message.uid) }, { uid: true });
+        if (hit && hit.includes(message.uid)) return { path, uid: message.uid };
+      }
+      const found = await client.search({ header: { 'message-id': message.messageId } }, { uid: true });
+      if (found && found.length) return { path, uid: found[found.length - 1] };
+    } catch {
+      /* folder unreadable — try the next */
+    } finally {
+      lock.release();
+    }
+  }
+  return null;
+}
+
 async function move(account, message, target) {
-  if (!message.imapPath || !message.uid) return false;
+  if (!message.imapPath && !message.messageId) return false;
   return withClient(imapConfig(account), async (client) => {
     const folders = await resolveFolders(client);
     const dest = folders[target];
-    if (!dest || dest === message.imapPath) return false;
-    const lock = await client.getMailboxLock(message.imapPath);
+    if (!dest) return false;
+    const at = await locate(client, message, folders);
+    if (!at || at.path === dest) return false;
+    const lock = await client.getMailboxLock(at.path);
     try {
-      const res = await client.messageMove(String(message.uid), dest, { uid: true });
-      const newUid = res?.uidMap?.get?.(message.uid);
+      const res = await client.messageMove(String(at.uid), dest, { uid: true });
+      const newUid = res?.uidMap?.get?.(at.uid);
       message.imapPath = dest;
       message.uid = newUid || null;
       message.uidValidity = res?.uidValidity ? String(res.uidValidity) : '';

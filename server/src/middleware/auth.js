@@ -35,7 +35,13 @@ function requireAuth(req, res, next) {
   const token = readToken(req);
   if (!token) return res.status(401).json({ error: 'unauthenticated' });
   try {
-    req.user = jwt.verify(token, env.jwtSecret);
+    const payload = jwt.verify(token, env.jwtSecret);
+    // Only login tokens (signToken) open the API — never any other JWT that
+    // happens to share the secret.
+    if (!payload || !payload.sub || !payload.username || payload.t || payload.aud) {
+      return res.status(401).json({ error: 'invalid_token' });
+    }
+    req.user = payload;
     return next();
   } catch {
     return res.status(401).json({ error: 'invalid_token' });

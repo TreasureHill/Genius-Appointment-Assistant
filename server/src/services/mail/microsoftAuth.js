@@ -17,6 +17,9 @@ const { encrypt, decrypt } = require('../secretBox');
 //               mailbox named on the account.
 
 const LOGIN = env.microsoft.loginUrl;
+// OAuth `state` is signed with its own key (derived from JWT_SECRET) so it can
+// never double as a login token — it travels in URLs and lands in logs.
+const STATE_KEY = crypto.createHash('sha256').update(`ms-oauth-state:${env.jwtSecret}`).digest('hex');
 // App-only tokens are requested for the Graph resource itself.
 const GRAPH_DEFAULT_SCOPE = `${new URL(env.microsoft.graphUrl).origin}/.default`;
 const BASE_SCOPES = ['offline_access', 'openid', 'profile', 'email', 'User.Read', 'Mail.ReadWrite', 'Mail.Send'];
@@ -50,8 +53,8 @@ function buildAuthorizeUrl({ accountId = '', mailbox = '', label = '', color = '
   const shared = Boolean(mailbox);
   const state = jwt.sign(
     { t: 'ms-oauth', accountId, mailbox, label, color, returnTo, shared, n: crypto.randomBytes(8).toString('hex') },
-    env.jwtSecret,
-    { expiresIn: '15m' }
+    STATE_KEY,
+    { expiresIn: '15m', audience: 'ms-oauth-state' }
   );
   const params = new URLSearchParams({
     client_id: app.clientId,
@@ -67,7 +70,7 @@ function buildAuthorizeUrl({ accountId = '', mailbox = '', label = '', color = '
 }
 
 function verifyState(state) {
-  const payload = jwt.verify(String(state || ''), env.jwtSecret);
+  const payload = jwt.verify(String(state || ''), STATE_KEY, { audience: 'ms-oauth-state' });
   if (payload?.t !== 'ms-oauth') throw new Error('bad state');
   return payload;
 }
@@ -110,10 +113,10 @@ async function testApp(app) {
 
 const appTokenCache = new Map(); // clientId -> { token, exp }
 
-async function appToken() {
+async function appToken({ force } = {}) {
   const app = secrets.microsoftApp();
   const hit = appTokenCache.get(app.clientId);
-  if (hit && hit.exp - 60_000 > Date.now()) return hit.token;
+  if (!force && hit && hit.exp - 5 * 60_000 > Date.now()) return hit.token;
   const data = await tokenRequest({ grant_type: 'client_credentials', scope: GRAPH_DEFAULT_SCOPE });
   appTokenCache.set(app.clientId, { token: data.access_token, exp: Date.now() + (data.expires_in || 3600) * 1000 });
   return data.access_token;
@@ -121,11 +124,13 @@ async function appToken() {
 
 // A valid Graph access token for this mailbox. Delegated tokens are refreshed
 // with the stored refresh token (Microsoft rotates it — the new one is saved).
-async function accessTokenFor(account) {
-  if (account.microsoft?.authMode === 'app') return appToken();
+// `force` skips the cached access token (Graph just answered 401 with it).
+async function accessTokenFor(account, { force } = {}) {
+  if (account.microsoft?.authMode === 'app') return appToken({ force });
   const ms = account.microsoft || {};
   const cachedToken = decrypt(ms.accessTokenEnc);
-  if (cachedToken && ms.accessTokenExpiresAt && new Date(ms.accessTokenExpiresAt).getTime() - 120_000 > Date.now()) {
+  // Keep a 5-minute margin so one sync doesn't outlive its token.
+  if (!force && cachedToken && ms.accessTokenExpiresAt && new Date(ms.accessTokenExpiresAt).getTime() - 5 * 60_000 > Date.now()) {
     return cachedToken;
   }
   const refreshToken = decrypt(ms.refreshTokenEnc);

@@ -79,12 +79,13 @@ async function updateThread(threadId, changes = {}) {
   if (typeof changes.archived === 'boolean' && changes.archived !== thread.archived) {
     thread.archived = changes.archived;
     if (changes.archived) moveOnServer(thread, account, ['inbox'], 'archive');
-    else moveOnServer(thread, account, ['archive'], 'inbox');
+    // 'other' = moved elsewhere in another client; bring those back too.
+    else moveOnServer(thread, account, ['archive', 'other'], 'inbox');
   }
   if (typeof changes.trashed === 'boolean' && changes.trashed !== thread.trashed) {
     thread.trashed = changes.trashed;
     if (changes.trashed) moveOnServer(thread, account, ['inbox', 'archive'], 'trash');
-    else moveOnServer(thread, account, ['trash'], 'inbox');
+    else moveOnServer(thread, account, ['trash', 'other'], 'inbox');
   }
   await thread.save();
   return refreshThread(thread._id, account);

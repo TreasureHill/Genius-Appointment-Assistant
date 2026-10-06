@@ -562,9 +562,12 @@ export default function Integrations() {
     reload();
   }, [reload]);
 
-  // While a mailbox is on its first sync, keep its row fresh.
+  // While a mailbox is syncing (or waiting for its first sync), keep its row
+  // fresh. A mailbox whose sync failed stops the polling.
   useEffect(() => {
-    const busy = mailboxes?.accounts?.some((a) => a.syncing || a.sync?.state === 'syncing' || !a.sync?.initialDone);
+    const busy = mailboxes?.accounts?.some(
+      (a) => a.enabled && (a.syncing || a.sync?.state === 'syncing' || (!a.sync?.initialDone && !['error', 'needs_auth'].includes(a.sync?.state)))
+    );
     if (!busy) return undefined;
     const t = setInterval(reload, 4000);
     return () => clearInterval(t);

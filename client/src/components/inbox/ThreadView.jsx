@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api';
-import { Avatar, bytes, formatAddress, fullTime, listTime, LOT_STATUS_LABEL } from '../../mailUtil.jsx';
+import { Avatar, bytes, formatAddress, forwardSubject, fullTime, listTime, LOT_STATUS_LABEL, replySubject } from '../../mailUtil.jsx';
 import Icon from '../ui/Icon.jsx';
 import Modal from '../ui/Modal.jsx';
 import { useToast } from '../ui/Toast.jsx';
 import CalendlyScheduler from '../CalendlyScheduler.jsx';
 import Composer from './Composer.jsx';
 import MessageBody from './MessageBody.jsx';
-
-function forwardSubject(s) {
-  return /^(fw|fwd)\s*:/i.test(s || '') ? s : `Fwd: ${s || ''}`;
-}
 
 function attachmentIcon(type) {
   if (/^image\//.test(type)) return 'image';
@@ -223,7 +219,7 @@ export default function ThreadView({ threadId, accounts, tz, aiStatus, calendlyC
         mode,
         replyTo: target,
         autoDraft: Boolean(opts.autoDraft),
-        initial: { to, cc, subject: mode === 'forward' ? forwardSubject(data.thread.subject) : target.subject, html: '' },
+        initial: { to, cc, subject: mode === 'forward' ? forwardSubject(data.thread.subject) : replySubject(target.subject), html: '' },
       });
       setTimeout(() => composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
     },
@@ -480,7 +476,7 @@ export default function ThreadView({ threadId, accounts, tz, aiStatus, calendlyC
               initial: {
                 to: scheduler?.email ? [{ name: scheduler.name || '', email: scheduler.email }] : [],
                 cc: [],
-                subject: target?.subject,
+                subject: replySubject(target?.subject),
                 html,
               },
             });

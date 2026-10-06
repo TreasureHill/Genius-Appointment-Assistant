@@ -71,6 +71,9 @@ export default function Composer({
   const abortRef = useRef(null);
   const fileRef = useRef(null);
   const frame = useRef(0);
+  const toRef = useRef(null);
+  const ccRef = useRef(null);
+  const bccRef = useRef(null);
 
   const account = useMemo(() => accounts?.find((a) => a._id === accountId) || null, [accounts, accountId]);
 
@@ -149,7 +152,15 @@ export default function Composer({
 
   async function send() {
     setError('');
-    if (!to.length && !cc.length && !bcc.length) {
+    // Include anything still typed in the To / Cc / Bcc boxes.
+    const finalTo = toRef.current ? toRef.current.commit() : to;
+    const finalCc = ccRef.current ? ccRef.current.commit() : cc;
+    const finalBcc = bccRef.current ? bccRef.current.commit() : bcc;
+    if (!finalTo || !finalCc || !finalBcc) {
+      setError('One of the addresses isn’t valid — fix it or remove it.');
+      return;
+    }
+    if (!finalTo.length && !finalCc.length && !finalBcc.length) {
       setError('Add at least one recipient.');
       return;
     }
@@ -163,9 +174,9 @@ export default function Composer({
           accountId,
           mode,
           replyToMessageId: replyTo?._id || null,
-          to,
-          cc,
-          bcc,
+          to: finalTo,
+          cc: finalCc,
+          bcc: finalBcc,
           subject,
           html,
           includeSignature,
@@ -220,7 +231,7 @@ export default function Composer({
 
       <div className="composer-fields">
         <div className="composer-row">
-          <RecipientInput label="To" value={to} onChange={setTo} autoFocus={mode === 'new' || mode === 'forward'} />
+          <RecipientInput ref={toRef} label="To" value={to} onChange={setTo} autoFocus={mode === 'new' || mode === 'forward'} />
           {!showCc && (
             <button type="button" className="link-btn" onClick={() => setShowCc(true)}>
               Cc / Bcc
@@ -230,10 +241,10 @@ export default function Composer({
         {showCc && (
           <>
             <div className="composer-row">
-              <RecipientInput label="Cc" value={cc} onChange={setCc} />
+              <RecipientInput ref={ccRef} label="Cc" value={cc} onChange={setCc} />
             </div>
             <div className="composer-row">
-              <RecipientInput label="Bcc" value={bcc} onChange={setBcc} />
+              <RecipientInput ref={bccRef} label="Bcc" value={bcc} onChange={setBcc} />
             </div>
           </>
         )}

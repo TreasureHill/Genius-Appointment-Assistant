@@ -54,6 +54,13 @@ router.get('/microsoft/callback', async (req, res) => {
     const mailboxEmail = normalizeEmail(st.mailbox) || userEmail;
 
     let account = st.accountId ? await MailAccount.findById(st.accountId) : null;
+    // Reconnecting a mailbox: the sign-in must be for that same mailbox (an
+    // account picker click on someone else would otherwise rebind it).
+    if (account && account.kind === 'microsoft' && normalizeEmail(account.email) !== mailboxEmail) {
+      return redirectWith(res, st.returnTo, {
+        mailbox_error: `You signed in as ${userEmail}, but this mailbox is ${account.email}. Reconnect and choose ${account.email} at the Microsoft sign-in.`,
+      });
+    }
     if (!account) account = await MailAccount.findOne({ email: mailboxEmail });
     if (!account) {
       const count = await MailAccount.countDocuments();

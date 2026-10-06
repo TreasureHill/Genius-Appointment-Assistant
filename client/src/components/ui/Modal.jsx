@@ -6,11 +6,15 @@ import Icon from './Icon.jsx';
 // on open and returns to the opener on close.
 export default function Modal({ open, onClose, title, subtitle, children, footer, width = 560, className = '', icon }) {
   const panel = useRef(null);
+  // Callers pass inline closures; read the latest one from a ref so a parent
+  // re-render never re-runs the open/focus effect (which would steal focus).
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     if (!open) return undefined;
     const opener = document.activeElement;
     const onKey = (e) => {
-      if (e.key === 'Escape') onClose?.();
+      if (e.key === 'Escape') closeRef.current?.();
     };
     document.addEventListener('keydown', onKey);
     const t = setTimeout(() => {
@@ -22,11 +26,11 @@ export default function Modal({ open, onClose, title, subtitle, children, footer
       clearTimeout(t);
       opener?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return createPortal(
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && closeRef.current?.()}>
       <div
         ref={panel}
         className={`modal-panel ${className}`}

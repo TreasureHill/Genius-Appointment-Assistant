@@ -156,6 +156,8 @@ export function ConnectImap({ open, onClose, presets, envSmtp, resendReady, onCo
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Prefill once per opening — the page refreshes its data while syncing, and
+  // a new envSmtp object must not wipe what's being typed.
   useEffect(() => {
     if (!open) return;
     setResult(null);
@@ -168,7 +170,7 @@ export function ConnectImap({ open, onClose, presets, envSmtp, resendReady, onCo
       setUseEnvLogin(true);
       setVia('env_smtp');
     }
-  }, [open, envSmtp]);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const p = useMemo(() => (presets || []).find((x) => x.id === preset), [presets, preset]);
 

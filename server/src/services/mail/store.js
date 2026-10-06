@@ -37,7 +37,8 @@ function peopleOf(msg) {
 
 async function findThreadFor(account, msg, self) {
   if (msg.conversationId) {
-    return EmailThread.findOne({ account: account._id, key: `conv:${msg.conversationId}` });
+    const byConv = await EmailThread.findOne({ account: account._id, key: `conv:${msg.conversationId}` });
+    if (byConv) return byConv;
   }
   const refs = [msg.inReplyTo, ...(msg.references || [])].filter(Boolean);
   if (refs.length) {
@@ -58,10 +59,30 @@ async function findThreadFor(account, msg, self) {
       .sort({ lastMessageAt: -1 })
       .limit(5);
     const people = peopleOf(msg);
-    const hit = candidates.find((t) => sharesCounterpart(t.participants || [], people, self));
-    if (hit) return hit;
+    // A Microsoft message only falls back to a thread Outlook doesn't know
+    // about (one started by mail we sent over SMTP / Resend) — two separate
+    // Outlook conversations are never merged on subject alone.
+    const hit = candidates.find(
+      (t) => (!msg.conversationId || t.key.startsWith('msg:')) && sharesCounterpart(t.participants || [], people, self)
+    );
+    if (hit) {
+      if (msg.conversationId && hit.key.startsWith('msg:')) await adoptConversation(hit, msg.conversationId);
+      return hit;
+    }
   }
   return null;
+}
+
+// Re-key a thread to its Outlook conversation so later messages find it
+// directly. Leaves it alone if that conversation already has a thread.
+async function adoptConversation(thread, conversationId) {
+  try {
+    thread.key = `conv:${conversationId}`;
+    await thread.save();
+  } catch (err) {
+    if (err?.code !== 11000) throw err;
+    thread.key = (await EmailThread.findById(thread._id).select('key').lean())?.key || thread.key;
+  }
 }
 
 async function createThread(account, msg) {
@@ -101,10 +122,21 @@ async function upsertMessage(account, msg, { attachments = [], origin = 'sync' }
 
   if (existing) {
     const before = { folder: existing.folder, isRead: existing.isRead, isFlagged: existing.isFlagged };
-    // A message in both Inbox and Sent (mail to yourself) stays an Inbox one.
-    if (!(existing.folder === 'inbox' && msg.folder === 'sent')) existing.folder = msg.folder || existing.folder;
-    for (const k of ['remoteId', 'imapPath', 'uidValidity', 'conversationId']) if (msg[k]) existing[k] = msg[k];
-    if (msg.uid != null && msg.folder === existing.folder) existing.uid = msg.uid;
+    // A message in both Inbox and Sent (mail to yourself, Bcc to yourself)
+    // stays an Inbox one, and keeps pointing at the Inbox copy on the server.
+    const keepInbox = existing.folder === 'inbox' && msg.folder === 'sent';
+    if (!keepInbox) existing.folder = msg.folder || existing.folder;
+    if (msg.conversationId) existing.conversationId = msg.conversationId;
+    // Server location (which copy to flag / move) only ever comes from the
+    // copy in the folder this row represents — never a mix of two copies.
+    if (msg.folder === existing.folder) {
+      if (msg.remoteId) existing.remoteId = msg.remoteId;
+      if (msg.imapPath) {
+        existing.imapPath = msg.imapPath;
+        existing.uidValidity = msg.uidValidity || '';
+        existing.uid = msg.uid ?? null;
+      }
+    }
     if (typeof msg.isRead === 'boolean') existing.isRead = msg.isRead;
     if (typeof msg.isFlagged === 'boolean') existing.isFlagged = msg.isFlagged;
     if (!existing.html && msg.html) existing.html = msg.html;
@@ -197,8 +229,9 @@ async function saveAttachments(account, message, attachments) {
 async function refreshThread(threadId, account) {
   const thread = await EmailThread.findById(threadId);
   if (!thread) return null;
+  const wasInInbox = thread.inInbox;
   const msgs = await EmailMessage.find({ thread: thread._id })
-    .select('from to cc replyTo subject date direction isRead folder hasAttachments snippet')
+    .select('from to cc replyTo subject date direction isRead isFlagged folder hasAttachments snippet')
     .sort({ date: 1 })
     .lean();
   if (!msgs.length) {
@@ -230,6 +263,10 @@ async function refreshThread(threadId, account) {
   thread.hasInbound = msgs.some((m) => m.direction === 'in');
   thread.hasOutbound = msgs.some((m) => m.direction === 'out');
   thread.inInbox = msgs.some((m) => m.folder === 'inbox');
+  // Moved back into the Inbox in Outlook / another client: no longer archived.
+  if (thread.archived && thread.inInbox && !wasInInbox) thread.archived = false;
+  // Stars mirror the server's flags (starring here flags the latest message).
+  thread.starred = msgs.some((m) => m.isFlagged);
   if (!thread.lot && thread.participants.length) {
     thread.lot = await findLotFor(thread.participants.map((p) => p.email));
   }

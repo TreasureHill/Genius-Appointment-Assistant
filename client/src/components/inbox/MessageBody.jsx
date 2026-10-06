@@ -15,12 +15,33 @@ const QUOTE_SELECTORS = [
   'div[style*="border-top: solid #E1E1E1"]',
 ];
 
+// Neutralise what a sandbox alone doesn't: links get rel=noopener (an opened
+// page can't reach back and redirect this tab), and <meta refresh> / <base>
+// can't navigate the frame or retarget links.
+function sanitize(doc) {
+  doc.querySelectorAll('meta[http-equiv], base').forEach((el) => {
+    if (el.tagName === 'BASE' || /refresh|content-security-policy|set-cookie/i.test(el.getAttribute('http-equiv') || '')) el.remove();
+  });
+  doc.querySelectorAll('a[href], area[href]').forEach((a) => {
+    a.setAttribute('rel', 'noopener noreferrer');
+    a.setAttribute('target', '_blank');
+  });
+  doc.querySelectorAll('form').forEach((f) => f.removeAttribute('action'));
+  return doc;
+}
+
+function cleanHtml(html) {
+  if (!html || typeof DOMParser === 'undefined') return html;
+  const doc = sanitize(new DOMParser().parseFromString(html, 'text/html'));
+  return `<!doctype html>${doc.documentElement.outerHTML}`;
+}
+
 // Split an HTML body into what's new and the quoted tail.
 function splitHtmlQuote(html) {
   if (!html || typeof DOMParser === 'undefined') return { main: html, hasQuote: false };
-  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const doc = sanitize(new DOMParser().parseFromString(html, 'text/html'));
   const marker = doc.querySelector(QUOTE_SELECTORS.join(','));
-  if (!marker || !doc.body.contains(marker)) return { main: html, hasQuote: false };
+  if (!marker || !doc.body.contains(marker)) return { main: `<!doctype html>${doc.documentElement.outerHTML}`, hasQuote: false };
   // Remove the marker and everything after it, at its level and each level up.
   let node = marker;
   const prev = marker.previousElementSibling;
@@ -36,7 +57,7 @@ function splitHtmlQuote(html) {
     if (node === marker) node.remove();
     node = parent;
   }
-  if (!doc.body.textContent.trim() && !doc.body.querySelector('img')) return { main: html, hasQuote: false };
+  if (!doc.body.textContent.trim() && !doc.body.querySelector('img')) return { main: cleanHtml(html), hasQuote: false };
   return { main: `<!doctype html>${doc.documentElement.outerHTML}`, hasQuote: true };
 }
 
@@ -74,25 +95,31 @@ export default function MessageBody({ html, text, allowImages, onAllowImages }) 
   const frame = useRef(null);
   const [height, setHeight] = useState(40);
 
-  const { main, hasQuote, hasRemote } = useMemo(() => {
+  const { main, full, hasQuote, hasRemote } = useMemo(() => {
     if (html) {
       const split = splitHtmlQuote(html);
-      return { ...split, hasRemote: /<img[^>]+src=["']?https?:|url\(\s*["']?https?:/i.test(html) };
+      return {
+        ...split,
+        full: cleanHtml(html),
+        hasRemote: /<img[^>]+src=["']?https?:|url\(\s*["']?https?:|<link[^>]+href=["']?https?:|@import\s/i.test(html),
+      };
     }
     const split = splitTextQuote(text);
-    return { ...split, hasRemote: false };
+    return { ...split, full: '', hasRemote: false };
   }, [html, text]);
 
   const srcDoc = useMemo(() => {
-    const imgSrc = allowImages ? 'data: cid: https: http:' : 'data: cid:';
-    const csp = `default-src 'none'; img-src ${imgSrc}; style-src 'unsafe-inline' https:; font-src data: https:; media-src data:;`;
+    // Remote images, stylesheets and fonts can all report that the email was
+    // opened — they load only after "Show images".
+    const remote = allowImages ? ' https: http:' : '';
+    const csp = `default-src 'none'; img-src data: cid:${remote}; style-src 'unsafe-inline'${remote}; font-src data:${remote}; media-src data:; form-action 'none';`;
     const head = `<meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank"><style>${BASE_CSS}</style>`;
     let body;
-    if (html) body = showQuote ? html : main;
+    if (html) body = showQuote ? full : main;
     else body = `<pre class="gai-plain">${linkify(escapeHtml(showQuote ? text : main))}</pre>`;
     // Put our head first; the message's own <head>/<html> are tolerated by the parser.
     return `<!doctype html><html><head>${head}</head><body>${body}</body></html>`;
-  }, [html, text, main, showQuote, allowImages]);
+  }, [html, text, main, full, showQuote, allowImages]);
 
   useEffect(() => {
     const el = frame.current;
@@ -130,7 +157,7 @@ export default function MessageBody({ html, text, allowImages, onAllowImages }) 
       {hasRemote && !allowImages && (
         <div className="msg-images">
           <Icon name="image_off" size={14} />
-          Remote images are hidden to protect your privacy.
+          Remote images and styles are hidden to protect your privacy.
           <button type="button" className="link-btn" onClick={onAllowImages}>
             Show images
           </button>

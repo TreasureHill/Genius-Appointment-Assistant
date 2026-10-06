@@ -37,6 +37,16 @@ export function formatAddress(a) {
   return a.name ? `${a.name} <${a.email}>` : a.email;
 }
 
+// "Re: <subject>" / "Fwd: <subject>" without stacking prefixes.
+export function replySubject(s) {
+  const v = String(s || '').trim();
+  return /^re\s*:/i.test(v) ? v : `Re: ${v}`;
+}
+export function forwardSubject(s) {
+  const v = String(s || '').trim();
+  return /^(fw|fwd)\s*:/i.test(v) ? v : `Fwd: ${v}`;
+}
+
 export function bytes(n) {
   const v = Number(n) || 0;
   if (v < 1024) return `${v} B`;

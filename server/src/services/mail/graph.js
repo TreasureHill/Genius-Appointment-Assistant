@@ -50,13 +50,29 @@ function basePath(account) {
   return '/me';
 }
 
+// Immutable IDs: a message keeps its id when it moves between folders (in
+// Outlook or here), so a stored id stays valid for flags and moves.
+const IMMUTABLE = 'IdType="ImmutableId"';
+
 async function api(account) {
   const token = await accessTokenFor(account);
-  return axios.create({
+  const http = axios.create({
     baseURL: GRAPH,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Prefer: IMMUTABLE },
     timeout: 60_000,
   });
+  // A token can expire partway through a long sync: refresh once and retry
+  // before treating a 401 as "needs reconnect".
+  http.interceptors.response.use(undefined, async (err) => {
+    const cfg = err?.config;
+    if (err?.response?.status !== 401 || !cfg || cfg._retried) throw err;
+    cfg._retried = true;
+    const fresh = await accessTokenFor(account, { force: true });
+    http.defaults.headers.Authorization = `Bearer ${fresh}`;
+    cfg.headers.Authorization = `Bearer ${fresh}`;
+    return http.request(cfg);
+  });
+  return http;
 }
 
 function describeError(err) {
@@ -109,7 +125,7 @@ async function syncFolder(account, http, folder, sinceDays) {
     const params = new URLSearchParams({ $select: SELECT, $filter: `receivedDateTime ge ${since}` });
     url = `${basePath(account)}/mailFolders/${folder.wellKnown}/messages/delta?${params.toString()}`;
   }
-  const headers = { Prefer: 'odata.maxpagesize=50, outlook.body-content-type="html"' };
+  const headers = { Prefer: `odata.maxpagesize=50, outlook.body-content-type="html", ${IMMUTABLE}` };
   let added = 0;
   let pages = 0;
   for (;;) {

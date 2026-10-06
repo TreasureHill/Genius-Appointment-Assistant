@@ -12,7 +12,8 @@ const { decrypt } = require('../secretBox');
 const graph = require('./graph');
 const imap = require('./imap');
 const { upsertMessage } = require('./store');
-const { htmlToText, escapeHtml, formatAddress, snippetFrom } = require('./text');
+const { updateThread } = require('./actions');
+const { htmlToText, escapeHtml, formatAddress, snippetFrom, replySubject, forwardSubject } = require('./text');
 
 // Sends from a mailbox in the unified inbox. Microsoft 365 mailboxes send
 // through Graph by default (the message lands in Sent Items and stays in the
@@ -137,7 +138,9 @@ async function sendEmail(opts) {
   const allFiles = [...files, ...forwarded];
 
   const via = account.kind === 'microsoft' && !['env_smtp', 'resend', 'smtp'].includes(account.outgoing?.via) ? 'graph' : account.outgoing?.via || 'smtp';
-  const subject = opts.subject || original?.subject || '';
+  let subject = String(opts.subject || original?.subject || '').trim();
+  if (mode === 'reply' || mode === 'replyAll') subject = replySubject(subject);
+  else if (mode === 'forward') subject = forwardSubject(subject);
   const fromHeader = { name: account.displayName || '', address: account.email };
   const references = original ? [...(original.references || []), original.messageId].filter(Boolean).slice(-20) : [];
 
@@ -234,10 +237,10 @@ async function sendEmail(opts) {
     origin: 'app',
     attachments: files.map((f) => ({ filename: f.filename, contentType: f.contentType, size: f.size, data: f.data })),
   });
-  // Replying from the app means it's been read.
-  if (original && !original.isRead) {
-    original.isRead = true;
-    await original.save();
+  // Replying from the app means the conversation has been read — here and on
+  // the mail server.
+  if (original && mode !== 'new') {
+    await updateThread(original.thread, { read: true }).catch(() => {});
   }
   return res;
 }
