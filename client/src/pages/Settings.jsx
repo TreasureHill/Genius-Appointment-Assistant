@@ -362,7 +362,8 @@ function OwnerCard({ owner, onSaved }) {
         This system is for a single person. These details appear in email / SMS templates as{' '}
         <span className="kbd">{'{{owner.name}}'}</span>,{' '}
         <span className="kbd">{'{{owner.calendlyUrl}}'}</span>, etc., and the Calendly sync uses
-        the user URI below.
+        the user URI below. Connecting Calendly in <Link to="/integrations">Integrations</Link> fills
+        both Calendly fields automatically.
       </p>
       <div className="row">
         <div>
