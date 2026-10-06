@@ -160,6 +160,66 @@ const SettingSchema = new mongoose.Schema(
         updatedAt: { type: Date, default: null },
       },
     },
+    // API connections managed from the Integrations page. Secrets are stored
+    // encrypted (services/secretBox) and never sent back to the browser; each
+    // one falls back to its .env value when blank.
+    integrations: {
+      calendly: {
+        tokenEnc: { type: String, default: '' },
+        connectedAt: { type: Date, default: null },
+        // Snapshot of /users/me taken when the token was saved / re-tested.
+        account: {
+          name: { type: String, default: '' },
+          email: { type: String, default: '' },
+          uri: { type: String, default: '' },
+          organizationUri: { type: String, default: '' },
+          schedulingUrl: { type: String, default: '' },
+          avatarUrl: { type: String, default: '' },
+          timezone: { type: String, default: '' },
+        },
+        // Secret appended to the webhook URL we register with Calendly
+        // (?secret=…), used when CALENDLY_WEBHOOK_SECRET isn't set in .env.
+        webhookSecret: { type: String, default: '' },
+        // Event type the inbox scheduler opens on by default.
+        defaultEventTypeUri: { type: String, default: '' },
+      },
+      anthropic: {
+        apiKeyEnc: { type: String, default: '' },
+        connectedAt: { type: Date, default: null },
+        // How hard Claude thinks before drafting (output_config.effort).
+        effort: { type: String, enum: ['low', 'medium', 'high'], default: 'medium' },
+        lastTest: {
+          ok: { type: Boolean, default: false },
+          message: { type: String, default: '' },
+          at: { type: Date, default: null },
+        },
+      },
+      resend: {
+        apiKeyEnc: { type: String, default: '' },
+        from: { type: String, default: '' },
+        connectedAt: { type: Date, default: null },
+      },
+      // Microsoft Entra app registration used to connect Microsoft 365
+      // mailboxes through Microsoft Graph (Exchange Online refuses IMAP
+      // passwords). Falls back to MS_TENANT_ID / MS_CLIENT_ID /
+      // MS_CLIENT_SECRET in .env.
+      microsoft: {
+        tenantId: { type: String, default: '' },
+        clientId: { type: String, default: '' },
+        clientSecretEnc: { type: String, default: '' },
+      },
+    },
+    // Unified inbox preferences.
+    inbox: {
+      // How far back the first sync of a new mailbox reads.
+      initialSyncDays: { type: Number, default: 30, min: 1, max: 365 },
+      // Upper bound on messages per folder for that first read.
+      initialSyncMax: { type: Number, default: 400, min: 10, max: 5000 },
+      // Who Claude writes as, plus the sign-off it uses.
+      writerName: { type: String, default: '' },
+      writerRole: { type: String, default: '' },
+      signOff: { type: String, default: '' },
+    },
     lastCalendlySync: { type: Date, default: null },
     senderPaused: { type: Boolean, default: false },
     remindersPaused: { type: Boolean, default: false },

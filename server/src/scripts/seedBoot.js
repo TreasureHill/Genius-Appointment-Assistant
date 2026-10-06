@@ -119,7 +119,40 @@ async function seedReviewReps() {
   console.log(`[seed] inserted ${DEFAULT_REPS.length} reps for the Reviews tab`);
 }
 
+// IMAP_HOST in .env and no mailbox yet: create the default inbox mailbox
+// from it (username/password fall back to the SMTP login). Mailboxes are
+// otherwise added in Integrations.
+async function seedMailboxFromEnv() {
+  if (!env.imap.host) return;
+  const MailAccount = require('../models/MailAccount');
+  const { encrypt } = require('../services/secretBox');
+  const { isMicrosoftHost } = require('../services/mail/presets');
+  if (await MailAccount.countDocuments()) return;
+  if (isMicrosoftHost(env.imap.host)) {
+    console.warn('[mail] IMAP_HOST points at Microsoft 365, which refuses IMAP passwords — connect it in Integrations → Microsoft 365 instead.');
+    return;
+  }
+  const user = env.imap.user || env.smtp.user;
+  const pass = env.imap.pass || env.smtp.pass;
+  const fromMatch = String(env.smtp.from || '').match(/<([^>]+)>/);
+  const email = String((user.includes('@') && user) || (fromMatch && fromMatch[1]) || env.smtp.from || '').trim().toLowerCase();
+  if (!user || !pass || !email.includes('@')) {
+    console.warn('[mail] IMAP_HOST is set but IMAP_USER / IMAP_PASS (or the SMTP login) are missing — skipping default mailbox.');
+    return;
+  }
+  await MailAccount.create({
+    kind: 'imap',
+    label: email,
+    email,
+    isDefault: true,
+    imap: { host: env.imap.host, port: env.imap.port, secure: env.imap.secure, user, passEnc: encrypt(pass) },
+    outgoing: { via: env.smtp.configured ? 'env_smtp' : 'smtp' },
+  });
+  console.log(`[mail] created default mailbox ${email} from IMAP_HOST`);
+}
+
 module.exports = {
+  seedMailboxFromEnv,
   seedAdmin,
   seedStarterTemplates,
   seedReviewReps,

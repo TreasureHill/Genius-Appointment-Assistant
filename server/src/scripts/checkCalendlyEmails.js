@@ -17,6 +17,7 @@
  *   npm run check:calendly
  */
 require('../config/env');
+const { loadSecrets } = require('../services/secrets');
 const { connect, mongoose } = require('../config/db');
 const Lot = require('../models/Lot');
 require('../models/Project');
@@ -33,6 +34,7 @@ function nameParts(row) {
 
 async function main() {
   await connect();
+  await loadSecrets(); // token may live in Integrations → Calendly
 
   const rows = await CalendlyUnmatch.find({ status: 'unmatched' }).sort({ eventStartTime: 1 }).lean();
   const lots = await Lot.find({}).populate('project', 'name').lean();

@@ -17,6 +17,9 @@ import CalendlyEvents from './pages/CalendlyEvents.jsx';
 import Reports from './pages/Reports.jsx';
 import Reviews from './pages/Reviews.jsx';
 import NotFound from './pages/NotFound.jsx';
+import Inbox from './pages/Inbox.jsx';
+import KnowledgeBase from './pages/KnowledgeBase.jsx';
+import Integrations from './pages/Integrations.jsx';
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -39,6 +42,10 @@ export default function App() {
         }
       >
         <Route path="/" element={<Dashboard />} />
+        <Route path="/inbox" element={<Inbox />} />
+        <Route path="/inbox/:threadId" element={<Inbox />} />
+        <Route path="/knowledge" element={<KnowledgeBase />} />
+        <Route path="/integrations" element={<Integrations />} />
         <Route path="/board" element={<ProjectBoard />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/projects/:id" element={<ProjectDetail />} />

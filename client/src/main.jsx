@@ -5,6 +5,7 @@ import App from './App.jsx';
 import { AuthProvider } from './auth.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import './styles.css';
+import './inbox.css';
 import 'react-quill-new/dist/quill.snow.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(

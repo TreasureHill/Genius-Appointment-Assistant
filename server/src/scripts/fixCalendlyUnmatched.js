@@ -30,6 +30,7 @@
  *   --help        Show this help.
  */
 require('../config/env');
+const { loadSecrets } = require('../services/secrets');
 const { connect, mongoose } = require('../config/db');
 const { rematchUnmatchedQueue } = require('../services/calendly');
 
@@ -59,6 +60,7 @@ async function main() {
   }
 
   await connect();
+  await loadSecrets(); // token may live in Integrations → Calendly
 
   console.log(
     `Re-matching queued Calendly invitees against the current database` +

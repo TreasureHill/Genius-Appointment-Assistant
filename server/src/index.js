@@ -15,7 +15,9 @@ const {
   migrateCalendlyWarnings,
   migrateScheduleTimezone,
   seedReviewReps,
+  seedMailboxFromEnv,
 } = require('./scripts/seedBoot');
+const { loadSecrets } = require('./services/secrets');
 const { startWorkers } = require('./workers');
 
 // Routes
@@ -36,6 +38,12 @@ const calendlyRoutes = require('./routes/calendly');
 const reportsRoutes = require('./routes/reports');
 const reviewsRoutes = require('./routes/reviews');
 const adminRoutes = require('./routes/admin');
+const inboxRoutes = require('./routes/inbox');
+const mailAccountsRoutes = require('./routes/mailAccounts');
+const knowledgeRoutes = require('./routes/knowledge');
+const aiRoutes = require('./routes/ai');
+const integrationsRoutes = require('./routes/integrations');
+const oauthRoutes = require('./routes/oauth');
 
 const app = express();
 
@@ -57,6 +65,10 @@ app.use('/api/auth', authRoutes);
 // the shared ARIA_TOOL_SECRET instead. Must be mounted before requireAuth.
 app.use('/api/aria', ariaRoutes);
 
+// Microsoft redirects the browser back here after "Sign in with Microsoft";
+// the signed `state` parameter is what authorises it.
+app.use('/api/oauth', oauthRoutes);
+
 // Everything under /api below this line requires auth
 app.use('/api', requireAuth);
 app.use('/api/projects', projectsRoutes);
@@ -73,6 +85,11 @@ app.use('/api/calendly', calendlyRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/reviews', reviewsRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/inbox', inboxRoutes);
+app.use('/api/mail-accounts', mailAccountsRoutes);
+app.use('/api/knowledge', knowledgeRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/integrations', integrationsRoutes);
 
 // Serve built client in production
 const clientDist = path.resolve(__dirname, '../../client/dist');
@@ -98,6 +115,10 @@ async function main() {
   await migrateCalendlyWarnings();
   await migrateScheduleTimezone();
   await seedReviewReps();
+  // API keys pasted in Integrations live encrypted in Mongo; decrypt them
+  // into memory before any worker or route needs them.
+  await loadSecrets();
+  await seedMailboxFromEnv();
   app.listen(env.port, () => {
     console.log(`[server] listening on :${env.port} (${env.nodeEnv})`);
     startWorkers();

@@ -1,5 +1,6 @@
 const express = require('express');
 const env = require('../config/env');
+const secrets = require('../services/secrets');
 const { handleWebhook } = require('../services/calendly');
 const elevenlabs = require('../services/elevenlabs');
 const ariaCall = require('../services/ariaCall');
@@ -49,7 +50,7 @@ router.post(
 // Calendly sends a JSON payload. Verify the shared secret via a header we ask
 // the user to configure on the webhook subscription (or query param fallback).
 router.post('/calendly', express.json({ limit: '1mb' }), async (req, res) => {
-  const secret = env.calendly.webhookSecret;
+  const secret = secrets.calendlyWebhookSecret();
   const provided = req.get('x-webhook-secret') || req.query.secret;
   if (secret && provided !== secret) return res.status(401).json({ error: 'bad_secret' });
 

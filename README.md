@@ -46,6 +46,9 @@ npm start         # Express serves the SPA + API on $PORT
 | Calendly webhook + poll (multi-event warning) | `server/src/services/calendly.js`, `server/src/workers/calendlyPoller.js`, `server/src/routes/webhooks.js` |
 | **Aria voice calls (ElevenLabs) + transcript/recording/booking** | `server/src/services/elevenlabs.js`, `server/src/services/ariaCall.js`, `server/src/routes/aria.js`, `client/src/pages/LotDetail.jsx` |
 | Dashboard + activity log | `server/src/routes/dashboard.js`, `server/src/routes/activity.js`, `client/src/pages/Dashboard.jsx`, `Activity.jsx` |
+| **Unified inbox (Microsoft 365 / IMAP), Claude drafting, Calendly booking** | `server/src/services/mail/`, `server/src/services/ai/`, `server/src/routes/inbox.js`, `client/src/pages/Inbox.jsx`, `client/src/components/inbox/` |
+| **Knowledge base (your voice for Claude)** | `server/src/routes/knowledge.js`, `client/src/pages/KnowledgeBase.jsx` |
+| **Integrations (mailboxes, Calendly, Claude, Resend, Microsoft 365)** | `server/src/routes/integrations.js`, `server/src/routes/mailAccounts.js`, `client/src/pages/Integrations.jsx` |
 | **Reviews tab (Google reviews → reps, weekly deck)** | `server/src/routes/reviews.js`, `server/src/services/reviews/`, `server/src/workers/reviewSyncWorker.js`, `client/src/pages/Reviews.jsx`, `client/src/components/reviews/` |
 
 ## How messages are paced (anti-junk)
@@ -92,7 +95,7 @@ status changes.
 
 ## Tests
 ```bash
-npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers, Google reviews (matcher, windows, SerpApi, deck)
+npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers, Google reviews (matcher, windows, SerpApi, deck), inbox (threading, quote stripping, Graph mapping, Claude prompts, secret box)
 ```
 
 ## How the sheet diff works
@@ -216,6 +219,124 @@ Aria), and a call ElevenLabs refuses now fails loudly instead of sitting in
 
 Everything degrades gracefully: with no ElevenLabs keys the Call button is
 disabled and the rest of the app is unaffected.
+
+## Unified inbox, Claude drafting and Calendly booking
+
+`/inbox` shows mail from every connected mailbox in one list — read, reply,
+reply all, forward, compose, attach files, star, archive, delete — with
+Claude Opus 5.5 drafting replies in your voice and one-click Calendly booking
+for anyone who emails you. Everything is connected under **Integrations**.
+
+### Connecting mailboxes
+- **Microsoft 365 / Exchange Online** (treasurehill.com): Exchange Online no
+  longer accepts IMAP passwords, so mailboxes connect through **Microsoft
+  Graph** with Microsoft sign-in. One-time setup, done in the Integrations
+  page (it walks through it):
+  1. entra.microsoft.com → App registrations → **New registration**, single
+     tenant, **Web** redirect URI `<APP_URL>/api/oauth/microsoft/callback`
+     (shown with a copy button on the page — `APP_URL` must be the public URL).
+  2. API permissions → Microsoft Graph → *Delegated*: `Mail.ReadWrite`,
+     `Mail.Send`, `User.Read`, `offline_access` (grant admin consent if the
+     tenant requires it).
+  3. Certificates & secrets → new client secret → paste the tenant
+     (`treasurehill.com` works), client ID and secret **Value** into
+     Integrations → Microsoft 365, then **Connect mailbox → Microsoft 365 →
+     Sign in with Microsoft**.
+
+  Shared mailboxes (e.g. `genius@…`) can be read by a signed-in user who has
+  access to them (the app then asks for `Mail.ReadWrite.Shared` /
+  `Mail.Send.Shared`). For no-sign-in access, an admin can grant the app
+  *application* permissions `Mail.ReadWrite` + `Mail.Send` (scope it with an
+  application access policy) and the mailbox is added with “Admin-consented
+  app access”.
+- **Any other provider (IMAP)** — Gmail / Google Workspace (app password),
+  Zoho, Yahoo, iCloud, Fastmail, cPanel hosting, on-prem Exchange: pick the
+  provider preset, paste the password (or reuse the `.env` SMTP login), and
+  choose how replies go out.
+
+Sync runs every minute. Microsoft 365 uses Graph **delta queries** on Inbox
+and Sent Items (incremental, resumable); IMAP reads INBOX + the Sent folder
+by UID and re-checks read/flag state on recent mail. The first sync reads the
+last 30 days (max 400 messages per IMAP folder). Mail moved or deleted in
+Outlook drops out of the Inbox view here; read, star, archive and delete in
+the app are written back to the mailbox.
+
+**Threading** uses Outlook's `conversationId` for Microsoft 365 and the
+`References` / `In-Reply-To` chain for IMAP (with a subject + same-person
+fallback for clients that drop those headers). **Lots link automatically**:
+any thread with a lot buyer's email shows the lot, its status and appointment,
+and inbox mail with buyers is mirrored into the lot's message history (the
+lot page and Activity → replies received).
+
+**Sending.** Microsoft 365 mailboxes send through Graph (draft → send), so
+replies stay in the Outlook conversation and land in Sent Items. IMAP
+mailboxes send through their own SMTP, the `.env` SMTP login, or **Resend**
+(Integrations → Resend — sending only; receiving never needs Resend inbound),
+with `In-Reply-To` / `References` set and a copy appended to Sent. Each
+mailbox can have a signature (Integrations → mailbox settings).
+
+**Reading safely.** Message HTML renders in a sandboxed iframe with a strict
+CSP: scripts never run, links open in a new tab, and remote images stay
+blocked until you click *Show images* (tracking pixels). Quoted history is
+collapsed behind “•••”.
+
+Keyboard: `j`/`k` move, `r` reply, `a` reply all, `f` forward, `e` archive,
+`s` star, `#` delete, `c` compose, `/` search, `Ctrl/⌘+Enter` send.
+
+### Claude drafting (Opus 5.5)
+Paste an Anthropic API key in Integrations → Claude (or `ANTHROPIC_API_KEY`).
+In any reply, the Claude bar offers quick goals (*Say yes*, *Propose times*,
+*Ask for details*, *Decline politely*, …), free-text instructions, tone and
+length; the draft streams into the editor and can be refined (*Shorter*,
+*Warmer*, *More formal*, *Fix grammar*). *Offer my open Calendly times* puts
+real open slots (two per day, next 10 days) and your booking link in front of
+Claude so it proposes actual times. New messages get a subject line too.
+
+Every request uses `claude-opus-5-5` with adaptive thinking and an explicit
+**thinking depth** (Integrations → Claude: Fast / Balanced / Thorough → effort
+low / medium / high), streams over SSE, and opts into Anthropic's
+**server-side refusal fallback** (`fallbacks: "default"`) so a safety
+false-positive on an ordinary email is retried instead of failing. The
+knowledge base is sent as a **cached** system block, so repeat drafts mostly
+pay cache-read prices; each draft shows how much was cached. Email content is
+treated as data, never as instructions.
+
+### Knowledge base
+`/knowledge` is what Claude reads before every draft:
+- **Voice & style** — rules for how you write (greetings, sign-off, length).
+- **Example emails** — emails you're proud of.
+- **Saved conversations** — any inbox thread via *Add to knowledge base*
+  (your messages are marked `ME`, with an optional note on what to learn).
+- **Business facts** — hours, policies, process, links.
+
+*Claude writes as* sets your name, role and sign-off. **Learn my voice** has
+Claude study your examples, saved conversations and recent sent mail and
+saves a pinned voice profile you can edit. Entries can be pinned, disabled or
+tagged; the page shows the approximate context size per draft. **Try it**
+drafts a reply to any pasted email with the current knowledge base.
+
+### Calendly from an email
+Paste a Calendly Personal Access Token in Integrations → Calendly (it replaces
+`CALENDLY_TOKEN`, fills Settings → Owner's Calendly URI / link, lists your
+event types, and can **register the webhook** for instant booking updates —
+needs a public `APP_URL` and a paid Calendly plan). Then, from any email,
+**Schedule** next to a person (or in the composer) opens a week view of real
+open times for the chosen event type, in any time zone, with *Next available*
+and the meetings already booked with that person. Pick a time and:
+- **Book on Calendly** — creates the event through Calendly's Scheduling API
+  (Calendly sends the invitation; required questions are asked or filled from
+  the lot), notes it on the thread, and offers to add a confirmation to your
+  reply; or
+- **Send link to this time** — drops that exact slot's booking link (or your
+  booking page) into the reply.
+
+The 30-minute Calendly poll and the webhook then flip a matching lot to
+`scheduled` as before.
+
+### Secrets
+API keys, the Microsoft client secret, refresh tokens and IMAP/SMTP passwords
+are encrypted with AES-256-GCM (`APP_ENCRYPTION_KEY`, else `JWT_SECRET`)
+before they reach Mongo, and the API only ever returns a `…1234` hint.
 
 ## Google reviews (the Reviews tab)
 

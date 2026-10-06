@@ -16,10 +16,12 @@
     "test:render": "node src/services/__tests__/templateRender.test.js",
     "test:elevenlabs": "node src/services/__tests__/elevenlabs.helpers.test.js",
     "test:availability": "node src/services/__tests__/availability.test.js",
-    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render && npm run test:elevenlabs && npm run test:availability && npm run test:reviews",
-    "test:reviews": "node src/services/__tests__/reviews.test.js"
+    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render && npm run test:elevenlabs && npm run test:availability && npm run test:reviews && npm run test:inbox",
+    "test:reviews": "node src/services/__tests__/reviews.test.js",
+    "test:inbox": "node src/services/__tests__/inbox.test.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
     "axios": "^1.7.7",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.6",
@@ -29,7 +31,10 @@
     "express-async-errors": "^3.1.1",
     "express-rate-limit": "^7.4.1",
     "handlebars": "^4.7.8",
+    "html-to-text": "^10.0.1",
+    "imapflow": "^2.2.5",
     "jsonwebtoken": "^9.0.2",
+    "mailparser": "^3.9.36",
     "mongoose": "^8.8.0",
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",

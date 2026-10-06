@@ -7,6 +7,7 @@ const ariaCall = require('../services/ariaCall');
 const elevenlabs = require('../services/elevenlabs');
 const Lot = require('../models/Lot');
 const env = require('../config/env');
+const secrets = require('../services/secrets');
 const { isValidTimezone, resolveScheduleTimezone } = require('../services/sendWindow');
 const { replanPendingOutbox, scheduleStatus } = require('../services/outboxPlanner');
 
@@ -34,7 +35,7 @@ router.get('/', async (req, res) => {
     },
     smtp: { configured: env.smtp.configured, from: env.smtp.from, host: env.smtp.host, health: s.smtpHealth },
     twilio: { configured: env.twilio.configured, from: env.twilio.from, health: s.twilioHealth },
-    calendly: { configured: env.calendly.configured, health: s.calendlyHealth, lastSync: s.lastCalendlySync },
+    calendly: { configured: secrets.calendlyConfigured(), health: s.calendlyHealth, lastSync: s.lastCalendlySync },
     aria: {
       // .env-provided (secrets) — reported as booleans only, never echoed back
       apiKeySet: env.elevenlabs.configured,

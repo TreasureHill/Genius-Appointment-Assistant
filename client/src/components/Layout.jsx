@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth.jsx';
+import { api } from '../api';
 import ErrorBoundary from './ErrorBoundary.jsx';
 import { TimezoneProvider } from '../timezone.jsx';
+import { ToastProvider } from './ui/Toast.jsx';
 
 // Simple, professional line icons (stroke = currentColor) — no emojis.
 function Icon({ name }) {
@@ -69,6 +71,19 @@ function Icon({ name }) {
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
       </>
     ),
+    inbox: (
+      <>
+        <path d="M3 13h5l1.5 3h5L16 13h5" />
+        <path d="M5.5 5h13L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5z" />
+      </>
+    ),
+    book: (
+      <>
+        <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5z" />
+        <path d="M4 21.5A2.5 2.5 0 0 1 6.5 19H20v3H6.5" />
+      </>
+    ),
+    plug: <path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5" />,
     collapse: <path d="M15 6l-6 6 6 6" />,
     expand: <path d="M9 6l6 6-6 6" />,
   };
@@ -91,6 +106,7 @@ function Icon({ name }) {
 // (Board), watch what's about to go out (Queue), see what happened (Activity).
 const links = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
+  { to: '/inbox', label: 'Inbox', icon: 'inbox', badge: 'unread' },
   { to: '/board', label: 'Board', icon: 'board' },
   { to: '/queue', label: 'Queue', icon: 'queue' },
   { to: '/activity', label: 'Activity', icon: 'activity' },
@@ -100,13 +116,38 @@ const links = [
   { to: '/calendly', label: 'Calendly events', icon: 'calendar' },
   { to: '/reports', label: 'Reports', icon: 'reports' },
   { to: '/reviews', label: 'Reviews', icon: 'star' },
+  { to: '/knowledge', label: 'Knowledge base', icon: 'book' },
+  { to: '/integrations', label: 'Integrations', icon: 'plug' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
+
+// Unread conversations across every connected mailbox, for the nav badge.
+function useInboxUnread() {
+  const [unread, setUnread] = useState(0);
+  useEffect(() => {
+    let stop = false;
+    const tick = () =>
+      api
+        .get('/api/inbox/status')
+        .then((s) => !stop && setUnread(s.unread || 0))
+        .catch(() => {});
+    tick();
+    const t = setInterval(tick, 30000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+  }, []);
+  return unread;
+}
 
 export default function Layout() {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar:collapsed') === '1');
+  const unread = useInboxUnread();
+  // The inbox fills the whole content area (three panes, own scrolling).
+  const flush = location.pathname.startsWith('/inbox');
 
   function toggle() {
     setCollapsed((c) => {
@@ -143,8 +184,10 @@ export default function Layout() {
             <NavLink key={l.to} to={l.to} end={l.end} title={collapsed ? l.label : undefined}>
               <span className="nav-icon">
                 <Icon name={l.icon} />
+                {collapsed && l.badge === 'unread' && unread > 0 && <span className="nav-dot" />}
               </span>
               {!collapsed && <span className="nav-label">{l.label}</span>}
+              {!collapsed && l.badge === 'unread' && unread > 0 && <span className="nav-badge">{unread > 99 ? '99+' : unread}</span>}
             </NavLink>
           ))}
         </nav>
@@ -158,12 +201,15 @@ export default function Layout() {
           </button>
         </div>
       </aside>
-      <main className="main">
+      <main className={`main${flush ? ' is-flush' : ''}`}>
         {/* Key by path so a crash on one page becomes an inline, recoverable
-            error (sidebar stays usable) and navigating elsewhere resets it. */}
-        <ErrorBoundary key={location.pathname}>
+            error (sidebar stays usable) and navigating elsewhere resets it.
+            The inbox keys by section so opening a thread doesn't remount it. */}
+        <ErrorBoundary key={flush ? '/inbox' : location.pathname}>
           <TimezoneProvider>
-            <Outlet />
+            <ToastProvider>
+              <Outlet />
+            </ToastProvider>
           </TimezoneProvider>
         </ErrorBoundary>
       </main>

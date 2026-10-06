@@ -9,15 +9,18 @@ const Setting = require('../models/Setting');
 const MessageLog = require('../models/MessageLog');
 const CalendlyUnmatch = require('../models/CalendlyUnmatch');
 const { logStatusChange } = require('./lotEventLogger');
+const secrets = require('./secrets');
 
-const API_BASE = 'https://api.calendly.com';
+const API_BASE = env.calendly.apiBase;
 
+// Token pasted in Integrations → Calendly wins; CALENDLY_TOKEN is the fallback.
 function client() {
-  if (!env.calendly.token) return null;
+  const token = secrets.calendlyToken();
+  if (!token) return null;
   return axios.create({
     baseURL: API_BASE,
     headers: {
-      Authorization: `Bearer ${env.calendly.token}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     timeout: 15_000,
@@ -377,7 +380,8 @@ async function listEventTypes() {
   if (!c) return { ok: false, message: 'Calendly is not connected (missing CALENDLY_TOKEN).', eventTypes: [] };
   try {
     const setting = await Setting.getSingleton();
-    let userUri = setting.owner?.calendlyUri || env.calendly.userUri;
+    let userUri =
+      setting.owner?.calendlyUri || setting.integrations?.calendly?.account?.uri || env.calendly.userUri;
     if (!userUri) {
       const me = await c.get('/users/me');
       userUri = me.data?.resource?.uri;
@@ -402,6 +406,21 @@ async function listEventTypes() {
           locationKind: cfg.kind || '',
           locationDetail:
             cfg.location || cfg.additional_info || cfg.additonal_info || cfg.phone_number || '',
+          color: e.color || '',
+          kind: e.kind || '',
+          slug: e.slug || '',
+          description: e.description_plain || '',
+          // Enabled custom questions, so a booking form can ask the required
+          // ones instead of guessing answers.
+          questions: (e.custom_questions || [])
+            .filter((q) => q.enabled !== false)
+            .map((q) => ({
+              name: q.name || '',
+              type: q.type || 'string',
+              required: Boolean(q.required),
+              position: q.position ?? 0,
+              choices: q.answer_choices || [],
+            })),
         });
       }
       url = data.pagination?.next_page ? data.pagination.next_page.replace(API_BASE, '') : null;
@@ -511,7 +530,9 @@ function buildQuestionsAndAnswers(customQuestions, { projectName, lotNumber, pho
   return qa;
 }
 
-async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, phone, locationKind, locationDetail, projectName, lotNumber }) {
+// `answers` ([{ question, answer }]) — answers typed by the owner (the inbox
+// scheduler) win over the auto-filled ones for the same question.
+async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezone, phone, locationKind, locationDetail, projectName, lotNumber, answers }) {
   const c = client();
   if (!c) return { ok: false, message: 'Calendly is not connected.' };
   const uri = eventTypeUri || (await resolveEventTypeUri());
@@ -529,6 +550,19 @@ async function bookOnCalendly({ eventTypeUri, startTimeIso, name, email, timezon
     lotNumber,
     phone,
   });
+  if (Array.isArray(answers) && answers.length) {
+    const typed = new Map(
+      answers
+        .filter((a) => a && a.question && String(a.answer || '').trim())
+        .map((a) => [String(a.question), String(a.answer).trim()])
+    );
+    for (const row of qa) if (typed.has(row.question)) row.answer = typed.get(row.question);
+    // Optional questions the owner chose to answer too.
+    for (const q of et?.custom_questions || []) {
+      if (q.enabled === false || q.required) continue;
+      if (typed.has(q.name)) qa.push({ question: q.name, answer: typed.get(q.name), position: q.position });
+    }
+  }
 
   const payload = {
     event_type: uri,
@@ -1058,7 +1092,8 @@ async function syncAll() {
   if (!c) return { ok: false, message: 'Calendly not configured (missing CALENDLY_TOKEN)' };
 
   const setting = await Setting.getSingleton();
-  const userUri = setting.owner?.calendlyUri || env.calendly.userUri;
+  const userUri =
+    setting.owner?.calendlyUri || setting.integrations?.calendly?.account?.uri || env.calendly.userUri;
   if (!userUri) {
     return {
       ok: false,
@@ -1532,6 +1567,8 @@ async function handleCancellation({ email, eventUri }) {
 }
 
 module.exports = {
+  API_BASE,
+  client,
   verifyCalendly,
   syncAll,
   handleWebhook,

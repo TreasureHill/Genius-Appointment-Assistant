@@ -5,6 +5,7 @@ const completion = require('./appointmentCompletionTracker');
 const stuckCall = require('./stuckCallJanitor');
 const callQueue = require('./callQueueWorker');
 const reviewSync = require('./reviewSyncWorker');
+const mailSync = require('./mailSyncWorker');
 
 function startWorkers() {
   sender.start();
@@ -14,6 +15,7 @@ function startWorkers() {
   stuckCall.start();
   callQueue.start();
   reviewSync.start();
+  mailSync.start();
 }
 
 module.exports = { startWorkers };

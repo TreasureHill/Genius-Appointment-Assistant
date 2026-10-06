@@ -25,6 +25,7 @@
  */
 require('../config/env');
 const env = require('../config/env');
+const { loadSecrets, calendlyConfigured } = require('../services/secrets');
 const { connect, mongoose } = require('../config/db');
 const Lot = require('../models/Lot');
 const Setting = require('../models/Setting');
@@ -67,12 +68,14 @@ async function main() {
     process.exit(0);
   }
 
-  if (!env.calendly.token) {
-    console.error('✖ CALENDLY_TOKEN is not set — cannot reach Calendly. Aborting.');
+  await connect();
+  // The token may live in Integrations → Calendly rather than .env.
+  await loadSecrets();
+  if (!calendlyConfigured()) {
+    console.error('✖ No Calendly token (Integrations → Calendly, or CALENDLY_TOKEN) — cannot reach Calendly. Aborting.');
+    await mongoose.disconnect();
     process.exit(1);
   }
-
-  await connect();
 
   const setting = await Setting.getSingleton();
   const userUri = setting.owner?.calendlyUri || env.calendly.userUri;

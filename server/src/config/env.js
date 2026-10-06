@@ -49,6 +49,8 @@ const env = {
     // scheduling link we text/email the homeowner to confirm. Normally set
     // in Settings → Aria; env is a fallback for headless runs.
     eventTypeUri: process.env.CALENDLY_EVENT_TYPE_URI || '',
+    // API base — only overridden for tests / an egress proxy.
+    apiBase: (process.env.CALENDLY_API_URL || 'https://api.calendly.com').replace(/\/+$/, ''),
   },
   // ElevenLabs Conversational AI ("Aria"). ElevenLabs places the outbound
   // call through their managed Twilio integration, so we don't need the
@@ -72,6 +74,45 @@ const env = {
     serpapiKey: process.env.SERPAPI_KEY || '',
     placeId: process.env.GOOGLE_PLACE_ID || '',
   },
+  // Claude (Anthropic API) for the inbox's AI drafting and the knowledge base.
+  // The key can also be pasted in Integrations → Claude (stored encrypted in
+  // Settings, which wins over this); this is the headless fallback.
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY || '',
+    model: process.env.ANTHROPIC_MODEL || 'claude-opus-5-5',
+  },
+  // Resend (resend.com) as an optional outgoing provider for the inbox.
+  // Receiving still happens over IMAP — Resend inbound is not required.
+  resend: {
+    apiKey: process.env.RESEND_API_KEY || '',
+    from: process.env.RESEND_FROM || '',
+  },
+  // Default mailbox for the unified inbox (read over IMAP). Optional: mailboxes
+  // are normally added in Integrations → Mailboxes; when IMAP_HOST is set and
+  // no mailbox exists yet, one is created at boot from these values (falling
+  // back to the SMTP login for the username/password).
+  imap: {
+    host: process.env.IMAP_HOST || '',
+    port: toInt(process.env.IMAP_PORT, 993),
+    secure: toBool(process.env.IMAP_SECURE, true),
+    user: process.env.IMAP_USER || '',
+    pass: process.env.IMAP_PASS || '',
+  },
+  // Microsoft Entra app registration for Microsoft 365 mailboxes (Graph).
+  // Usually entered in Integrations → Microsoft 365; these are the fallback.
+  microsoft: {
+    tenantId: process.env.MS_TENANT_ID || '',
+    clientId: process.env.MS_CLIENT_ID || '',
+    clientSecret: process.env.MS_CLIENT_SECRET || '',
+    // Only for Microsoft's national clouds (e.g. GCC High:
+    // https://login.microsoftonline.us + https://graph.microsoft.us/v1.0).
+    loginUrl: (process.env.MS_LOGIN_URL || 'https://login.microsoftonline.com').replace(/\/+$/, ''),
+    graphUrl: (process.env.MS_GRAPH_URL || 'https://graph.microsoft.com/v1.0').replace(/\/+$/, ''),
+  },
+  // Key used to encrypt API keys / mailbox passwords stored in Mongo. Falls
+  // back to JWT_SECRET. Changing it makes stored secrets unreadable (they
+  // then need to be re-entered in Integrations).
+  encryptionKey: process.env.APP_ENCRYPTION_KEY || '',
   defaults: {
     pacingMin: toInt(process.env.DEFAULT_PACING_MIN_SEC, 30),
     pacingMax: toInt(process.env.DEFAULT_PACING_MAX_SEC, 120),
