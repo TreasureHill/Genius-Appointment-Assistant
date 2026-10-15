@@ -1,5 +1,7 @@
 const nodemailer = require('nodemailer');
 const env = require('../config/env');
+const Setting = require('../models/Setting');
+const { DEFAULT_FROM_NAME, buildFrom, prepareHtml, htmlToText } = require('./emailFormat');
 
 let transporter = null;
 
@@ -26,16 +28,32 @@ async function verifySmtp() {
   }
 }
 
-async function sendEmail({ to, subject, html, text, highImportance }) {
+// The sender name from Settings → Email (SMTP). Blank there means "use the
+// name in SMTP_FROM, if any"; a database hiccup falls back to the default.
+async function senderName() {
+  try {
+    const s = await Setting.getSingleton();
+    return s.emailFromName ?? DEFAULT_FROM_NAME;
+  } catch {
+    return DEFAULT_FROM_NAME;
+  }
+}
+
+// `cc` takes the other buyers on a lot: one email, the first buyer on To and
+// the rest CC'd. Every link is forced blue (so a clicked link doesn't turn
+// purple), and the plain-text part is built from the HTML unless the template
+// has its own.
+async function sendEmail({ to, cc, subject, html, text, highImportance }) {
   const t = getTransporter();
   if (!t) throw new Error('SMTP not configured');
   const message = {
-    from: env.smtp.from,
+    from: buildFrom(env.smtp.from, await senderName()),
     to,
     subject,
-    html: html || undefined,
-    text: text || stripHtml(html || ''),
+    html: prepareHtml(html) || undefined,
+    text: text || htmlToText(html || ''),
   };
+  if (cc) message.cc = cc;
   if (highImportance) {
     message.priority = 'high';
     message.headers = {
@@ -49,13 +67,4 @@ async function sendEmail({ to, subject, html, text, highImportance }) {
   return { messageId: info.messageId };
 }
 
-function stripHtml(html) {
-  return String(html)
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-module.exports = { getTransporter, verifySmtp, sendEmail, stripHtml };
+module.exports = { getTransporter, verifySmtp, sendEmail, senderName };

@@ -44,17 +44,24 @@ function stop(e) {
   e.stopPropagation();
 }
 
-// Everyone one send goes to: the buyers on the lot (one email to all of them,
-// or one text per phone). Names on top, addresses underneath.
-function Recipients({ list }) {
+// One email to a lot goes To the first buyer with the others CC'd.
+function isSharedEmail(it) {
+  return it.type === 'email' && it.rows === 1 && (it.recipients || []).length > 1;
+}
+
+// Everyone one send goes to: the buyers on the lot (one email, the first
+// buyer on To and the rest CC'd, or one text per phone). Names on top,
+// addresses underneath.
+function Recipients({ list, shared }) {
   const people = list || [];
   if (!people.length) return <span className="muted">—</span>;
   const names = people.map((r) => r.name).filter(Boolean);
+  const addresses = people.map((r) => r.address).filter(Boolean);
   return (
     <>
       {names.length > 0 && <div>{names.join(', ')}</div>}
       <div className="muted" style={{ fontSize: 12 }}>
-        {people.map((r) => r.address).filter(Boolean).join(', ')}
+        {shared && addresses.length > 1 ? `${addresses[0]} · cc ${addresses.slice(1).join(', ')}` : addresses.join(', ')}
       </div>
     </>
   );
@@ -99,7 +106,7 @@ function QueueRow({ it, tz, selected, onToggle, open, onOpen, detail, onSendNow,
           )}
         </td>
         <td style={{ minWidth: 170, maxWidth: 260, overflowWrap: 'anywhere' }}>
-          <Recipients list={it.recipients} />
+          <Recipients list={it.recipients} shared={isSharedEmail(it)} />
         </td>
         <td style={{ maxWidth: 360 }}>
           <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 360 }}>
@@ -157,6 +164,7 @@ function QueueRow({ it, tz, selected, onToggle, open, onOpen, detail, onSendNow,
                       {r.name ? `${r.name} · ` : ''}
                       {r.address}
                       {r.role ? <span className="muted"> ({r.role === 'coBuyer' ? 'co-buyer' : r.role === 'thirdBuyer' ? 'third buyer' : 'buyer'})</span> : null}
+                      {i > 0 && isSharedEmail(it) ? <span className="muted"> · cc</span> : null}
                     </span>
                   ))}
                   {it.rows > 1 && (

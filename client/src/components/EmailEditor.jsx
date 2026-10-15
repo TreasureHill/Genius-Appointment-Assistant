@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import ReactQuill from 'react-quill-new';
+import { api } from '../api';
 
 const modules = {
   toolbar: [
@@ -13,8 +14,30 @@ const modules = {
   ],
 };
 
+// Markup the rich-text editor can't hold. Loading it into the editor rewrites
+// it (a table becomes one row of cells, wrapper styles vanish), so such
+// bodies open in the HTML tab instead.
+function looksLikeRawHtml(html) {
+  return /<(table|div|center|html|body|style)\b/i.test(String(html || ''));
+}
+
 export default function EmailEditor({ value, onChange }) {
-  const [mode, setMode] = useState('rich');
+  const [mode, setMode] = useState(() => (looksLikeRawHtml(value) ? 'html' : 'rich'));
+  const [presetMsg, setPresetMsg] = useState('');
+
+  async function insertGeniusEmail() {
+    setPresetMsg('');
+    if (String(value || '').trim() && !confirm('Replace the current body with the Genius appointment email?')) return;
+    try {
+      const presets = await api.get('/api/templates/presets');
+      const preset = (presets || []).find((p) => p.key === 'genius-appointment');
+      if (!preset) throw new Error('preset not found');
+      setMode('html');
+      onChange(preset.bodyHtml);
+    } catch (ex) {
+      setPresetMsg('Could not load the Genius email: ' + ex.message);
+    }
+  }
 
   function pasteSample() {
     const sample = `<table cellpadding="0" cellspacing="0" style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;line-height:1.6;max-width:600px">
@@ -40,7 +63,18 @@ export default function EmailEditor({ value, onChange }) {
           <button
             type="button"
             className={`editor-tab ${mode === 'rich' ? 'active' : ''}`}
-            onClick={() => setMode('rich')}
+            onClick={() => {
+              if (
+                mode !== 'rich' &&
+                looksLikeRawHtml(value) &&
+                !confirm(
+                  'This email uses layout the rich-text editor cannot keep (tables or styled blocks). ' +
+                    'Opening it there rewrites the HTML (tables turn into a row of side-by-side cells). Open anyway?'
+                )
+              )
+                return;
+              setMode('rich');
+            }}
           >
             Rich text
           </button>
@@ -53,6 +87,15 @@ export default function EmailEditor({ value, onChange }) {
           </button>
         </div>
         <div style={{ flex: 1 }} />
+        <button
+          type="button"
+          className="secondary"
+          onClick={insertGeniusEmail}
+          style={{ padding: '4px 10px', fontSize: 12, marginRight: 6 }}
+          title="The Treasure Hill Genius appointment request, laid out as plain paragraphs with blue links"
+        >
+          Insert Genius appointment email
+        </button>
         {mode === 'html' && (
           <button
             type="button"
@@ -75,6 +118,11 @@ export default function EmailEditor({ value, onChange }) {
           onChange={(e) => onChange(e.target.value)}
           placeholder="Paste HTML here. Handlebars variables like {{buyer.firstName}} are evaluated at send time."
         />
+      )}
+      {presetMsg && (
+        <div className="error" style={{ fontSize: 12, marginTop: 4 }}>
+          {presetMsg}
+        </div>
       )}
       <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
         {mode === 'rich'

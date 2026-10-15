@@ -103,6 +103,10 @@ export function ActivityRow({ item }) {
   }
 
   const failed = item.status === 'failed';
+  const ccList = String(item.cc || '')
+    .split(',')
+    .map((a) => a.trim().toLowerCase())
+    .filter(Boolean);
   const bodyText = item.type === 'email' ? stripHtml(item.body) : String(item.body || '');
   return (
     <>
@@ -121,7 +125,10 @@ export function ActivityRow({ item }) {
         </td>
         <td>{item.project?.name || ''}</td>
         <td onClick={(e) => e.stopPropagation()}>{lot}</td>
-        <td style={{ maxWidth: 220, overflowWrap: 'anywhere' }}>{item.to || <span className="muted">—</span>}</td>
+        <td style={{ maxWidth: 220, overflowWrap: 'anywhere' }}>
+          {item.to || <span className="muted">—</span>}
+          {item.cc ? <div className="muted" style={{ fontSize: 11 }}>cc {item.cc}</div> : null}
+        </td>
         <td style={{ maxWidth: 340 }}>
           {item.subject || bodyText.slice(0, 90) || <span className="muted">(no subject)</span>}
           {item.status && (
@@ -157,6 +164,7 @@ export function ActivityRow({ item }) {
                       {i > 0 ? ', ' : ''}
                       {r.name ? `${r.name} · ` : ''}
                       {r.address}
+                      {ccList.includes(String(r.address || '').toLowerCase()) ? <span className="muted"> (cc)</span> : null}
                     </span>
                   ))
                 ) : (

@@ -7,6 +7,7 @@ const { sendEmail } = require('../services/mailer');
 const { sendSms } = require('../services/sms');
 const { isWithinSendWindow, nextSendOpening, resolveScheduleTimezone, formatInTimezone } = require('../services/sendWindow');
 const { logStatusChange } = require('../services/lotEventLogger');
+const { splitRecipients } = require('../services/emailFormat');
 
 const POLL_MS = 10_000;
 let timer = null;
@@ -87,9 +88,15 @@ async function drainOnce() {
         await claimed.save();
         continue;
       }
+      // A per-lot email goes To the first buyer still on it, with the rest
+      // CC'd. Worked out from who is left now, so rows queued before CC
+      // existed (everyone on To) go out the same way.
       if (claimed.type === 'email') {
-        const to = live.map((r) => r.address || lot.buyers[r.buyerIndex].email).filter(Boolean).join(', ');
-        if (to && to !== claimed.to) claimed.to = to;
+        const { to, cc } = splitRecipients(live.map((r) => r.address || lot.buyers[r.buyerIndex].email));
+        if (to) {
+          claimed.to = to;
+          claimed.cc = cc;
+        }
       }
       const logRecipients = live.map((r) => ({
         buyerIndex: r.buyerIndex,
@@ -114,6 +121,7 @@ async function drainOnce() {
         if (claimed.type === 'email') {
           const info = await sendEmail({
             to: claimed.to,
+            cc: claimed.cc,
             subject: claimed.renderedSubject,
             html: claimed.renderedBody,
             text: claimed.renderedText,
@@ -136,6 +144,7 @@ async function drainOnce() {
           type: claimed.type,
           direction: 'out',
           to: claimed.to,
+          cc: claimed.type === 'email' ? claimed.cc || '' : '',
           subject: claimed.renderedSubject,
           body: claimed.renderedBody,
           status: 'sent',
@@ -179,6 +188,7 @@ async function drainOnce() {
           type: claimed.type,
           direction: 'out',
           to: claimed.to,
+          cc: claimed.type === 'email' ? claimed.cc || '' : '',
           subject: claimed.renderedSubject,
           body: claimed.renderedBody,
           status: 'failed',

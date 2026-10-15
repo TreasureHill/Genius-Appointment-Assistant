@@ -9,6 +9,8 @@ const MessageLogSchema = new mongoose.Schema(
     type: { type: String, enum: ['email', 'sms', 'calendly', 'call'], required: true, index: true },
     direction: { type: String, enum: ['out', 'in'], default: 'out', index: true },
     to: { type: String, default: '' },
+    // Other buyers CC'd on a per-lot email.
+    cc: { type: String, default: '' },
     subject: { type: String, default: '' },
     body: { type: String, default: '' },
     status: {

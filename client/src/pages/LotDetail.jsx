@@ -34,7 +34,7 @@ function buildTimeline(history, events) {
       kind = 'email';
       icon = '✉';
       title = (h.direction === 'in' ? 'Email received' : 'Email sent') + (h.subject ? ` · ${h.subject}` : '');
-      subtitle = `${h.direction === 'in' ? 'from' : 'to'} ${h.to || '—'}`;
+      subtitle = `${h.direction === 'in' ? 'from' : 'to'} ${h.to || '—'}${h.cc ? ` · cc ${h.cc}` : ''}`;
     } else if (h.type === 'sms') {
       kind = 'sms';
       icon = '💬';
@@ -462,7 +462,12 @@ export default function LotDetail() {
         if (q.status === 'sending') g.status = 'sending';
         g.sendNow = g.sendNow && q.sendNow;
       }
-      g.to = g.recipients.map((r) => r.address).filter(Boolean).join(', ');
+      const addresses = g.recipients.map((r) => r.address).filter(Boolean);
+      // One email to the lot: first buyer on To, the others CC'd.
+      g.to =
+        g.type === 'email' && g.rows === 1 && addresses.length > 1
+          ? `${addresses[0]} · cc ${addresses.slice(1).join(', ')}`
+          : addresses.join(', ');
     }
     return out;
   }, [data]);

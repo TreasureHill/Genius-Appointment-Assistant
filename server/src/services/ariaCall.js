@@ -26,6 +26,7 @@ const { resolveDefaultsForProject } = require('./templateResolver');
 const { renderContext, renderTemplate, combinedRecipientView } = require('./templateRender');
 const { newSendGroup } = require('./sendGroups');
 const { sendEmail } = require('./mailer');
+const { splitRecipients } = require('./emailFormat');
 const { sendSms } = require('./sms');
 
 function digitsOnly(s) {
@@ -98,21 +99,23 @@ async function triggerProjectOutreach(lot) {
         const batches = emailPerLot ? [recipients] : recipients.map((r) => [r]);
         for (const batch of batches) {
           const view = batch.length > 1 ? combinedRecipientView(batch.map((r) => r.buyer)) : batch[0].buyer;
-          const to = batch.map((r) => r.address).join(', ');
+          // First buyer on To, the others CC'd.
+          const { to, cc } = splitRecipients(batch.map((r) => r.address));
           try {
             const r = renderTemplate(emailTpl, renderContext({ project: lot.project, lot, buyer: view, owner }));
             const info = await sendEmail({
               to,
+              cc,
               subject: r.subject,
               html: r.html,
               text: r.text,
               highImportance: !!setting.emailHighImportance,
             });
-            await logOutreach(lot, 'email', batch, to, r.subject, r.html, info.messageId, '', group);
+            await logOutreach(lot, 'email', batch, to, r.subject, r.html, info.messageId, '', group, cc);
             used.email = emailTpl.name;
             sent += 1;
           } catch (e) {
-            await logOutreach(lot, 'email', batch, to, emailTpl.name, '', '', e.message, group);
+            await logOutreach(lot, 'email', batch, to, emailTpl.name, '', '', e.message, group, cc);
             if (!skipped.includes('email_failed')) skipped.push('email_failed');
           }
         }
@@ -147,7 +150,7 @@ async function triggerProjectOutreach(lot) {
   }
 }
 
-async function logOutreach(lot, type, recipients, to, subject, body, providerId, error, sendGroup) {
+async function logOutreach(lot, type, recipients, to, subject, body, providerId, error, sendGroup, cc = '') {
   try {
     await MessageLog.create({
       project: lot.project?._id || lot.project,
@@ -156,6 +159,7 @@ async function logOutreach(lot, type, recipients, to, subject, body, providerId,
       type,
       direction: 'out',
       to,
+      cc: cc || '',
       subject: subject || '',
       body: body || '',
       status: error ? 'failed' : 'sent',

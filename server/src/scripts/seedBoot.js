@@ -7,6 +7,8 @@ const Rep = require('../models/Rep');
 const env = require('../config/env');
 const { resolveScheduleTimezone } = require('../services/sendWindow');
 const { replanPendingOutbox } = require('../services/outboxPlanner');
+const { rerenderPending } = require('../services/enqueue');
+const { geniusAppointmentHtml, isLegacyGeniusEmail, extractCalendlyUrl } = require('../services/emailPresets');
 
 async function migrateBookedToScheduled() {
   // 'booked' was an early redundant status; it now collapses into 'scheduled'.
@@ -60,6 +62,33 @@ async function migrateScheduleTimezone() {
   console.log(
     `[migration] send windows are now evaluated in ${timezone}; re-planned ${r.moved} of ${r.total} queued message(s)`
   );
+}
+
+// The Genius appointment email was built in the rich-text editor, which
+// turned every paragraph into a cell of one bordered table row. Replace that
+// copy with the same letter laid out as plain paragraphs and lists (window
+// security films dropped, EV chargers added), keeping its Calendly link, and
+// re-render anything already queued from it. Runs once per template: the new
+// body no longer matches.
+async function migrateGeniusEmailTemplate() {
+  try {
+    const candidates = await Template.find({ type: 'email', bodyHtml: /security(\s|&nbsp;|&#160;)+films/i });
+    for (const tpl of candidates) {
+      if (!isLegacyGeniusEmail(tpl.bodyHtml)) continue;
+      tpl.bodyHtml = geniusAppointmentHtml({ calendlyUrl: extractCalendlyUrl(tpl.bodyHtml) });
+      // A hand-written plain-text part of the old letter would still list the
+      // films; blank means it is built from the HTML at send time.
+      if (/security\s+films?/i.test(tpl.bodyText || '')) tpl.bodyText = '';
+      await tpl.save();
+      const r = await rerenderPending(tpl);
+      console.log(
+        `[migration] reformatted email template "${tpl.name}" (EV chargers in, window security films out); re-rendered ${r.updated} queued email(s)`
+      );
+    }
+  } catch (err) {
+    // Never block startup over a template rewrite.
+    console.error('[migration] Genius email template update failed:', err.message);
+  }
 }
 
 async function seedAdmin() {
@@ -126,4 +155,5 @@ module.exports = {
   migrateBookedToScheduled,
   migrateCalendlyWarnings,
   migrateScheduleTimezone,
+  migrateGeniusEmailTemplate,
 };

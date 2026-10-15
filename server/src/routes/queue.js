@@ -7,6 +7,7 @@ const senderWorker = require('../workers/senderWorker');
 const { replanPendingOutbox, scheduleStatus } = require('../services/outboxPlanner');
 const { resolveScheduleTimezone, startOfDayInTimezone } = require('../services/sendWindow');
 const { GROUP_KEY_EXPR, groupKeyOf } = require('../services/sendGroups');
+const { htmlToText } = require('../services/emailFormat');
 
 // The Queue tab: every email / SMS waiting in the outbox and every Aria call
 // waiting in the call queue, with the exact time each goes out (in the
@@ -19,21 +20,6 @@ const router = express.Router();
 
 const LIVE = ['pending', 'sending'];
 const MAX_ROWS = 2000;
-
-function stripHtml(html) {
-  return String(html || '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|tr|li|h[1-6])>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
 
 // Why a pending row won't go out even though its time has come.
 function holdReason(row, project, setting) {
@@ -56,7 +42,7 @@ function shapeRow(r, setting) {
   const lot = r.lot && typeof r.lot === 'object' ? r.lot : null;
   const project = r.project && typeof r.project === 'object' ? r.project : null;
   const template = r.templateId && typeof r.templateId === 'object' ? r.templateId : null;
-  const bodyText = r.type === 'email' ? stripHtml(r.renderedBody) : String(r.renderedBody || '');
+  const bodyText = r.type === 'email' ? htmlToText(r.renderedBody) : String(r.renderedBody || '');
   return {
     _id: r._id,
     key: groupKeyOf(r),
@@ -72,6 +58,7 @@ function shapeRow(r, setting) {
     lastError: r.lastError || '',
     createdAt: r.createdAt,
     to: r.to,
+    cc: r.type === 'email' ? r.cc || '' : '',
     recipients: rowRecipients(r, lot),
     subject: r.renderedSubject || '',
     preview: bodyText.slice(0, 180),
@@ -203,7 +190,7 @@ router.get('/:id', async (req, res) => {
     ...shapeRow(r, setting),
     body: r.renderedBody || '',
     text: r.renderedText || '',
-    bodyText: r.type === 'email' ? stripHtml(r.renderedBody) : String(r.renderedBody || ''),
+    bodyText: r.type === 'email' ? htmlToText(r.renderedBody) : String(r.renderedBody || ''),
   });
 });
 

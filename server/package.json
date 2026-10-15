@@ -16,8 +16,9 @@
     "test:render": "node src/services/__tests__/templateRender.test.js",
     "test:elevenlabs": "node src/services/__tests__/elevenlabs.helpers.test.js",
     "test:availability": "node src/services/__tests__/availability.test.js",
-    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render && npm run test:elevenlabs && npm run test:availability && npm run test:reviews",
-    "test:reviews": "node src/services/__tests__/reviews.test.js"
+    "test": "npm run test:calendly && npm run test:sendwindow && npm run test:render && npm run test:elevenlabs && npm run test:availability && npm run test:reviews && npm run test:email",
+    "test:reviews": "node src/services/__tests__/reviews.test.js",
+    "test:email": "node src/services/__tests__/emailFormat.test.js"
   },
   "dependencies": {
     "axios": "^1.7.7",

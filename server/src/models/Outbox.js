@@ -8,6 +8,9 @@ const OutboxSchema = new mongoose.Schema(
     type: { type: String, enum: ['email', 'sms'], required: true },
     templateId: { type: mongoose.Schema.Types.ObjectId, ref: 'Template', default: null },
     to: { type: String, required: true },
+    // A per-lot email goes To the first buyer with the other buyers CC'd
+    // ("a@x.com, b@y.com"). Empty for texts and single-recipient emails.
+    cc: { type: String, default: '' },
     renderedSubject: { type: String, default: '' },
     renderedBody: { type: String, default: '' },
     renderedText: { type: String, default: '' },

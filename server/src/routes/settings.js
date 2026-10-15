@@ -9,6 +9,7 @@ const Lot = require('../models/Lot');
 const env = require('../config/env');
 const { isValidTimezone, resolveScheduleTimezone } = require('../services/sendWindow');
 const { replanPendingOutbox, scheduleStatus } = require('../services/outboxPlanner');
+const { buildFrom, formatFrom } = require('../services/emailFormat');
 
 const router = express.Router();
 
@@ -32,7 +33,15 @@ router.get('/', async (req, res) => {
       defaultEmailTemplate: sched.defaultEmailTemplate || null,
       defaultSmsTemplate: sched.defaultSmsTemplate || null,
     },
-    smtp: { configured: env.smtp.configured, from: env.smtp.from, host: env.smtp.host, health: s.smtpHealth },
+    smtp: {
+      configured: env.smtp.configured,
+      from: env.smtp.from,
+      host: env.smtp.host,
+      health: s.smtpHealth,
+      // The sender name from Settings and the From line it produces.
+      fromName: s.emailFromName || '',
+      fromDisplay: formatFrom(buildFrom(env.smtp.from, s.emailFromName)),
+    },
     twilio: { configured: env.twilio.configured, from: env.twilio.from, health: s.twilioHealth },
     calendly: { configured: env.calendly.configured, health: s.calendlyHealth, lastSync: s.lastCalendlySync },
     aria: {
@@ -66,6 +75,15 @@ router.post('/email-importance', async (req, res) => {
   s.emailHighImportance = Boolean(enabled);
   await s.save();
   res.json({ emailHighImportance: s.emailHighImportance });
+});
+
+router.patch('/email-from', async (req, res) => {
+  const { name } = req.body || {};
+  if (name == null) return res.status(400).json({ error: 'name_required' });
+  const s = await Setting.getSingleton();
+  s.emailFromName = String(name).replace(/[\r\n]+/g, ' ').trim().slice(0, 120);
+  await s.save();
+  res.json({ fromName: s.emailFromName, fromDisplay: formatFrom(buildFrom(env.smtp.from, s.emailFromName)) });
 });
 
 router.patch('/owner', async (req, res) => {
