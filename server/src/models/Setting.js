@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const env = require('../config/env');
+const { DEFAULT_FROM_NAME } = require('../services/emailFormat');
 
 const SettingSchema = new mongoose.Schema(
   {
@@ -164,6 +165,10 @@ const SettingSchema = new mongoose.Schema(
     senderPaused: { type: Boolean, default: false },
     remindersPaused: { type: Boolean, default: false },
     emailHighImportance: { type: Boolean, default: false },
+    // Sender name homeowners see in their inbox ("Mariyam Amir - Treasure
+    // Hill" rather than the bare "mariyama" mailbox). Blank = the name in
+    // SMTP_FROM, if it has one.
+    emailFromName: { type: String, default: DEFAULT_FROM_NAME },
   },
   { timestamps: true }
 );

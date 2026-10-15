@@ -14,6 +14,7 @@ const {
   migrateBookedToScheduled,
   migrateCalendlyWarnings,
   migrateScheduleTimezone,
+  migrateGeniusEmailTemplate,
   seedReviewReps,
 } = require('./scripts/seedBoot');
 const { startWorkers } = require('./workers');
@@ -97,6 +98,7 @@ async function main() {
   await migrateBookedToScheduled();
   await migrateCalendlyWarnings();
   await migrateScheduleTimezone();
+  await migrateGeniusEmailTemplate();
   await seedReviewReps();
   app.listen(env.port, () => {
     console.log(`[server] listening on :${env.port} (${env.nodeEnv})`);

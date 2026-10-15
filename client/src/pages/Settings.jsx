@@ -406,6 +406,52 @@ function OwnerCard({ owner, onSaved }) {
   );
 }
 
+// The name homeowners see in their inbox next to the From address. Without
+// it they see the bare mailbox ("mariyama").
+function SenderNameField({ smtp, onSaved }) {
+  const [name, setName] = useState(smtp.fromName || '');
+  const [display, setDisplay] = useState(smtp.fromDisplay || '');
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    setMsg('');
+    try {
+      const r = await api.patch('/api/settings/email-from', { name });
+      setName(r.fromName || '');
+      setDisplay(r.fromDisplay || '');
+      setMsg('Saved.');
+      onSaved && onSaved();
+    } catch (ex) {
+      setMsg('Error: ' + ex.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+      <div className="row">
+        <div style={{ flex: 2 }}>
+          <label>Sender name (what homeowners see as "From")</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Mariyam Amir - Treasure Hill" />
+        </div>
+        <div style={{ alignSelf: 'end' }}>
+          <button onClick={save} disabled={busy}>
+            {busy ? 'Saving…' : 'Save sender name'}
+          </button>
+        </div>
+      </div>
+      <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+        Emails arrive from: <strong>{display || '—'}</strong>. Leave the name blank to use the one in{' '}
+        <span className="kbd">SMTP_FROM</span>.
+        {msg && <span className={msg.startsWith('Error') ? 'error' : 'success'} style={{ marginLeft: 8 }}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
+
 function StatusDot({ ok, label }) {
   return (
     <span style={{ marginRight: 12, whiteSpace: 'nowrap' }}>
@@ -1038,6 +1084,7 @@ export default function Settings() {
         <div>
           Last check: <Health h={s.smtp.health} />
         </div>
+        <SenderNameField smtp={s.smtp} onSaved={load} />
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
           <div className="muted" style={{ marginBottom: 6 }}>
             High importance flag — when on, outgoing emails are tagged with{' '}

@@ -5,6 +5,7 @@ const Setting = require('../models/Setting');
 const { renderTemplate, renderContext, combinedRecipientView } = require('./templateRender');
 const { nextSendOpening, resolveScheduleTimezone } = require('./sendWindow');
 const { newSendGroup } = require('./sendGroups');
+const { splitRecipients } = require('./emailFormat');
 
 function randomBetween(min, max) {
   const lo = Math.max(0, Number(min) || 0);
@@ -135,12 +136,14 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
     const sendGroup = newSendGroup();
     const rows = [];
     if (template.type === 'email' && emailPerLot) {
-      // ONE email, addressed to every buyer on the lot.
+      // ONE email for the lot: the first buyer on To, the others CC'd.
       const view = combinedRecipientView(recipients.map((r) => r.buyer));
       const rendered = renderTemplate(template, renderContext({ project: lot.project, lot, buyer: view, owner }));
+      const { to, cc } = splitRecipients(recipients.map((r) => r.address));
       rows.push({
         buyerIndex: recipients[0].buyerIndex,
-        to: recipients.map((r) => r.address).join(', '),
+        to,
+        cc,
         recipients: recipients.map(strip),
         rendered,
       });
@@ -161,6 +164,7 @@ async function enqueueBroadcast({ lotIds, templateId, isReminder = false, startA
         type: template.type,
         templateId: template._id,
         to: row.to,
+        cc: row.cc || '',
         renderedSubject: row.rendered.subject,
         renderedBody: template.type === 'email' ? row.rendered.html : row.rendered.text || row.rendered.html,
         renderedText: row.rendered.text,
@@ -214,4 +218,50 @@ async function bumpReminderCount(lotIds) {
   return { matched: r.modifiedCount || r.nModified || 0 };
 }
 
-module.exports = { enqueueBroadcast, bumpReminderCount, randomBetween, queueTail, planSlot, eligibleRecipients };
+// Re-render every message still waiting in the queue that was built from
+// this template, so a reworded template goes out in its new wording. Each row
+// keeps its recipients, send time and group; a per-lot email renders for the
+// buyers it is addressed to, exactly as enqueueBroadcast did.
+async function rerenderPending(template) {
+  const rows = await Outbox.find({ templateId: template._id, status: 'pending' })
+    .select('lot buyerIndex recipients')
+    .lean();
+  if (!rows.length) return { updated: 0, total: 0 };
+  const setting = await Setting.getSingleton();
+  const owner = setting.owner || {};
+  const lots = new Map();
+  let updated = 0;
+  for (const row of rows) {
+    const lotKey = String(row.lot);
+    if (!lots.has(lotKey)) lots.set(lotKey, await Lot.findById(row.lot).populate('project'));
+    const lot = lots.get(lotKey);
+    if (!lot) continue;
+    const wanted = row.recipients && row.recipients.length ? row.recipients : [{ buyerIndex: row.buyerIndex }];
+    const buyers = wanted.map((r) => lot.buyers[r.buyerIndex]).filter(Boolean);
+    if (!buyers.length) continue;
+    const view = buyers.length > 1 ? combinedRecipientView(buyers) : buyers[0];
+    const rendered = renderTemplate(template, renderContext({ project: lot.project, lot, buyer: view, owner }));
+    const r = await Outbox.updateOne(
+      { _id: row._id, status: 'pending' },
+      {
+        $set: {
+          renderedSubject: rendered.subject,
+          renderedBody: template.type === 'email' ? rendered.html : rendered.text || rendered.html,
+          renderedText: rendered.text,
+        },
+      }
+    );
+    updated += r.modifiedCount || 0;
+  }
+  return { updated, total: rows.length };
+}
+
+module.exports = {
+  enqueueBroadcast,
+  bumpReminderCount,
+  randomBetween,
+  queueTail,
+  planSlot,
+  eligibleRecipients,
+  rerenderPending,
+};

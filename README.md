@@ -69,15 +69,36 @@ re-plans the existing queue once.
 
 ## The lot is the unit of sending
 A send is one lot × one channel × one round. One "Send" queues, per lot, a
-single email addressed to every buyer on the lot (the greeting renders as
-"Hi Jane and John," — `{{buyer.firstName}}` and `{{buyer.name}}` list every
-buyer on a per-lot email) and one text per buyer phone; the texts go out
-together in the same pacing slot. Every Outbox / MessageLog row carries a
+single email to every buyer on the lot — the first buyer on **To**, the
+co-buyer (and any third buyer) **CC'd** — whose greeting renders as "Hi Jane
+and John," (`{{buyer.firstName}}` and `{{buyer.name}}` list every buyer on a
+per-lot email), and one text per buyer phone; the texts go out together in
+the same pacing slot. Every Outbox / MessageLog row carries a
 `sendGroup`, and the Queue, the Board's queued badge and comms icons, and the
 Dashboard's sent counts all count sends, not recipients. Settings → Sending
 schedule → "Send one email per lot" can be switched off to send a separate
 personalised email per buyer; either way the lot still counts as one send and
 uses one reminder. The Aria call-time outreach follows the same rule.
+
+## How emails look in the inbox
+- **Sender name.** Settings → Email (SMTP) → *Sender name* is the name shown
+  next to the `SMTP_FROM` address (default **Mariyam Amir - Treasure Hill**,
+  so inboxes no longer show the bare "mariyama"). Blank uses the name in
+  `SMTP_FROM`, if it has one.
+- **Blue links.** Every link gets an inline blue (`#0000EE`) unless it sets
+  its own colour, so links stay blue after they are clicked instead of
+  turning purple; editor `rgb()` colours are sent as hex for Outlook.
+- **Plain-text part.** Built from the HTML when the template has no plain
+  text of its own: paragraphs, bullets, links spelled out, entities decoded
+  (`server/src/services/emailFormat.js`).
+- **Genius appointment email.** The template editor's *Insert Genius
+  appointment email* button drops in the letter as plain paragraphs and
+  lists (`server/src/services/emailPresets.js`). Bodies with tables or styled
+  blocks open in the HTML tab, because the rich-text editor rewrites them (a
+  table becomes one row of side-by-side cells). On boot, the old table-built
+  copy of that email is replaced in place (window security films out, EV
+  chargers in, its Calendly link kept) and anything already queued from it is
+  re-rendered.
 
 ## The Queue tab
 `/queue` lists every email and text waiting in the outbox (one row per lot
@@ -92,7 +113,7 @@ status changes.
 
 ## Tests
 ```bash
-npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers, Google reviews (matcher, windows, SerpApi, deck)
+npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers, Google reviews (matcher, windows, SerpApi, deck), email formatting (sender, To/CC, links, plain text, Genius preset)
 ```
 
 ## How the sheet diff works
