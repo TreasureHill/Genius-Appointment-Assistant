@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const env = require('../config/env');
 const Setting = require('../models/Setting');
@@ -41,8 +42,9 @@ async function senderName() {
 
 // `cc` takes the other buyers on a lot: one email, the first buyer on To and
 // the rest CC'd. Every link is forced blue (so a clicked link doesn't turn
-// purple), and the plain-text part is built from the HTML unless the template
-// has its own.
+// purple), each send carries a hidden token so Gmail never folds the
+// signature away as "repeated content", and the plain-text part is built from
+// the HTML unless the template has its own.
 async function sendEmail({ to, cc, subject, html, text, highImportance }) {
   const t = getTransporter();
   if (!t) throw new Error('SMTP not configured');
@@ -50,7 +52,7 @@ async function sendEmail({ to, cc, subject, html, text, highImportance }) {
     from: buildFrom(env.smtp.from, await senderName()),
     to,
     subject,
-    html: prepareHtml(html) || undefined,
+    html: prepareHtml(html, { tailToken: crypto.randomBytes(6).toString('hex') }) || undefined,
     text: text || htmlToText(html || ''),
   };
   if (cc) message.cc = cc;

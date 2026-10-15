@@ -13,6 +13,7 @@ const {
   formatFrom,
   splitRecipients,
   styleLinks,
+  uniqueTail,
   prepareHtml,
   decodeEntities,
   htmlToText,
@@ -90,6 +91,30 @@ t('the old email\'s schedule link (colour on the <strong>, not the <a>) turns bl
   assert.strictEqual(anchors.length, 6);
   for (const a of anchors) assert.ok(/color:\s*#0000EE/i.test(a), a);
   assert.ok(!/rgb\(/.test(html), 'rgb() colours become hex');
+});
+
+console.log('signature stays visible in Gmail threads');
+t('a hidden per-send token lands inside the signature, before the closing tags', () => {
+  const html = uniqueTail(geniusAppointmentHtml(), 'a1b2c3');
+  assert.ok(html.endsWith('www.treasurehill.com</a><span style="display:none !important;mso-hide:all;font-size:0;line-height:0;max-height:0;overflow:hidden;opacity:0;">a1b2c3</span></p>\n</div>'));
+  assert.strictEqual((html.match(/a1b2c3/g) || []).length, 1);
+});
+t('works for table layouts and bare text, and is skipped without a token', () => {
+  assert.ok(uniqueTail('<table><tr><td>Regards</td></tr></table>', 'x').startsWith('<table><tr><td>Regards<span'));
+  assert.ok(uniqueTail('Regards', 'x').startsWith('Regards<span'));
+  assert.strictEqual(uniqueTail('<p>Hi</p>', ''), '<p>Hi</p>');
+  assert.strictEqual(uniqueTail('', 'x'), '');
+});
+t('the token never breaks out of its span', () => {
+  assert.ok(uniqueTail('<p>Hi</p>', '"><script>1</script>').includes('>script1script</span>'));
+});
+t('two sends of the same email end differently; the visible text is unchanged', () => {
+  const a = prepareHtml(geniusAppointmentHtml(), { tailToken: 'aaa111' });
+  const b = prepareHtml(geniusAppointmentHtml(), { tailToken: 'bbb222' });
+  assert.notStrictEqual(a.slice(-120), b.slice(-120));
+  const strip = (h) => h.replace(/<span style="display:none[^>]*>[^<]*<\/span>/, '');
+  assert.strictEqual(strip(a), prepareHtml(geniusAppointmentHtml()));
+  assert.strictEqual(strip(b), prepareHtml(geniusAppointmentHtml()));
 });
 
 console.log('htmlToText');
