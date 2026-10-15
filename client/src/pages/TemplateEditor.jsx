@@ -127,6 +127,19 @@ export default function TemplateEditor() {
     return { subject: sub(t.subject), body: sub(t.bodyHtml || t.bodyText) };
   }, [t.subject, t.bodyHtml, t.bodyText]);
 
+  function fitPreview(e) {
+    try {
+      const frame = e.target;
+      const doc = frame.contentDocument;
+      if (!doc) return;
+      // Collapse first so a shorter email can shrink the frame back down.
+      frame.style.height = '0px';
+      frame.style.height = `${doc.documentElement.scrollHeight + 24}px`;
+    } catch {
+      /* keep the CSS height */
+    }
+  }
+
   if (!loaded) return <div className="muted">Loading…</div>;
 
   return (
@@ -269,11 +282,15 @@ export default function TemplateEditor() {
                 <div>{preview?.subject || livePreview.subject}</div>
               </div>
             )}
+            {/* Grows to the email's full height so the end (the signature) is
+                never cut off. Same-origin only so the height can be read;
+                scripts stay off. */}
             <iframe
               className="preview-frame"
-              sandbox=""
+              sandbox="allow-same-origin"
               srcDoc={preview?.html || livePreview.body}
               title="preview"
+              onLoad={fitPreview}
             />
           </div>
         )}

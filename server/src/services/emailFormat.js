@@ -80,10 +80,27 @@ function styleLinks(html) {
   });
 }
 
-// The HTML part as it goes on the wire.
-function prepareHtml(html) {
+// Gmail folds the end of a message behind "•••" when it matches an earlier
+// message in the same conversation. Reminders (and test sends) reuse one
+// subject, so from the second email on the signature disappeared. A hidden
+// token, different on every send, placed inside the last block (before the
+// closing tags that end the email) keeps that ending from ever matching.
+const TAIL_CLOSERS = /(?:\s*<\/(?:p|div|td|th|tr|tbody|table|center|body|html)\s*>)*\s*$/i;
+function uniqueTail(html, token) {
+  const s = String(html || '');
+  if (!s.trim() || !token) return s;
+  const safe = String(token).replace(/[^a-z0-9-]/gi, '');
+  const marker =
+    `<span style="display:none !important;mso-hide:all;font-size:0;line-height:0;` +
+    `max-height:0;overflow:hidden;opacity:0;">${safe}</span>`;
+  const at = s.search(TAIL_CLOSERS);
+  return s.slice(0, at) + marker + s.slice(at);
+}
+
+// The HTML part as it goes on the wire. `tailToken` should be unique per send.
+function prepareHtml(html, { tailToken } = {}) {
   if (!html) return html;
-  return styleLinks(rgbToHexInStyles(html));
+  return uniqueTail(styleLinks(rgbToHexInStyles(html)), tailToken);
 }
 
 const NAMED_ENTITIES = {
@@ -195,6 +212,7 @@ module.exports = {
   splitRecipients,
   styleLinks,
   rgbToHexInStyles,
+  uniqueTail,
   prepareHtml,
   decodeEntities,
   htmlToText,
