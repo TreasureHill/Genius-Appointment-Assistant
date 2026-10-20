@@ -673,6 +673,48 @@ function buildLotCalendlyEvent(occurrence, email, role) {
   };
 }
 
+// The booking a lot should follow when its buyers hold several: the next one
+// coming up (soonest start that hasn't ended), else the most recent past one.
+// Canceled invitees only count when nothing else is left. Taking the earliest
+// booking instead used to pin a lot to an old (even finished) appointment and
+// drop a new booking without a trace. Pure.
+function pickPrimaryOccurrence(occurrences, now = Date.now()) {
+  const all = (occurrences || []).filter(Boolean);
+  const live = all.filter((o) => String(o.inviteeStatus || '').toLowerCase() !== 'canceled');
+  const list = live.length ? live : all;
+  const startOf = (o) => new Date(o.startTime || 0).getTime() || 0;
+  const upcoming = list.filter((o) => !eventHasEnded(o, now)).sort((a, b) => startOf(a) - startOf(b));
+  if (upcoming.length) return upcoming[0];
+  return [...list].sort((a, b) => startOf(b) - startOf(a))[0] || null;
+}
+
+// Should a completed lot take this booking? Only a genuinely new appointment:
+// still upcoming, a different event from the one on the lot, and booked after
+// that appointment ended. A past event (Calendly keeps it 'active') or an old
+// duplicate booked before the last appointment never reopens the lot; neither
+// does anything on a lot completed by hand with no appointment on record. Pure.
+function shouldReopenCompleted(lot, occ, now = Date.now()) {
+  if (!lot || !occ || eventHasEnded(occ, now)) return false;
+  if (String(occ.inviteeStatus || '').toLowerCase() === 'canceled') return false;
+  if (lot.calendlyEventUri && lot.calendlyEventUri === occ.eventUri) return false;
+  const prev = lot.calendlyEvent?.endTime || lot.calendlyEvent?.startTime;
+  const prevEnd = prev ? new Date(prev).getTime() : NaN;
+  const booked = occ.bookedAt ? new Date(occ.bookedAt).getTime() : NaN;
+  return Number.isFinite(prevEnd) && Number.isFinite(booked) && booked > prevEnd;
+}
+
+// The note shown next to a matched booking on the Calendly page when the lot
+// didn't take it ('' when it did). Pure.
+function lotInviteeNote(lot, occ, timeZone = 'America/New_York') {
+  const name = lot?.lotNumber ? `Lot ${lot.lotNumber}` : 'The lot';
+  if (String(occ?.inviteeStatus || '').toLowerCase() === 'canceled') return 'The invitee canceled this booking.';
+  if (lot?.status === 'opted_out') return `${name} is opted out, so it was left as is.`;
+  if (lot?.calendlyEventUri && occ?.eventUri === lot.calendlyEventUri) return '';
+  if (lot?.status === 'completed') return `${name} is completed, so it was left as is.`;
+  if (lot?.calendlyEvent?.startTime) return `${name} follows its ${formatWhen(lot.calendlyEvent.startTime, timeZone)} booking.`;
+  return '';
+}
+
 // Find every buyer on a lot whose email appears in the occurrence map. Pure.
 function findLotHits(lot, emailOccurrences) {
   const hits = [];
@@ -833,6 +875,9 @@ async function collectOccurrences(events) {
         inviteeFirstName: inv.first_name || '',
         inviteeLastName: inv.last_name || '',
         inviteeStatus: inv.status,
+        // When the invitee booked — tells a new appointment apart from an old
+        // duplicate on a lot that's already completed.
+        bookedAt: inv.created_at || null,
         rescheduleUrl: inv.reschedule_url || '',
         cancelUrl: inv.cancel_url || '',
         // What the invitee typed into the booking questions (e.g. the
@@ -1022,7 +1067,7 @@ async function rematchUnmatchedQueue({ dryRun = false, ignoreStalePast = false, 
     if (!dryRun) {
       await CalendlyUnmatch.updateMany(
         { _id: { $in: entries.map((e) => e._id) } },
-        { $set: { status: 'mapped', mappedLot: lots[0]._id, mappedAt: new Date() } }
+        { $set: { status: 'mapped', mappedLot: lots[0]._id, mappedAt: new Date(), matchMethod: method } }
       );
     }
   }
@@ -1048,6 +1093,54 @@ async function rematchUnmatchedQueue({ dryRun = false, ignoreStalePast = false, 
   }
 
   return { stats, changes };
+}
+
+// Keep a row on the Calendly page for a booking that matched a lot, so it shows
+// under Matched with how it matched and, when the lot didn't take it, why. A
+// row someone ignored stays ignored; a hand mapping keeps saying "by hand".
+async function recordInvitee(occ, email, { lotId, method, note = '' }) {
+  if (!occ?.eventUri || !email || !lotId) return;
+  const existing = await CalendlyUnmatch.findOne({ eventUri: occ.eventUri, inviteeEmail: email })
+    .select('status matchMethod')
+    .lean();
+  if (existing?.status === 'ignored') return;
+  const set = {
+    status: 'mapped',
+    mappedLot: lotId,
+    note,
+    lastSeenAt: new Date(),
+    eventName: occ.eventName || '',
+    eventStartTime: occ.startTime ? new Date(occ.startTime) : null,
+    inviteeStatus: occ.inviteeStatus || '',
+    answer: occ.answerText || '',
+    inviteeName: occ.inviteeName || '',
+    inviteeFirstName: occ.inviteeFirstName || '',
+    inviteeLastName: occ.inviteeLastName || '',
+  };
+  if (!(existing?.status === 'mapped' && existing.matchMethod === 'manual')) set.matchMethod = method;
+  if (existing?.status !== 'mapped') set.mappedAt = new Date();
+  await CalendlyUnmatch.updateOne(
+    { eventUri: occ.eventUri, inviteeEmail: email },
+    { $set: set },
+    { upsert: true }
+  );
+}
+
+// Record every booking a lot's buyers hold. `held` is [{ occ, email }].
+// Returns how many UPCOMING bookings the lot didn't take (for the sync
+// summary; past ones the lot moved on from aren't news).
+async function recordLotInvitees(lot, held, method, timeZone, now = Date.now()) {
+  let notTaken = 0;
+  for (const { occ, email } of held) {
+    const note = lotInviteeNote(lot, occ, timeZone);
+    if (note && !eventHasEnded(occ, now)) notTaken += 1;
+    try {
+      await recordInvitee(occ, email, { lotId: lot._id, method, note });
+    } catch (err) {
+      console.warn('[calendly] could not record matched invitee', email, err.message);
+    }
+  }
+  return notTaken;
 }
 
 // Sync the single owner's Calendly events: pull scheduled_events, match
@@ -1085,12 +1178,17 @@ async function syncAll() {
   const timeZone = setting.aria?.timezone || 'America/New_York';
 
   const emails = Array.from(emailOccurrences.keys());
+  const now = Date.now();
   const matchedEmails = new Set();
-  // email → matched lot _id, across both passes. Used at the end to clear any
-  // stale rows this invitee left in the manual-mapping queue on a prior sync.
+  // email → { lotId, method }, across both passes. Used at the end to clear
+  // any stale rows this invitee left in the manual-mapping queue on a prior
+  // sync.
   const matchedEmailToLot = new Map();
   const matched = [];
   const reMatched = [];
+  // Matched bookings the lot didn't take (it's opted out / completed, or it
+  // follows another of the buyer's bookings). Listed under Matched with why.
+  let leftAsIs = 0;
 
   if (emails.length) {
     // Match against ALL buyer roles (buyer, coBuyer, thirdBuyer). The
@@ -1106,24 +1204,33 @@ async function syncAll() {
       // the lot's status untouched.
       for (const h of hits) {
         matchedEmails.add(h.email.toLowerCase());
-        matchedEmailToLot.set(h.email.toLowerCase(), lot._id);
+        matchedEmailToLot.set(h.email.toLowerCase(), { lotId: lot._id, method: 'email' });
       }
 
-      // Never override a human/terminal decision. A Calendly event that has
-      // already happened STILL reports status=active, so without this guard the
-      // 30-min poll keeps reverting completed/opted_out lots back to scheduled
-      // (fighting the completion tracker) on every single run.
-      if (lot.status === 'completed' || lot.status === 'opted_out') continue;
+      // Every booking the lot's buyers hold, and the one the lot should follow:
+      // the next one coming up, not simply the first Calendly listed.
+      const held = hits.flatMap((h) => h.occurrences.map((occ) => ({ occ, email: h.email, role: h.role })));
+      const primary = pickPrimaryOccurrence(held.map((x) => x.occ), now);
+      const holder = held.find((x) => x.occ === primary) || held[0];
+
+      // Never override an opt-out. A completed lot stays completed: a Calendly
+      // event that has already happened STILL reports status=active, and
+      // reverting on it would fight the completion tracker every run. The one
+      // exception is a new appointment booked after the last one ended.
+      const reopen = lot.status === 'completed' && shouldReopenCompleted(lot, primary, now);
+      if (lot.status === 'opted_out' || (lot.status === 'completed' && !reopen)) {
+        leftAsIs += await recordLotInvitees(lot, held, 'email', timeZone, now);
+        continue;
+      }
 
       const dupWarning = buildDuplicateWarning(
-        hits.flatMap((h) => h.occurrences),
-        Date.now(),
+        held.map((x) => x.occ),
+        now,
         timeZone
       );
       const multi = Boolean(dupWarning);
-      const firstHit = hits[0].occurrences[0];
       const alreadyMatchedSameEvent =
-        lot.calendlyEventUri && lot.calendlyEventUri === firstHit.eventUri;
+        lot.calendlyEventUri && lot.calendlyEventUri === primary.eventUri;
 
       // Already scheduled against this exact event → nothing changed. Skip the
       // save + activity log entirely so the poll doesn't churn updatedAt or
@@ -1135,15 +1242,16 @@ async function syncAll() {
           lot.calendlyWarning = dupWarning;
           await lot.save();
         }
-        reMatched.push({ lotId: String(lot._id), email: hits[0].email });
+        reMatched.push({ lotId: String(lot._id), email: holder.email });
+        leftAsIs += await recordLotInvitees(lot, held, 'email', timeZone, now);
         continue;
       }
 
       const priorStatus = lot.status;
       lot.status = 'scheduled';
-      lot.calendlyEventUri = firstHit.eventUri || lot.calendlyEventUri;
+      lot.calendlyEventUri = primary.eventUri || lot.calendlyEventUri;
       lot.calendlyWarning = dupWarning;
-      lot.calendlyEvent = buildLotCalendlyEvent(firstHit, hits[0].email, hits[0].role);
+      lot.calendlyEvent = buildLotCalendlyEvent(primary, holder.email, holder.role);
       await lot.save();
 
       await MessageLog.create({
@@ -1151,11 +1259,11 @@ async function syncAll() {
         lot: lot._id,
         type: 'calendly',
         direction: 'in',
-        to: hits[0].email,
-        subject: firstHit.eventName || 'Calendly event',
-        body: `Matched invitee ${hits[0].email} (${hits[0].role}) in event ${firstHit.eventUri}`,
+        to: holder.email,
+        subject: primary.eventName || 'Calendly event',
+        body: `Matched invitee ${holder.email} (${holder.role}) in event ${primary.eventUri}`,
         status: 'received',
-        providerId: firstHit.eventUri,
+        providerId: primary.eventUri,
         sentAt: new Date(),
       });
       if (priorStatus !== 'scheduled') {
@@ -1165,10 +1273,14 @@ async function syncAll() {
           fromStatus: priorStatus,
           toStatus: 'scheduled',
           actor: 'calendly_sync',
-          message: `Calendly auto-matched ${hits[0].email} to ${firstHit.eventName || 'event'}.`,
+          message:
+            priorStatus === 'completed'
+              ? `Calendly: ${holder.email} booked a new appointment (${formatWhen(primary.startTime, timeZone)}) after the last one.`
+              : `Calendly auto-matched ${holder.email} to ${primary.eventName || 'event'}.`,
         });
       }
-      matched.push({ lotId: String(lot._id), email: hits[0].email, multi });
+      matched.push({ lotId: String(lot._id), email: holder.email, multi });
+      leftAsIs += await recordLotInvitees(lot, held, 'email', timeZone, now);
     }
   }
 
@@ -1191,10 +1303,9 @@ async function syncAll() {
     const usedLotIds = new Set();
     for (const email of unresolved) {
       const occurrences = emailOccurrences.get(email) || [];
-      // Most recent occurrence carries the event we'll attach to the lot.
-      const occ = [...occurrences].sort(
-        (a, b) => new Date(b.startTime || 0) - new Date(a.startTime || 0)
-      )[0];
+      // The booking we'll attach to the lot: the next one coming up, else the
+      // most recent.
+      const occ = pickPrimaryOccurrence(occurrences, now);
       if (!occ) continue;
       const m = matchUnmatchedOccurrence(occ, prepared);
       if (!m) continue;
@@ -1203,7 +1314,7 @@ async function syncAll() {
       usedLotIds.add(String(lot._id));
 
       matchedEmails.add(email);
-      matchedEmailToLot.set(email, lot._id);
+      matchedEmailToLot.set(email, { lotId: lot._id, method: m.method });
 
       const priorStatus = lot.status;
       lot.status = 'scheduled';
@@ -1235,16 +1346,23 @@ async function syncAll() {
       });
       matched.push({ lotId: String(lot._id), email, method: m.method });
       signalMatched += 1;
+      leftAsIs += await recordLotInvitees(
+        lot,
+        occurrences.map((o) => ({ occ: o, email })),
+        m.method,
+        timeZone,
+        now
+      );
     }
   }
 
   // Anyone we matched (either pass) may still have stale rows in the
   // manual-mapping queue from an earlier sync — resolve them so the list
   // reflects reality (they show under "Mapped", linked to the lot).
-  for (const [email, lotId] of matchedEmailToLot) {
+  for (const [email, { lotId, method }] of matchedEmailToLot) {
     await CalendlyUnmatch.updateMany(
       { inviteeEmail: email, status: 'unmatched' },
-      { $set: { status: 'mapped', mappedLot: lotId, mappedAt: new Date() } }
+      { $set: { status: 'mapped', mappedLot: lotId, mappedAt: new Date(), matchMethod: method } }
     );
   }
 
@@ -1307,6 +1425,7 @@ async function syncAll() {
     matched,
     bySignal: signalMatched,
     reMatched: reMatched.length,
+    leftAsIs,
     unmatched: unmatchedCount,
     queueRematched: queueRematch.stats,
   };
@@ -1327,10 +1446,35 @@ async function handleWebhook(payload) {
     return handleCancellation({ email, eventUri, invitee });
   }
 
+  // The booking in the shape the poll's matchers and the Calendly page use.
+  const qa = Array.isArray(invitee.questions_and_answers)
+    ? invitee.questions_and_answers.map((q) => ({ question: q.question || '', answer: q.answer || '' }))
+    : [];
+  const occ = {
+    eventUri,
+    eventName: ev.name || '',
+    startTime: ev.start_time,
+    endTime: ev.end_time,
+    location: ev.location?.location || ev.location?.join_url || '',
+    inviteeName: invitee.name || '',
+    inviteeFirstName: invitee.first_name || '',
+    inviteeLastName: invitee.last_name || '',
+    inviteeStatus: invitee.status || '',
+    bookedAt: invitee.created_at || null,
+    rescheduleUrl: invitee.reschedule_url || '',
+    cancelUrl: invitee.cancel_url || '',
+    questionsAndAnswers: qa,
+    answerText: qa.map((q) => q.answer).filter(Boolean).join(' '),
+  };
+  const timeZone = (await Setting.getSingleton()).aria?.timezone || 'America/New_York';
+
   const lots = await Lot.find({ 'buyers.email': email });
   for (const lot of lots) {
     // Respect an explicit opt-out; never resurrect that lot from a booking.
-    if (lot.status === 'opted_out') continue;
+    if (lot.status === 'opted_out') {
+      await recordLotInvitees(lot, [{ occ, email }], 'email', timeZone);
+      continue;
+    }
 
     const alreadyMatchedSameEvent =
       lot.calendlyEventUri && eventUri && lot.calendlyEventUri === eventUri;
@@ -1354,6 +1498,8 @@ async function handleWebhook(payload) {
       lastSyncedAt: new Date(),
     };
     await lot.save();
+
+    await recordLotInvitees(lot, [{ occ, email }], 'email', timeZone);
 
     if (!alreadyMatchedSameEvent) {
       await MessageLog.create({
@@ -1382,27 +1528,6 @@ async function handleWebhook(payload) {
   }
 
   if (lots.length === 0 && eventUri) {
-    // Build an occurrence from the webhook payload so the same matchers used by
-    // the poll can run here.
-    const qa = Array.isArray(invitee.questions_and_answers)
-      ? invitee.questions_and_answers.map((q) => ({ question: q.question || '', answer: q.answer || '' }))
-      : [];
-    const occ = {
-      eventUri,
-      eventName: ev.name || '',
-      startTime: ev.start_time,
-      endTime: ev.end_time,
-      location: ev.location?.location || ev.location?.join_url || '',
-      inviteeName: invitee.name || '',
-      inviteeFirstName: invitee.first_name || '',
-      inviteeLastName: invitee.last_name || '',
-      inviteeStatus: invitee.status || '',
-      rescheduleUrl: invitee.reschedule_url || '',
-      cancelUrl: invitee.cancel_url || '',
-      questionsAndAnswers: qa,
-      answerText: qa.map((q) => q.answer).filter(Boolean).join(' '),
-    };
-
     // No email match — try the project/lot the invitee typed, then their name.
     const candidates = await Lot.find({ status: { $in: ['pending', 'contacted'] } }).populate(
       'project',
@@ -1441,11 +1566,13 @@ async function handleWebhook(payload) {
           message: `Calendly webhook matched ${email} by ${m.method}.`,
         });
       }
-      // Clear any stale queue rows for this invitee.
+      // Clear any stale queue rows for this invitee, and list this booking
+      // under Matched.
       await CalendlyUnmatch.updateMany(
         { inviteeEmail: email, status: 'unmatched' },
-        { $set: { status: 'mapped', mappedLot: lot._id, mappedAt: new Date() } }
+        { $set: { status: 'mapped', mappedLot: lot._id, mappedAt: new Date(), matchMethod: m.method } }
       );
+      await recordLotInvitees(lot, [{ occ, email }], m.method, timeZone);
       return { matched: 1, method: m.method };
     }
 
@@ -1525,7 +1652,7 @@ async function handleCancellation({ email, eventUri }) {
   // doesn't linger in the "needs mapping" list.
   await CalendlyUnmatch.updateOne(
     { eventUri, inviteeEmail: email },
-    { $set: { status: 'ignored', lastSeenAt: new Date() } }
+    { $set: { status: 'ignored', note: 'The invitee canceled this booking.', lastSeenAt: new Date() } }
   ).catch(() => {});
 
   return { matched: lots.length, canceled: reverted };
@@ -1557,6 +1684,9 @@ module.exports = {
   occurrenceFromUnmatch,
   rematchUnmatchedQueue,
   findLotHits,
+  pickPrimaryOccurrence,
+  shouldReopenCompleted,
+  lotInviteeNote,
   buildLotCalendlyEvent,
   eventHasEnded,
   buildDuplicateWarning,

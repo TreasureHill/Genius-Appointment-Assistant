@@ -1,5 +1,9 @@
 const mongoose = require('mongoose');
 
+// Every Calendly invitee the sync has seen, one row per event × email — the
+// Calendly page's Unmatched / Matched / Ignored lists. Despite the name, rows
+// matched straight to a lot (by email, typed project/lot, name, or by hand)
+// are kept too, so a booking never disappears without a trace.
 const CalendlyUnmatchSchema = new mongoose.Schema(
   {
     eventUri: { type: String, required: true, index: true },
@@ -24,6 +28,12 @@ const CalendlyUnmatchSchema = new mongoose.Schema(
     },
     mappedLot: { type: mongoose.Schema.Types.ObjectId, ref: 'Lot', default: null },
     mappedAt: { type: Date, default: null },
+    // How a mapped row found its lot: 'email' | 'project/lot answer' |
+    // 'buyer name' | 'manual'.
+    matchMethod: { type: String, default: '' },
+    // Why the lot didn't take this booking, when it didn't ("Lot 12 is
+    // completed, so it was left as is", "Lot 12 follows its Oct 22 booking").
+    note: { type: String, default: '' },
     lastSeenAt: { type: Date, default: () => new Date() },
   },
   { timestamps: true }
