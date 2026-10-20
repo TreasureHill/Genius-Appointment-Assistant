@@ -135,6 +135,14 @@ Three ways to stay in sync:
    to `completed` by a separate 15-min worker. The poll never overrides a
    `completed` or `opted_out` lot. If the same email shows up in multiple active
    events, the lot is flagged with a warning on the Dashboard.
+   **Every booking shows on the Calendly page.** *Unmatched* is the manual
+   queue; *Matched* lists every booking tied to a lot (by email, typed
+   project/lot, name, or by hand), newest first, with a note when the lot
+   didn't take that booking. When a buyer holds several bookings the lot
+   follows the next one coming up (not simply the first Calendly lists), and
+   a **completed** lot is reopened to `scheduled` only for a new appointment
+   booked after the last one ended — past events and older duplicates never
+   reopen it. Opted-out lots are never changed.
 3. **Reconcile / backfill** — `npm run reconcile:calendly` (from `server/`)
    sweeps a wide window (default ±12 months) to catch appointments booked while
    the server was down or before Calendly was wired up. It sets upcoming matches

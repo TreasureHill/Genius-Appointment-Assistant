@@ -14,9 +14,12 @@ router.get('/unmatched', async (req, res) => {
     const r = new RegExp(escapeRegex(q), 'i');
     filter.$or = [{ inviteeEmail: r }, { inviteeName: r }, { eventName: r }];
   }
+  // Unmatched: what's still in Calendly's window first. Matched / Ignored:
+  // newest bookings first, so the one just made is at the top.
+  const sort = status === 'unmatched' ? { lastSeenAt: -1 } : { createdAt: -1 };
   const rows = await CalendlyUnmatch.find(filter)
-    .populate({ path: 'mappedLot', populate: { path: 'project', select: 'name' }, select: 'lotNumber' })
-    .sort({ lastSeenAt: -1 })
+    .populate({ path: 'mappedLot', populate: { path: 'project', select: 'name' }, select: 'lotNumber status' })
+    .sort(sort)
     .limit(Math.min(Number(limit) || 200, 1000))
     .lean();
   res.json(rows);
@@ -85,6 +88,8 @@ router.post('/unmatched/:id/map', async (req, res) => {
   entry.status = 'mapped';
   entry.mappedLot = lot._id;
   entry.mappedAt = new Date();
+  entry.matchMethod = 'manual';
+  entry.note = '';
   await entry.save();
 
   if (priorStatus !== 'scheduled') {

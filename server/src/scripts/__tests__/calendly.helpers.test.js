@@ -19,6 +19,9 @@ const {
   matchUnmatchedOccurrence,
   prepLotForMatch,
   occurrenceFromUnmatch,
+  pickPrimaryOccurrence,
+  shouldReopenCompleted,
+  lotInviteeNote,
 } = require('../../services/calendly');
 
 let passed = 0;
@@ -240,8 +243,6 @@ t('handles an empty row without throwing', () => {
   assert.strictEqual(occ.startTime, null);
 });
 
-console.log(`\nAll ${passed} assertions passed ✅`);
-
 // ---- buildDuplicateWarning: only UPCOMING, non-canceled bookings count ----
 {
   const { buildDuplicateWarning } = require('../../services/calendly');
@@ -261,3 +262,71 @@ console.log(`\nAll ${passed} assertions passed ✅`);
   assert.ok(w.indexOf('Sep 12') < w.indexOf('Sep 14'), 'dates listed in order');
   console.log('buildDuplicateWarning: ok');
 }
+
+// ---- Which booking a lot follows, and whether a completed lot takes a new one ----
+{
+  console.log('pickPrimaryOccurrence');
+  const now = new Date('2026-10-20T12:00:00Z').getTime();
+  const past = { eventUri: 'ev/past', startTime: '2026-10-10T13:30:00Z', endTime: '2026-10-10T14:30:00Z', inviteeStatus: 'active' };
+  const soon = { eventUri: 'ev/soon', startTime: '2026-10-22T13:30:00Z', endTime: '2026-10-22T14:30:00Z', inviteeStatus: 'active' };
+  const later = { eventUri: 'ev/later', startTime: '2026-12-01T14:30:00Z', endTime: '2026-12-01T15:30:00Z', inviteeStatus: 'active' };
+  const canceled = { eventUri: 'ev/canceled', startTime: '2026-10-21T13:30:00Z', endTime: '2026-10-21T14:30:00Z', inviteeStatus: 'canceled' };
+
+  t('a new upcoming booking beats an older past one listed first', () => {
+    assert.strictEqual(pickPrimaryOccurrence([past, later], now), later);
+  });
+  t('the soonest upcoming booking wins when there are several', () => {
+    assert.strictEqual(pickPrimaryOccurrence([later, past, soon], now), soon);
+  });
+  t('with only past bookings, the most recent one', () => {
+    const older = { ...past, eventUri: 'ev/older', startTime: '2026-09-25T13:30:00Z', endTime: '2026-09-25T14:30:00Z' };
+    assert.strictEqual(pickPrimaryOccurrence([older, past], now), past);
+  });
+  t('canceled invitees are skipped unless nothing else is left', () => {
+    assert.strictEqual(pickPrimaryOccurrence([canceled, later], now), later);
+    assert.strictEqual(pickPrimaryOccurrence([canceled], now), canceled);
+    assert.strictEqual(pickPrimaryOccurrence([], now), null);
+  });
+
+  console.log('shouldReopenCompleted');
+  const completedLot = {
+    status: 'completed',
+    calendlyEventUri: 'ev/past',
+    calendlyEvent: { startTime: new Date(past.startTime), endTime: new Date(past.endTime) },
+  };
+  t('a new appointment booked after the last one ended reopens the lot', () => {
+    assert.strictEqual(shouldReopenCompleted(completedLot, { ...later, bookedAt: '2026-10-20T10:00:00Z' }, now), true);
+  });
+  t('an old duplicate booked before the last appointment does not', () => {
+    assert.strictEqual(shouldReopenCompleted(completedLot, { ...later, bookedAt: '2026-10-01T10:00:00Z' }, now), false);
+  });
+  t('a past event (Calendly still says active) never reopens it', () => {
+    assert.strictEqual(shouldReopenCompleted(completedLot, { ...past, bookedAt: '2026-10-01T10:00:00Z' }, now), false);
+    const otherPast = { ...past, eventUri: 'ev/other', bookedAt: '2026-10-11T10:00:00Z', startTime: '2026-10-15T13:00:00Z', endTime: '2026-10-15T14:00:00Z' };
+    assert.strictEqual(shouldReopenCompleted(completedLot, otherPast, now), false);
+  });
+  t('the same event, a canceled invitee, or no booking time never reopen it', () => {
+    assert.strictEqual(shouldReopenCompleted({ ...completedLot, calendlyEventUri: 'ev/later' }, { ...later, bookedAt: '2026-10-20T10:00:00Z' }, now), false);
+    assert.strictEqual(shouldReopenCompleted(completedLot, { ...later, inviteeStatus: 'canceled', bookedAt: '2026-10-20T10:00:00Z' }, now), false);
+    assert.strictEqual(shouldReopenCompleted(completedLot, { ...later }, now), false);
+  });
+  t('a lot completed by hand with no appointment on record is left alone', () => {
+    assert.strictEqual(shouldReopenCompleted({ status: 'completed', calendlyEventUri: '', calendlyEvent: {} }, { ...later, bookedAt: '2026-10-20T10:00:00Z' }, now), false);
+  });
+
+  console.log('lotInviteeNote');
+  const scheduledLot = { lotNumber: '12', status: 'scheduled', calendlyEventUri: 'ev/soon', calendlyEvent: { startTime: new Date(soon.startTime) } };
+  t('no note for the booking the lot follows', () => {
+    assert.strictEqual(lotInviteeNote(scheduledLot, soon), '');
+  });
+  t('another booking says which one the lot follows', () => {
+    assert.strictEqual(lotInviteeNote(scheduledLot, later, 'America/Toronto'), 'Lot 12 follows its Oct 22, 2026, 9:30 AM booking.');
+  });
+  t('completed / opted-out lots and canceled invitees say why', () => {
+    assert.strictEqual(lotInviteeNote({ ...completedLot, lotNumber: '12' }, later), 'Lot 12 is completed, so it was left as is.');
+    assert.strictEqual(lotInviteeNote({ ...scheduledLot, status: 'opted_out' }, soon), 'Lot 12 is opted out, so it was left as is.');
+    assert.strictEqual(lotInviteeNote(scheduledLot, { ...soon, inviteeStatus: 'canceled' }), 'The invitee canceled this booking.');
+  });
+}
+
+console.log(`\nAll ${passed} assertions passed ✅`);

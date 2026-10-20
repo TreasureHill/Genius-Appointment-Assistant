@@ -123,6 +123,13 @@ function MapRow({ entry, projects, onDone, selected, onToggleSelect }) {
   );
 }
 
+const METHOD_LABELS = {
+  email: 'by email',
+  'project/lot answer': 'by typed project/lot',
+  'buyer name': 'by name',
+  manual: 'by hand',
+};
+
 function ResolvedRow({ entry, onUnresolve, onDelete, selected, onToggleSelect }) {
   return (
     <tr>
@@ -145,12 +152,25 @@ function ResolvedRow({ entry, onUnresolve, onDelete, selected, onToggleSelect })
       <td>{entry.eventName}</td>
       <td>
         {entry.status === 'mapped' && entry.mappedLot ? (
-          <Link to={`/lots/${entry.mappedLot._id}`}>
-            Lot {entry.mappedLot.lotNumber}
-            {entry.mappedLot.project?.name ? ` · ${entry.mappedLot.project.name}` : ''}
-          </Link>
+          <>
+            <Link to={`/lots/${entry.mappedLot._id}`}>
+              Lot {entry.mappedLot.lotNumber}
+              {entry.mappedLot.project?.name ? ` · ${entry.mappedLot.project.name}` : ''}
+            </Link>
+            {entry.matchMethod && (
+              <span className="muted" style={{ fontSize: 12 }}>
+                {' '}
+                ({METHOD_LABELS[entry.matchMethod] || entry.matchMethod})
+              </span>
+            )}
+          </>
         ) : (
           <span className="muted">ignored</span>
+        )}
+        {entry.note && (
+          <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+            {entry.note}
+          </div>
         )}
       </td>
       <td className="nowrap">
@@ -228,6 +248,8 @@ export default function CalendlyEvents() {
         setSyncMsg(
           `Synced: ${r.events} events, ${r.emailsSeen} invitees, ${r.matched.length} auto-matched` +
             (bySignal ? ` (${bySignal} by typed project/lot or name)` : '') +
+            (r.reMatched ? `, ${r.reMatched} already scheduled` : '') +
+            (r.leftAsIs ? `, ${r.leftAsIs} upcoming booking(s) a lot didn't take (see Matched)` : '') +
             `, ${r.unmatched || 0} unmatched`
         );
       } else {
@@ -277,10 +299,13 @@ export default function CalendlyEvents() {
     <div>
       <h1>Calendly events</h1>
       <p className="muted">
-        Invitees Calendly couldn't auto-match to a single lot — not by email, by the project/lot
-        they typed at booking, nor by name. Map them to a lot here, or ignore them. Mapped entries
-        flip the lot to <span className="badge scheduled">scheduled</span> and optionally add the
-        invitee's email as a buyer so future events auto-match.
+        Every Calendly booking the sync has seen. <strong>Unmatched</strong> are invitees it couldn't
+        tie to a single lot — not by email, by the project/lot they typed at booking, nor by name.
+        Map them to a lot here, or ignore them; mapping flips the lot to{' '}
+        <span className="badge scheduled">scheduled</span> and can add the invitee's email as a buyer
+        so future events auto-match. <strong>Matched</strong> lists bookings tied to a lot and how,
+        with a note when the lot didn't take that booking (it's completed or opted out, or it
+        follows another of the buyer's bookings).
       </p>
 
       <div className="toolbar">
@@ -288,7 +313,7 @@ export default function CalendlyEvents() {
           Unmatched
         </button>
         <button onClick={() => setTab('mapped')} className={tab === 'mapped' ? '' : 'secondary'}>
-          Mapped
+          Matched
         </button>
         <button onClick={() => setTab('ignored')} className={tab === 'ignored' ? '' : 'secondary'}>
           Ignored
@@ -349,7 +374,7 @@ export default function CalendlyEvents() {
               <th>Event time</th>
               <th>Invitee</th>
               <th>Event</th>
-              <th>{tab === 'unmatched' ? 'Map to lot' : 'Mapped to'}</th>
+              <th>{tab === 'unmatched' ? 'Map to lot' : tab === 'mapped' ? 'Matched to' : 'Status'}</th>
               <th></th>
             </tr>
           </thead>
