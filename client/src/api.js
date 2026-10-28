@@ -16,14 +16,18 @@ async function request(method, url, body, opts = {}) {
   if (opts.raw) return res;
   if (!res.ok) {
     let msg = res.statusText;
+    let data = null;
     if (contentType.includes('application/json')) {
       try {
-        const data = await res.json();
+        data = await res.json();
         msg = data.error || data.message || msg;
       } catch {}
     }
     const err = new Error(msg);
     err.status = res.status;
+    // The full JSON error body, for extras such as a DocuSign consentUrl or
+    // Stripe catalog `problems`; err.message stays the short error code.
+    err.data = data;
     throw err;
   }
   if (contentType.includes('application/json')) return res.json();

@@ -18,6 +18,9 @@ const LotSchema = new mongoose.Schema(
     project: { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
     lotNumber: { type: String, required: true, trim: true },
     address: { type: String, default: '' },
+    // House model from the APS addendum ("Model: A3END A"). Printed on the
+    // alarm monitoring agreement; editable on the lot card.
+    model: { type: String, default: '', trim: true },
     buyers: { type: [BuyerSchema], default: [] },
     status: { type: String, enum: LOT_STATUSES, default: 'pending', index: true },
     importBatch: { type: mongoose.Schema.Types.ObjectId, ref: 'ImportBatch', default: null, index: true },
@@ -79,6 +82,24 @@ const LotSchema = new mongoose.Schema(
       firstMessage: { type: String, default: '' },
       promptOverridden: { type: Boolean, default: false },
     },
+    // Home closing. Deliberately separate from `status`, which is the
+    // appointment pipeline: adding 'closed' there would trip STOP_STATUSES,
+    // the outbox, the completion / Calendly workers and every hard-coded
+    // status list on the client. Nothing in the appointment code paths reads
+    // or writes this block. Set via POST /api/lots/:id/closing.
+    closing: {
+      closed: { type: Boolean, default: false, index: true },
+      // Legal closing date (date-only; stored at 12:00 UTC so it reads as the
+      // same calendar day in every North American zone).
+      closingDate: { type: Date, default: null },
+      // When staff flagged it, and who.
+      closedAt: { type: Date, default: null },
+      closedBy: { type: String, default: '' },
+    },
+    // Shortcut to the lot's current alarm monitoring contract (the one with
+    // isCurrent:true) so the board and lot list can show its status without a
+    // second query. The contract itself is the source of truth.
+    alarmContract: { type: mongoose.Schema.Types.ObjectId, ref: 'AlarmContract', default: null },
     bounceCount: { type: Number, default: 0 },
     lastBounceAt: { type: Date, default: null },
     lastBounceError: { type: String, default: '' },

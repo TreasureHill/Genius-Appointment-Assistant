@@ -1,0 +1,12 @@
+{
+  "id": "ch_basil_1",
+  "object": "charge",
+  "amount": 3728,
+  "amount_refunded": 3728,
+  "refunded": true,
+  "currency": "cad",
+  "customer": "cus_test_1",
+  "payment_intent": "pi_basil_1",
+  "status": "succeeded",
+  "livemode": false
+}

@@ -9,7 +9,7 @@ Calendly confirms the invitee.
 - **MongoDB** (Mongoose 8)
 - **Express 4** on Node 20
 - **React 18 + Vite 5** (plain JSX), React Router 6
-- `nodemailer`, `twilio`, `xlsx` (SheetJS), `node-cron`, `handlebars`, `react-quill-new`, `pptxgenjs`
+- `nodemailer`, `twilio`, `xlsx` (SheetJS), `node-cron`, `handlebars`, `react-quill-new`, `pptxgenjs`, `stripe`, `pdfkit`
 - **ElevenLabs Conversational AI** ("Aria") for outbound voice calls that book over the phone
 
 ## Quick start
@@ -47,6 +47,7 @@ npm start         # Express serves the SPA + API on $PORT
 | **Aria voice calls (ElevenLabs) + transcript/recording/booking** | `server/src/services/elevenlabs.js`, `server/src/services/ariaCall.js`, `server/src/routes/aria.js`, `client/src/pages/LotDetail.jsx` |
 | Dashboard + activity log | `server/src/routes/dashboard.js`, `server/src/routes/activity.js`, `client/src/pages/Dashboard.jsx`, `Activity.jsx` |
 | **Reviews tab (Google reviews → reps, weekly deck)** | `server/src/routes/reviews.js`, `server/src/services/reviews/`, `server/src/workers/reviewSyncWorker.js`, `client/src/pages/Reviews.jsx`, `client/src/components/reviews/` |
+| **Monitoring contracts (closing → DocuSign → Stripe subscription) + homeowner portal** | `server/src/routes/contracts.js`, `server/src/routes/portal.js`, `server/src/services/contracts/`, `server/src/workers/{docusignPoller,stripeReconciler,paymentReminderWorker,contractTailWorker}.js`, `client/src/pages/Contracts.jsx`, `ContractDetail.jsx`, `client/src/components/contracts/`, `client/src/portal/` |
 
 ## How messages are paced (anti-junk)
 When you bulk send or the scheduler enqueues reminders, each message gets a
@@ -113,8 +114,18 @@ status changes.
 
 ## Tests
 ```bash
-npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers, Google reviews (matcher, windows, SerpApi, deck), email formatting (sender, To/CC, links, plain text, Genius preset)
+npm test            # pure-function suites: Calendly matching, send-window timezone math, per-lot rendering, ElevenLabs helpers, Google reviews (matcher, windows, SerpApi, deck), email formatting (sender, To/CC, links, plain text, Genius preset), monitoring contracts (below)
+npm run test:contracts -w server   # just the monitoring-contract suites
 ```
+The monitoring-contract suites (`server/src/services/__tests__/contract*.test.js`,
+run by `runContracts.js`, no database and no network) cover pricing and HST,
+the status derivation and action guards, admin/portal auth isolation,
+webhook signatures (Stripe `constructEvent`, DocuSign HMAC rotation), signer
+routing and the package radio group, the agreement PDF and its anchors,
+DocuSign envelope sync, Stripe checkout/webhook/reconcile flows against a fake
+client (basil and legacy shapes), portal tokens and lockout, the portal
+routes, reminder scheduling across Toronto DST, contract emails and the
+metrics/CSV. A new `contract*.test.js` file is picked up automatically.
 
 ## How the sheet diff works
 - **Key** = `(project, lotNumber)`.
@@ -305,6 +316,152 @@ Week boundaries ("Monday of the current week through today", past weeks
 Monday–Sunday) and every date use the sending-schedule timezone from
 Settings. A review counts for the date it was last edited, like the manual
 log did with "Edited 5 days ago" reviews.
+
+## Monitoring contracts (alarm monitoring + homeowner portal)
+
+Genius sells the alarm system on the APS addendum ($980, billed there) plus
+**monthly monitoring**: *Basic* $24.99 or *Smart* $32.99, with 13% HST added
+on top ($28.24 / $37.28 a month). This feature tracks each lot's monitoring
+contract from the home closing to the monthly payments.
+
+### How it works
+1. **Close the lot.** On the lot page, *Alarm monitoring → Mark closed*
+   records `Lot.closing` (a flag and date, deliberately **not** a lot status,
+   so the appointment workers and outbox are unaffected). A lot with a live
+   contract can't be reopened or deleted.
+2. **Prepare and send the agreement.** *Prepare agreement* prefills the
+   purchasers from the lot's buyers. The app generates the agreement PDF
+   itself (pdfkit, `services/contracts/agreementPdf.js`; the terms text is the
+   placeholder `TERMS` constant + `termsVersion`, pending legal) and places
+   DocuSign tabs on it with white anchor strings. Signing modes:
+   - **Remote** (default): DocuSign emails the purchasers in order. The
+     primary purchaser (recipient 1) must pick *Basic* or *Smart* in a
+     required radio group before signing; co-buyers sign after.
+   - **In person**: *Sign now* opens embedded signing on a tablet; DocuSign
+     returns to `/contracts/:id/signing-return`, which hands off to the next
+     purchaser.
+   - **Paper**: upload a signed PDF with the package and signed date (older
+     or offline contracts), so every contract can be tracked.
+3. **Signing completes.** DocuSign Connect (or the 20-minute poller when
+   Connect is off or a message was missed) calls the single sync path
+   `envelopeSync.applyEnvelopeStatus`. On completion the app reads the
+   package from the tabs (no package → *needs attention*, staff set it with an
+   audit note), stores the signed PDF and certificate in Mongo with their
+   sha256, creates a portal account per signer email and sends the welcome
+   email with the signed PDF attached and a one-time set-password link.
+4. **Payment.** The homeowner logs in at `/portal` and pays through hosted
+   Stripe Checkout (subscription, 13% HST tax rate). The first charge is that
+   day; renewals follow monthly on the same date. Cards are updated through
+   the Stripe Billing Portal. Emails always link to our portal, never to a
+   Checkout URL (those expire).
+5. **Billing mirror.** Stripe webhooks (and a nightly/hourly reconciler)
+   re-fetch each object from Stripe and mirror it: one `ContractPayment` per
+   invoice, aggregates (paid, missed, consecutive missed, totals) recomputed
+   from those rows, and the contract status derived from envelope + billing:
+   `draft → sent → awaiting_payment → active ⇄ past_due → unpaid / canceled`
+   (plus `declined` / `voided`, which can be regenerated as a new draft).
+   Homeowners can't cancel; staff cancel from the contract page (end of
+   period by default).
+6. **Emails** (our own, via SMTP, never the Outbox): welcome, payment-setup
+   nudge (3 days unpaid), upcoming payment (N days before the charge), receipt,
+   payment failed, card expiring, password reset, cancelled, and internal
+   alerts to *Contracts CC email*. To = primary purchaser, CC = co-buyers,
+   BCC = Contracts CC email (except emails that carry a personal login link).
+   Toggles: global in *Settings → Alarm monitoring billing* (and the Contracts
+   page header), per contract on the lot card / contract page, and the homeowner's
+   own reminder switch in the portal.
+
+Staff views: the lot card, `/contracts` (tiles for active, MRR, collected,
+missed, past due, awaiting signature/payment, average months active, charges
+in the next 7 days; paid-vs-failed chart; filters; CSV export) and
+`/contracts/:id` (documents, envelope, billing, payments, portal users,
+history). The Dashboard shows Stripe/DocuSign health and a monitoring row.
+
+The portal is isolated from the admin app: its own `psid` cookie (path
+`/api/portal`, JWT `aud:'portal'` signed with `PORTAL_JWT_SECRET`), and the
+admin API rejects any portal token. Logins are rate-limited per IP and per
+email (failed attempts only) and lock for 15 minutes after 10 failures; a
+locked account answers like a wrong password, so the lock never confirms
+that an email has an account. Portal POSTs accept JSON only (login CSRF).
+
+### Environment variables
+| Variable | Purpose |
+| --- | --- |
+| `APP_URL` | Public https base URL; portal links, Checkout return URLs and the Connect webhook are built from it |
+| `HOST` | Interface to listen on (blank = all). `deploy.ps1 -ListenHost 127.0.0.1` keeps :4000 reachable only from Caddy on the same machine (point Caddy at `127.0.0.1:4000` first); the default stays every interface |
+| `PORTAL_JWT_SECRET` | Portal session secret (blank = derived from `JWT_SECRET`; must differ from it) |
+| `HST_REGISTRATION_NUMBER` | Printed on receipts and reminders |
+| `STRIPE_SECRET_KEY` | `sk_test_…` / `sk_live_…`; test/live mode comes from the prefix |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_…` for `/api/webhooks/stripe` (required in production) |
+| `STRIPE_TAX_RATE_ID` | The 13% exclusive HST rate; printed by `npm run stripe:bootstrap -w server`. Checkout is off until it is set |
+| `STRIPE_PRICE_BASIC`, `STRIPE_PRICE_SMART` | Optional price id overrides (default: lookup keys `genius_monitoring_basic_monthly` / `genius_monitoring_smart_monthly`) |
+| `STRIPE_API_VERSION` | Pinned API version; must match the webhook endpoint's version (default: the SDK's, `2025-08-27.basil`) |
+| `STRIPE_TEST_CLOCKS` | Dev only: attach new customers to a test clock |
+| `DOCUSIGN_ENV` | `demo` or `prod` |
+| `DOCUSIGN_INTEGRATION_KEY`, `DOCUSIGN_USER_ID`, `DOCUSIGN_ACCOUNT_ID` | The app, the user it acts as, and the account |
+| `DOCUSIGN_PRIVATE_KEY` / `DOCUSIGN_PRIVATE_KEY_PATH` | RSA key for the JWT grant (keep the file outside the repo folder; `deploy.ps1` resets it) |
+| `DOCUSIGN_CONNECT_HMAC_KEYS` | Connect HMAC secret(s), comma-separated while rotating (required in production) |
+| `DOCUSIGN_REDIRECT_URI` | Redirect URI for the one-time consent link (default `${APP_URL}/settings`) |
+
+With the Stripe or DocuSign variables blank the server still boots; those
+features report *not configured* in Settings and the related buttons are
+disabled.
+
+### Setup runbook
+**DocuSign**
+1. In the DocuSign developer (demo) account, create an app (integration
+   key), generate an RSA key pair, and add the redirect URI
+   (`${APP_URL}/settings`, or `DOCUSIGN_REDIRECT_URI`). Copy the API username
+   (user GUID) and account id. Put the private key file outside the repo.
+2. Fill in the `DOCUSIGN_*` variables and restart. In *Settings → Agreements (DocuSign)*,
+   click *Grant consent* once (signature + impersonation), then *Test connection*.
+3. Connect (push updates): in DocuSign *Settings → Connect → Connect Keys*,
+   add an HMAC key and put it in `DOCUSIGN_CONNECT_HMAC_KEYS`, and make sure
+   HMAC signing and envelope-level Connect (`eventNotification`) are enabled
+   on the account. Per-envelope HMAC only works once an account HMAC key
+   exists. The app adds the per-envelope webhook only when `APP_URL` is https
+   and a key is set; otherwise the poller (every 20 minutes) is the only
+   status path.
+4. **One-time tab check:** send a test agreement in the demo account and
+   confirm the signature, name, date and package radio tabs sit where they
+   should. Their offsets are `TAB_OFFSETS` in
+   `server/src/services/contracts/docusign.js`; adjust there if needed. Also
+   confirm the radio group can't be skipped.
+5. Go live: promote the integration key, switch `DOCUSIGN_ENV=prod` and the
+   ids/keys to the production account, and grant consent again.
+
+**Stripe**
+1. Set `STRIPE_SECRET_KEY` (test key first) and run
+   `npm run stripe:bootstrap -w server`. It finds or creates the two
+   products, the two monthly CAD prices (by lookup key) and the 13% Ontario
+   HST tax rate (exclusive), and prints the ids. Put the tax rate id in
+   `STRIPE_TAX_RATE_ID` (price overrides are optional). It is safe to re-run.
+2. Add a webhook endpoint `${APP_URL}/api/webhooks/stripe` with the same API
+   version as `STRIPE_API_VERSION`, for: `checkout.session.completed`,
+   `checkout.session.expired`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`,
+   `customer.subscription.paused`, `customer.subscription.resumed`,
+   `invoice.finalized`, `invoice.paid`, `invoice.payment_failed`,
+   `invoice.voided`, `invoice.marked_uncollectible`, `charge.refunded`. Put its
+   signing secret in `STRIPE_WEBHOOK_SECRET`. For local dev:
+   `stripe listen --forward-to localhost:4000/api/webhooks/stripe`.
+3. **Customer Portal**: nothing to configure. The app creates its own portal
+   configuration (card updates and invoice history on; cancellation and plan
+   switching off, since staff cancel in the app) and pins every session to it,
+   so a change to the dashboard default can't let homeowners cancel.
+4. Turn **off** Stripe's own customer emails for successful payments and
+   upcoming renewals (the app sends its own, so the toggles work).
+5. *Subscriptions → Manage failed payments*: Smart Retries, then mark the
+   subscription **unpaid** when retries run out.
+6. Set the HST number in Stripe's invoice settings and in
+   `HST_REGISTRATION_NUMBER`.
+7. *Settings → Payments (Stripe) → Test connection* checks the key and the catalog. Checkout is
+   blocked (and the boot log warns) whenever Stripe's prices or tax rate
+   differ from `server/src/services/contracts/pricing.js`.
+
+**Backups.** Signed agreements, certificates and the contract history now
+live in MongoDB (`contractdocuments`, `alarmcontracts`, `contractevents`).
+They are legal records: include the database in backups.
 
 ## Branch
 Work lives on `claude/mern-appointment-booking-app-sxX2C`.

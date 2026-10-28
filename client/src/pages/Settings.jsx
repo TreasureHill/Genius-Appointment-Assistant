@@ -4,6 +4,7 @@ import { api } from '../api';
 import { useTimezone } from '../timezone.jsx';
 import { browserTimezone, calendarDays, fmtClock, fmtDateTime, isValidTimezone, timezoneOptions, tzAbbrev } from '../time';
 import { RECOMMENDED_FIRST_MESSAGE, RECOMMENDED_SYSTEM_PROMPT } from '../ariaDefaults';
+import { DocuSignCard, MonitoringBillingCard, StripeCard } from '../components/contracts/SettingsCards.jsx';
 
 const DAY_DEFS = [
   { key: 'monday', label: 'Monday' },
@@ -951,6 +952,15 @@ export default function Settings() {
     load();
   }, []);
 
+  // Deep links such as /settings#stripe (from the Contracts page) scroll to
+  // their card once the page has rendered.
+  const loaded = Boolean(s);
+  useEffect(() => {
+    if (!loaded || !window.location.hash) return;
+    const el = document.getElementById(window.location.hash.slice(1));
+    if (el) el.scrollIntoView({ block: 'start' });
+  }, [loaded]);
+
   async function togglePause() {
     await api.post('/api/settings/pause', { paused: !s.senderPaused });
     load();
@@ -1171,6 +1181,11 @@ export default function Settings() {
       </div>
 
       <AriaCard aria={s.aria || {}} onSaved={load} />
+
+      {/* Alarm monitoring contracts: billing emails, Stripe, DocuSign. */}
+      <MonitoringBillingCard alarm={s.alarm || {}} onSaved={load} />
+      <StripeCard stripe={s.stripe || {}} onSaved={load} />
+      <DocuSignCard docusign={s.docusign || {}} onSaved={load} />
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Defaults (.env)</h2>

@@ -31,15 +31,27 @@ function readToken(req) {
   return null;
 }
 
+// Admin API wall. Only the `sid` cookie or a Bearer header is read, so a
+// homeowner's `psid` cookie never even reaches jwt.verify (→ 401), and portal
+// tokens are signed with a different secret (→ 401 too). The audience/role
+// check is defence in depth in case the two secrets were ever configured the
+// same: anything that isn't an admin session is refused with 403. Every admin
+// token already carries role:'admin' (User.role only allows 'admin'), so this
+// logs nobody out.
 function requireAuth(req, res, next) {
   const token = readToken(req);
   if (!token) return res.status(401).json({ error: 'unauthenticated' });
+  let claims;
   try {
-    req.user = jwt.verify(token, env.jwtSecret);
-    return next();
+    claims = jwt.verify(token, env.jwtSecret, { algorithms: ['HS256'] });
   } catch {
     return res.status(401).json({ error: 'invalid_token' });
   }
+  if (!claims || claims.aud === 'portal' || claims.role !== 'admin') {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  req.user = claims;
+  return next();
 }
 
 module.exports = { signToken, setAuthCookie, clearAuthCookie, requireAuth, readToken };

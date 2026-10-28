@@ -10,6 +10,7 @@ const env = require('../config/env');
 const { resolveScheduleTimezone } = require('../services/sendWindow');
 const { scheduleStatus } = require('../services/outboxPlanner');
 const { GROUP_KEY_EXPR } = require('../services/sendGroups');
+const contractMetrics = require('../services/contracts/metrics');
 
 const router = express.Router();
 
@@ -42,6 +43,7 @@ router.get('/', async (req, res) => {
     recentFailures,
     nextSend,
     callCounts,
+    alarm,
   ] = await Promise.all([
     Lot.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
     Outbox.aggregate([{ $group: { _id: '$status', n: { $sum: 1 } } }]),
@@ -128,6 +130,11 @@ router.get('/', async (req, res) => {
       { $match: { status: { $in: ['queued', 'calling'] } } },
       { $group: { _id: '$status', n: { $sum: 1 } } },
     ]),
+    // Monitoring tiles. A failure here must not take the whole dashboard down.
+    contractMetrics.dashboardBlock().catch((err) => {
+      console.warn('[dashboard] alarm block failed', err.message);
+      return null;
+    }),
   ]);
 
   const shape = (rows) => {
@@ -167,6 +174,7 @@ router.get('/', async (req, res) => {
     unmatchedCalendly: { count: unmatchedCalendly, recent: unmatchedCalendlyList },
     bouncedLots,
     recentFailures,
+    alarm,
     health: {
       smtp: setting.smtpHealth,
       twilio: setting.twilioHealth,
@@ -182,8 +190,26 @@ router.get('/', async (req, res) => {
             ? 'agent id / phone id missing in .env'
             : 'ELEVENLABS_API_KEY not set',
       },
+      // Same shape as smtp/twilio ({ok, checkedAt, message}) plus whether the
+      // integration is set up at all; the last Settings → Test result.
+      stripe: {
+        configured: env.stripe.configured,
+        mode: env.stripe.mode,
+        ...healthOf(setting.stripeHealth, env.stripe.configured, 'STRIPE_SECRET_KEY not set'),
+      },
+      docusign: {
+        configured: env.docusign.configured,
+        ...healthOf(setting.docusignHealth, env.docusign.configured, 'DocuSign keys not set in .env'),
+      },
     },
   });
 });
+
+// {ok, checkedAt, message} from a stored health check, or "not configured".
+function healthOf(h, configured, notConfiguredMessage) {
+  if (!configured) return { ok: false, checkedAt: null, message: notConfiguredMessage };
+  const x = (h && h.toObject ? h.toObject() : h) || {};
+  return { ok: Boolean(x.ok), checkedAt: x.checkedAt || null, message: x.message || (x.checkedAt ? '' : 'not tested yet') };
+}
 
 module.exports = router;

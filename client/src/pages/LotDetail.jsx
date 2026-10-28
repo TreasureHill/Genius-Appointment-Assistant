@@ -4,6 +4,8 @@ import { api } from '../api';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { useTimezone } from '../timezone.jsx';
 import { fmtDateTime, fmtDayLabel, fmtTime, relativeTime, tzAbbrev } from '../time';
+import LotContractCard, { ShieldIcon } from '../components/contracts/LotContractCard.jsx';
+import { fmtDay } from '../components/contracts/fmt.js';
 
 const ROLES = [
   { key: 'buyer', label: 'Buyer' },
@@ -20,7 +22,21 @@ const ACTOR_LABELS = {
   calendly_map: 'Calendly mapping',
   aria_call: 'Aria (call)',
   system: 'System',
+  docusign: 'DocuSign',
+  stripe: 'Stripe',
+  contracts: 'Contracts',
 };
+
+// Stroke icon for the lot-closing timeline entries (contract entries use the
+// shield). The other entries keep their existing glyphs.
+function HomeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 11l9-7 9 7" />
+      <path d="M5 10v10h14V10" />
+    </svg>
+  );
+}
 
 function emptyBuyer(role) {
   return { role, name: '', email: '', phone: '', optedOut: false };
@@ -70,8 +86,22 @@ function buildTimeline(history, events) {
     });
   }
   for (const e of events || []) {
-    if (e.type !== 'status_change') continue;
     const actorLabel = ACTOR_LABELS[e.actor] || e.actor;
+    // Home closing and monitoring-contract milestones carry their story in
+    // `message`; only appointment status changes have a from → to pair.
+    if (e.type === 'closing' || e.type === 'contract') {
+      items.push({
+        id: 'e-' + e._id,
+        at: e.createdAt,
+        kind: e.type,
+        icon: e.type === 'closing' ? <HomeIcon /> : <ShieldIcon size={16} />,
+        title: e.message || (e.type === 'closing' ? 'Closing updated' : 'Monitoring contract updated'),
+        subtitle: actorLabel,
+        typeBadge: e.type === 'closing' ? 'closing' : 'monitoring',
+      });
+      continue;
+    }
+    if (e.type && e.type !== 'status_change') continue;
     items.push({
       id: 'e-' + e._id,
       at: e.createdAt,
@@ -274,6 +304,26 @@ export default function LotDetail() {
     setTemplates(t);
   }
 
+  // The monitoring card's refresh (and its 10 s polling while an envelope is
+  // out): take the contract, closing flag and timeline from the server but
+  // keep any unsaved edits in the lot form below. `full` (after the send
+  // dialog, which can save purchasers / model to the lot) reloads everything.
+  async function reloadContract(opts) {
+    if (opts && opts.full) return load();
+    const d = await api.get(`/api/lots/${id}`);
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            contract: d.contract,
+            events: d.events,
+            history: d.history,
+            lot: { ...prev.lot, closing: d.lot.closing, alarmContract: d.lot.alarmContract },
+          }
+        : prev
+    );
+  }
+
   useEffect(() => {
     load();
     // Settings give us the Aria status (why the Call button is disabled) and
@@ -354,6 +404,7 @@ export default function LotDetail() {
       const patch = {
         lotNumber: data.lot.lotNumber,
         address: data.lot.address,
+        model: data.lot.model || '',
         buyers,
         status: data.lot.status,
         notes: data.lot.notes || '',
@@ -425,7 +476,13 @@ export default function LotDetail() {
 
   async function remove() {
     if (!confirm('Delete this lot? This cannot be undone.')) return;
-    await api.del(`/api/lots/${id}`);
+    try {
+      await api.del(`/api/lots/${id}`);
+    } catch (ex) {
+      // e.g. 409 contract_in_progress: lots with a monitoring contract stay.
+      setMsg('Error: ' + ((ex.data && ex.data.message) || ex.message));
+      return;
+    }
     window.location.href = `/projects/${data.lot.project._id}`;
   }
 
@@ -503,10 +560,15 @@ export default function LotDetail() {
             <span className={`badge ${lot.status}`} style={{ marginLeft: 8, verticalAlign: 'middle' }}>
               {lot.status.replace('_', ' ')}
             </span>
+            {lot.closing?.closed && (
+              <span className="badge closed" style={{ marginLeft: 6, verticalAlign: 'middle' }} title="The home has closed (separate from the appointment status)">
+                Closed{lot.closing.closingDate ? ` · ${fmtDay(lot.closing.closingDate)}` : ''}
+              </span>
+            )}
           </h1>
-          {lot.address && (
+          {(lot.address || lot.model) && (
             <div className="muted" style={{ fontSize: 13 }}>
-              {lot.address}
+              {[lot.address, lot.model ? `Model ${lot.model}` : ''].filter(Boolean).join(' · ')}
             </div>
           )}
         </div>
@@ -611,6 +673,8 @@ export default function LotDetail() {
         </div>
       )}
 
+      <LotContractCard lot={lot} contract={data.contract || null} alarm={cfg?.alarm} tz={tz} onChanged={reloadContract} />
+
       <CallWithAria
         lot={lot}
         ariaCfg={cfg?.aria || null}
@@ -629,6 +693,10 @@ export default function LotDetail() {
           <div style={{ flex: 2 }}>
             <label>Address</label>
             <input value={lot.address || ''} onChange={(e) => setLot({ address: e.target.value })} />
+          </div>
+          <div>
+            <label>Model</label>
+            <input value={lot.model || ''} placeholder="e.g. A3END A" onChange={(e) => setLot({ model: e.target.value })} />
           </div>
           <div>
             <label>Status</label>
@@ -831,6 +899,11 @@ export default function LotDetail() {
             <div className="timeline-body">
               <div className="timeline-title">
                 {item.title}
+                {item.typeBadge && (
+                  <span className={`badge ${item.kind === 'closing' ? 'closed' : 'scheduled'}`} style={{ marginLeft: 8 }}>
+                    {item.typeBadge}
+                  </span>
+                )}
                 {item.kind === 'status' && item.toStatus && (
                   <span className={`badge ${item.toStatus}`} style={{ marginLeft: 8 }}>
                     {String(item.toStatus).replace('_', ' ')}

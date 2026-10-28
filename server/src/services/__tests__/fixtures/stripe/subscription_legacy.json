@@ -1,0 +1,15 @@
+{
+  "id": "sub_legacy_1",
+  "object": "subscription",
+  "customer": "cus_test_1",
+  "status": "trialing",
+  "start_date": 1793000000,
+  "current_period_start": 1793000000,
+  "current_period_end": 1795592001,
+  "cancel_at_period_end": true,
+  "canceled_at": 1794000000,
+  "ended_at": null,
+  "items": { "object": "list", "data": [{ "id": "si_2", "price": { "id": "price_basic" } }] },
+  "default_payment_method": "pm_unexpanded",
+  "livemode": false
+}

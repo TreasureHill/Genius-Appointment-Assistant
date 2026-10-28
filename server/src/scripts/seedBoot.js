@@ -148,7 +148,39 @@ async function seedReviewReps() {
   console.log(`[seed] inserted ${DEFAULT_REPS.length} reps for the Reviews tab`);
 }
 
+// Alarm monitoring contracts added the `alarm` settings group. Mongoose fills
+// defaults on read, but `$inc alarm.contractSeq` and dotted-path queries work on
+// the stored document, so write the group once onto an older singleton. Never
+// blocks startup.
+async function migrateAlarmDefaults() {
+  try {
+    const r = await Setting.collection.updateOne(
+      { key: 'singleton', alarm: { $exists: false } },
+      {
+        $set: {
+          alarm: {
+            paymentRemindersEnabled: true,
+            reminderDaysBefore: 3,
+            autoSendInvoices: true,
+            sendFailedPaymentEmails: true,
+            contractsCcEmail: '',
+            defaultSigningMode: 'remote',
+            termsVersion: '2026-11',
+            contractSeq: 0,
+            lastDocusignPollAt: null,
+            lastStripeReconcileAt: null,
+          },
+        },
+      }
+    );
+    if (r.modifiedCount > 0) console.log('[migration] added alarm monitoring settings defaults');
+  } catch (err) {
+    console.error('[migration] alarm settings defaults failed:', err.message);
+  }
+}
+
 module.exports = {
+  migrateAlarmDefaults,
   seedAdmin,
   seedStarterTemplates,
   seedReviewReps,

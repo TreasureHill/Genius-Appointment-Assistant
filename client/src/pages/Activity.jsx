@@ -83,17 +83,24 @@ export function ActivityRow({ item }) {
   const lot = <LotCell lot={item.lot} />;
 
   if (item.kind === 'event') {
+    // Lot closings and contract milestones carry their story in `message`;
+    // only appointment status changes have a from → to pair worth showing.
+    const isStatus = !item.type || item.type === 'status_change';
     return (
       <tr>
         <td className="nowrap">{when}</td>
         <td>
-          <span className="badge">status</span>
+          <span className="badge">{isStatus ? 'status' : item.type}</span>
         </td>
         <td>{item.project?.name || ''}</td>
         <td>{lot}</td>
         <td colSpan={2}>
-          {(item.fromStatus || '—').replace('_', ' ')} → {(item.toStatus || '—').replace('_', ' ')}
-          <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+          {isStatus && (
+            <>
+              {(item.fromStatus || '—').replace('_', ' ')} → {(item.toStatus || '—').replace('_', ' ')}
+            </>
+          )}
+          <span className="muted" style={{ marginLeft: isStatus ? 8 : 0, fontSize: 12 }}>
             {item.actorLabel}
             {item.message ? ` · ${item.message}` : ''}
           </span>

@@ -712,6 +712,32 @@ tbody tr:last-child td {
   color: #991b1b;
   border-color: #fecaca;
 }
+/* Lot.closing.closed — the home has closed (separate from the pipeline status). */
+.badge.closed {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #6ee7b7;
+}
+
+/* Modal backdrop (was inline in ProjectBoard's AddLotModal). Put a
+   <form className="card"> or <div className="card"> inside and stop click
+   propagation on it; clicking the backdrop closes. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 5vh 16px;
+  z-index: 1000;
+  overflow-y: auto;
+}
+.modal-overlay > .card {
+  width: 100%;
+  max-width: 640px;
+  margin: 0;
+}
 
 /* Login */
 .login-page {
@@ -806,6 +832,14 @@ tbody tr:last-child td {
 }
 .tile-err::before {
   background: linear-gradient(180deg, #f87171, var(--danger));
+  opacity: 1;
+}
+.tile-warn {
+  border-color: rgba(180, 83, 9, 0.22);
+  background: linear-gradient(180deg, var(--warn-soft) 0%, #fff 100%);
+}
+.tile-warn::before {
+  background: linear-gradient(180deg, #fbbf24, var(--warn));
   opacity: 1;
 }
 
@@ -1731,4 +1765,10 @@ tr.is-off td {
 }
 .rv-details > summary::-webkit-details-marker {
   display: none;
+}
+
+/* In-person signing return (App.jsx): no sidebar, so centre the page. */
+.main.kiosk {
+  max-width: 760px;
+  margin: 0 auto;
 }

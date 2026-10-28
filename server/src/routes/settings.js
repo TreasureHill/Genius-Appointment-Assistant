@@ -10,6 +10,9 @@ const env = require('../config/env');
 const { isValidTimezone, resolveScheduleTimezone } = require('../services/sendWindow');
 const { replanPendingOutbox, scheduleStatus } = require('../services/outboxPlanner');
 const { buildFrom, formatFrom } = require('../services/emailFormat');
+const { verifyStripe } = require('../services/contracts/stripeClient');
+const { verifyDocusign, connectWebhookUrl } = require('../services/contracts/docusign');
+const { allQuotes } = require('../services/contracts/pricing');
 
 const router = express.Router();
 
@@ -62,6 +65,39 @@ router.get('/', async (req, res) => {
       // Names the first message / prompt can use as {{placeholder}}.
       placeholders: elevenlabs.placeholderNames(),
     },
+    // Alarm monitoring billing + signing. Keys / secrets are .env-only and
+    // reported as booleans; ids that aren't secret (account id, mode) are shown.
+    stripe: {
+      configured: env.stripe.configured,
+      billable: env.stripe.billable,
+      mode: env.stripe.mode,
+      apiVersion: env.stripe.apiVersion,
+      webhookSecretSet: Boolean(env.stripe.webhookSecret),
+      taxRateSet: Boolean(env.stripe.taxRateId),
+      priceOverridesSet: Boolean(env.stripe.priceBasic || env.stripe.priceSmart),
+      // The Test button runs the full catalog check; a healthy last check
+      // means the catalog matched then.
+      catalogOk: Boolean(env.stripe.configured && s.stripeHealth?.ok),
+      webhookUrl: `${env.appUrl}/api/webhooks/stripe`,
+      health: s.stripeHealth,
+    },
+    docusign: {
+      configured: env.docusign.configured,
+      dispatchable: env.docusign.dispatchable,
+      env: env.docusign.env,
+      accountId: env.docusign.accountId,
+      integrationKeySet: Boolean(env.docusign.integrationKey),
+      userIdSet: Boolean(env.docusign.userId),
+      privateKeySet: Boolean(env.docusign.privateKey),
+      connectKeySet: env.docusign.connectHmacKeys.length > 0,
+      connectEnabled: env.docusign.connectEnabled,
+      consentUrl: env.docusign.consentUrl,
+      redirectUri: env.docusign.redirectUri,
+      webhookUrl: connectWebhookUrl(),
+      lastPollAt: s.alarm?.lastDocusignPollAt || null,
+      health: s.docusignHealth,
+    },
+    alarm: alarmView(s),
     senderPaused: s.senderPaused,
     remindersPaused: !!s.remindersPaused,
     emailHighImportance: !!s.emailHighImportance,
@@ -161,6 +197,92 @@ router.post('/reminders/pause', async (req, res) => {
   s.remindersPaused = Boolean(paused);
   await s.save();
   res.json({ remindersPaused: s.remindersPaused });
+});
+
+// ---- Alarm monitoring -------------------------------------------------------
+
+const SIGNING_MODES = ['remote', 'in_person', 'paper'];
+
+// The editable alarm settings plus the (read-only, code-defined) price table.
+function alarmView(s) {
+  const a = (s.alarm && s.alarm.toObject ? s.alarm.toObject() : s.alarm) || {};
+  return {
+    paymentRemindersEnabled: a.paymentRemindersEnabled !== false,
+    reminderDaysBefore: a.reminderDaysBefore ?? 3,
+    autoSendInvoices: a.autoSendInvoices !== false,
+    sendFailedPaymentEmails: a.sendFailedPaymentEmails !== false,
+    contractsCcEmail: a.contractsCcEmail || '',
+    defaultSigningMode: a.defaultSigningMode || 'remote',
+    termsVersion: a.termsVersion || '',
+    lastDocusignPollAt: a.lastDocusignPollAt || null,
+    lastStripeReconcileAt: a.lastStripeReconcileAt || null,
+    hstRegistrationNumber: env.hst.registrationNumber || '',
+    packages: allQuotes(),
+  };
+}
+
+router.patch('/alarm', async (req, res) => {
+  const b = req.body || {};
+  const s = await Setting.getSingleton();
+  s.alarm = s.alarm || {};
+  if (b.reminderDaysBefore != null) {
+    const n = Number(b.reminderDaysBefore);
+    if (!Number.isInteger(n) || n < 1 || n > 14) {
+      return res.status(400).json({ error: 'validation_failed', field: 'reminderDaysBefore', message: 'Reminder days must be a whole number from 1 to 14.' });
+    }
+    s.alarm.reminderDaysBefore = n;
+  }
+  if (b.contractsCcEmail != null) {
+    const email = String(b.contractsCcEmail).trim().toLowerCase();
+    if (email && !/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(email)) {
+      return res.status(400).json({ error: 'validation_failed', field: 'contractsCcEmail', message: `"${email}" is not a valid email.` });
+    }
+    s.alarm.contractsCcEmail = email;
+  }
+  if (b.defaultSigningMode != null) {
+    if (!SIGNING_MODES.includes(b.defaultSigningMode)) {
+      return res.status(400).json({ error: 'validation_failed', field: 'defaultSigningMode', message: 'Signing mode must be remote, in_person or paper.' });
+    }
+    s.alarm.defaultSigningMode = b.defaultSigningMode;
+  }
+  for (const k of ['paymentRemindersEnabled', 'autoSendInvoices', 'sendFailedPaymentEmails']) {
+    if (b[k] != null) s.alarm[k] = Boolean(b[k]);
+  }
+  await s.save();
+  res.json(alarmView(s));
+});
+
+// One-click switches (also on the Contracts page header).
+const ALARM_TOGGLES = {
+  reminders: 'paymentRemindersEnabled',
+  'auto-invoices': 'autoSendInvoices',
+  'failed-payment-emails': 'sendFailedPaymentEmails',
+};
+for (const [path, field] of Object.entries(ALARM_TOGGLES)) {
+  router.post(`/alarm/${path}`, async (req, res) => {
+    const { enabled } = req.body || {};
+    const s = await Setting.getSingleton();
+    s.alarm = s.alarm || {};
+    s.alarm[field] = Boolean(enabled);
+    await s.save();
+    res.json(alarmView(s));
+  });
+}
+
+router.post('/test/stripe', async (req, res) => {
+  const verify = await verifyStripe(); // never throws, never echoes the key
+  const s = await Setting.getSingleton();
+  s.stripeHealth = { ok: verify.ok, checkedAt: new Date(), message: verify.message };
+  await s.save();
+  res.json(verify);
+});
+
+router.post('/test/docusign', async (req, res) => {
+  const verify = await verifyDocusign(); // never throws; consentUrl when consent is missing
+  const s = await Setting.getSingleton();
+  s.docusignHealth = { ok: verify.ok, checkedAt: new Date(), message: verify.message };
+  await s.save();
+  res.json(verify);
 });
 
 router.post('/test/smtp', async (req, res) => {

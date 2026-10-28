@@ -16,7 +16,11 @@
 param(
     [string]$Branch     = "main",
     [string]$Caddyfile  = "C:\caddy\Caddyfile",
-    [int]   $Port       = 4000
+    [int]   $Port       = 4000,
+    # Blank = listen on every interface (as before). When Caddy proxies to
+    # this box's loopback, pass -ListenHost "127.0.0.1" to keep :4000 off the
+    # network so X-Forwarded-For (trusted one hop) can't be spoofed.
+    [string]$ListenHost = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -105,6 +109,8 @@ if ($existing) {
 Section "Starting server in production mode (detached)"
 $env:NODE_ENV = "production"
 $env:PORT     = "$Port"
+$env:HOST     = "$ListenHost"
+$HealthHost   = if ($ListenHost) { $ListenHost } else { "localhost" }
 # Roll the logs so they don't grow forever. Keep last run as .prev.
 if (Test-Path $ServerLog) { Move-Item -Force $ServerLog "$ServerLog.prev" }
 if (Test-Path $ServerErr) { Move-Item -Force $ServerErr "$ServerErr.prev" }
@@ -121,12 +127,12 @@ Write-Host "   started node, PID $($proc.Id)"
 Write-Host "   logs: $ServerLog"
 
 # Wait a few seconds and confirm it's actually listening
-Section "Health check on http://localhost:$Port/api/health"
+Section "Health check on http://${HealthHost}:$Port/api/health"
 $ok = $false
 for ($i = 0; $i -lt 15; $i++) {
     Start-Sleep -Seconds 1
     try {
-        $r = Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/api/health" -TimeoutSec 2
+        $r = Invoke-WebRequest -UseBasicParsing -Uri "http://${HealthHost}:$Port/api/health" -TimeoutSec 2
         if ($r.StatusCode -eq 200) { $ok = $true; break }
     } catch {}
 }
