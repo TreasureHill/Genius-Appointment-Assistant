@@ -1,0 +1,14 @@
+{
+  "object": "list",
+  "has_more": false,
+  "data": [{
+    "id": "inpay_1",
+    "object": "invoice_payment",
+    "invoice": "in_basil_paid",
+    "is_default": true,
+    "status": "paid",
+    "amount_paid": 3728,
+    "payment": { "type": "payment_intent", "payment_intent": "pi_basil_1" },
+    "created": 1793000060
+  }]
+}

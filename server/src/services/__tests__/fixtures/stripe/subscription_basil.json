@@ -1,0 +1,27 @@
+{
+  "id": "sub_basil_1",
+  "object": "subscription",
+  "customer": "cus_test_1",
+  "status": "active",
+  "start_date": 1793000000,
+  "cancel_at_period_end": false,
+  "canceled_at": null,
+  "ended_at": null,
+  "metadata": { "contractId": "CONTRACT_ID", "package": "smart" },
+  "items": {
+    "object": "list",
+    "data": [{
+      "id": "si_1",
+      "current_period_start": 1793000000,
+      "current_period_end": 1795592000,
+      "price": { "id": "price_smart", "unit_amount": 3299, "currency": "cad", "recurring": { "interval": "month", "interval_count": 1 } }
+    }]
+  },
+  "default_payment_method": {
+    "id": "pm_1",
+    "object": "payment_method",
+    "type": "card",
+    "card": { "brand": "visa", "last4": "4242", "exp_month": 4, "exp_year": 2030 }
+  },
+  "livemode": false
+}

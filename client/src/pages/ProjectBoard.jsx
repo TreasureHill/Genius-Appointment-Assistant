@@ -5,6 +5,8 @@ import StatusBadge from '../components/StatusBadge.jsx';
 import MultiSelect from '../components/MultiSelect.jsx';
 import { useTimezone } from '../timezone.jsx';
 import { fmtDayLabel, fmtTime, tzAbbrev } from '../time';
+import { CONTRACT_STATUS_META } from '../components/contracts/bits.jsx';
+import { fmtDay } from '../components/contracts/fmt.js';
 
 const BOARD_PAGE_SIZES = [25, 50, 100, 200];
 
@@ -162,6 +164,7 @@ function AddLotModal({ projects, defaultProjectId, onClose, onCreated }) {
     project: defaultProjectId || projects[0]?._id || '',
     lotNumber: '',
     address: '',
+    model: '',
     status: 'pending',
     notes: '',
   });
@@ -187,6 +190,7 @@ function AddLotModal({ projects, defaultProjectId, onClose, onCreated }) {
         project: form.project,
         lotNumber: form.lotNumber.trim(),
         address: form.address.trim(),
+        model: form.model.trim(),
         status: form.status,
         notes: form.notes,
         buyers: cleanBuyers,
@@ -204,26 +208,8 @@ function AddLotModal({ projects, defaultProjectId, onClose, onCreated }) {
   }
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(15,23,42,0.45)',
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'center',
-        padding: '5vh 16px',
-        zIndex: 1000,
-        overflowY: 'auto',
-      }}
-    >
-      <form
-        className="card"
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={submit}
-        style={{ width: '100%', maxWidth: 640, margin: 0 }}
-      >
+    <div className="modal-overlay" onClick={onClose}>
+      <form className="card" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
           <h2 style={{ margin: 0 }}>Add lot</h2>
           <div style={{ flex: 1 }} />
@@ -263,8 +249,20 @@ function AddLotModal({ projects, defaultProjectId, onClose, onCreated }) {
           </div>
         </div>
 
-        <label>Address</label>
-        <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+        <div className="row">
+          <div style={{ flex: 3 }}>
+            <label>Address</label>
+            <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+          </div>
+          <div>
+            <label>Model</label>
+            <input
+              value={form.model}
+              onChange={(e) => setForm({ ...form, model: e.target.value })}
+              placeholder="e.g. A3END A"
+            />
+          </div>
+        </div>
 
         <h3 style={{ marginBottom: 4 }}>Buyers</h3>
         <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
@@ -330,7 +328,9 @@ export default function ProjectBoard() {
   const { timezone: ctxTz } = useTimezone();
   const [maxReminders, setMaxReminders] = useState(null);
   const [lots, setLots] = useState([]);
-  const [filter, setFilter] = useState({ status: '', q: '' });
+  // `closed`: only lots whose home has closed (Lot.closing — separate from
+  // the appointment status the tiles filter on).
+  const [filter, setFilter] = useState({ status: '', q: '', closed: false });
   const [selected, setSelected] = useState(new Set());
   const [busyLotId, setBusyLotId] = useState(null);
   const [sendMsg, setSendMsg] = useState('');
@@ -422,9 +422,12 @@ export default function ProjectBoard() {
     return m;
   }, [lots]);
 
+  const closedCount = useMemo(() => lots.filter((l) => l.closing?.closed).length, [lots]);
+
   const filtered = useMemo(() => {
     return lots.filter((l) => {
       if (filter.status && l.status !== filter.status) return false;
+      if (filter.closed && !l.closing?.closed) return false;
       if (filter.q) {
         const q = filter.q.toLowerCase();
         const hay = [
@@ -449,7 +452,7 @@ export default function ProjectBoard() {
   // Reset to page 1 when the filter / project selection changes.
   useEffect(() => {
     setPage(1);
-  }, [filter.status, filter.q, selectedIdsKey]);
+  }, [filter.status, filter.q, filter.closed, selectedIdsKey]);
   // Clamp page if the result set shrank.
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
@@ -587,7 +590,7 @@ export default function ProjectBoard() {
         return next;
       });
     } catch (ex) {
-      alert('Delete failed: ' + ex.message);
+      alert('Delete failed: ' + ((ex.data && ex.data.message) || ex.message));
     } finally {
       setBusyLotId(null);
     }
@@ -599,10 +602,17 @@ export default function ProjectBoard() {
     if (!confirm(`Delete ${ids.length} lot${ids.length === 1 ? '' : 's'}? This also removes any pending messages for them. Cannot be undone.`)) return;
     try {
       const r = await api.post('/api/lots/bulk-delete', { ids });
-      const idSet = new Set(ids);
-      setLots((prev) => prev.filter((l) => !idSet.has(l._id)));
-      setSelected(new Set());
-      setSendMsg(`Deleted ${r.deleted} lot${r.deleted === 1 ? '' : 's'}.`);
+      // Lots with a monitoring contract are kept by the server: leave them on
+      // the board (and selected) so nobody thinks they are gone.
+      const kept = new Set((r.skippedIds || []).map(String));
+      const gone = new Set(r.deletedIds ? r.deletedIds.map(String) : ids.filter((id) => !kept.has(String(id))));
+      setLots((prev) => prev.filter((l) => !gone.has(String(l._id))));
+      setSelected(new Set(ids.filter((id) => kept.has(String(id)))));
+      const skipped = r.skipped || 0;
+      setSendMsg(
+        `Deleted ${r.deleted} lot${r.deleted === 1 ? '' : 's'}.` +
+          (skipped ? ` Kept ${skipped} with a monitoring contract (contracts are kept as a record).` : '')
+      );
     } catch (ex) {
       setSendMsg('Delete failed: ' + ex.message);
     }
@@ -835,6 +845,17 @@ export default function ProjectBoard() {
           onChange={(e) => setFilter({ ...filter, q: e.target.value })}
           style={{ flex: 1, minWidth: 240 }}
         />
+        <div className="chip-group">
+          <button
+            type="button"
+            className={`chip${filter.closed ? ' active' : ''}`}
+            onClick={() => setFilter({ ...filter, closed: !filter.closed })}
+            aria-pressed={filter.closed}
+            title="Only lots whose home has closed (alarm monitoring agreements)"
+          >
+            Closed lots ({closedCount})
+          </button>
+        </div>
         <div className="muted" style={{ fontSize: 12 }}>
           Showing {filtered.length} of {lots.length} · {selected.size} selected
         </div>
@@ -957,6 +978,17 @@ export default function ProjectBoard() {
                     <Link to={`/lots/${lot._id}`}>
                       <strong>{lot.lotNumber}</strong>
                     </Link>
+                    {lot.closing?.closed && (
+                      <div>
+                        <span
+                          className="badge closed"
+                          style={{ fontSize: 10 }}
+                          title={lot.closing.closingDate ? `Closed ${fmtDay(lot.closing.closingDate)}` : 'Closed'}
+                        >
+                          Closed
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td>{lot.address || <span className="muted">—</span>}</td>
                   <td>
@@ -980,6 +1012,16 @@ export default function ProjectBoard() {
                             style={{ fontSize: 10 }}
                           >
                             {lot.pendingMessages} queued
+                          </Link>
+                        )}
+                        {lot.contract && (
+                          <Link
+                            to={`/contracts/${lot.contract._id}`}
+                            className={`badge ${lot.contract.needsAttention ? 'err' : CONTRACT_STATUS_META[lot.contract.status]?.badge || 'pending'}`}
+                            title={`Monitoring contract ${lot.contract.number}${lot.contract.needsAttention ? ' — needs attention' : ''}`}
+                            style={{ fontSize: 10 }}
+                          >
+                            Monitoring: {(CONTRACT_STATUS_META[lot.contract.status]?.label || lot.contract.status).toLowerCase()}
                           </Link>
                         )}
                       </div>

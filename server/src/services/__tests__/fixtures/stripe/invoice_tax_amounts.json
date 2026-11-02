@@ -1,0 +1,21 @@
+{
+  "id": "in_tax_amounts",
+  "object": "invoice",
+  "customer": "cus_test_1",
+  "subscription": { "id": "sub_obj_1", "object": "subscription" },
+  "status": "uncollectible",
+  "billing_reason": "subscription_cycle",
+  "attempted": true,
+  "attempt_count": 8,
+  "subtotal": 2499,
+  "total": 2824,
+  "total_tax_amounts": [{ "amount": 325, "inclusive": false, "tax_rate": "txr_hst" }],
+  "amount_due": 2824,
+  "amount_paid": 0,
+  "amount_remaining": 2824,
+  "currency": "cad",
+  "created": 1798270400,
+  "period_start": 1795592000,
+  "period_end": 1798270400,
+  "livemode": false
+}

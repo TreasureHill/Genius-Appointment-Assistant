@@ -1,0 +1,24 @@
+{
+  "event": "envelope-completed",
+  "apiVersion": "v2.1",
+  "uri": "/restapi/v2.1/accounts/acc-0000/envelopes/env-0001",
+  "retryCount": 0,
+  "configurationId": 10000001,
+  "generatedDateTime": "2026-11-03T15:04:05.1230000Z",
+  "data": {
+    "accountId": "acc-0000",
+    "userId": "user-0000",
+    "envelopeId": "env-0001",
+    "envelopeSummary": {
+      "status": "completed",
+      "emailSubject": "Genius Alarm Monitoring Agreement – Lot 0006, SERENO BUILDING CORP",
+      "completedDateTime": "2026-11-03T15:04:00.0000000Z",
+      "customFields": {
+        "textCustomFields": [
+          { "fieldId": "1", "name": "contractId", "show": "false", "required": "false", "value": "6560a0000000000000000001" },
+          { "fieldId": "2", "name": "contractNumber", "show": "false", "required": "false", "value": "GA-2026-00006" }
+        ]
+      }
+    }
+  }
+}

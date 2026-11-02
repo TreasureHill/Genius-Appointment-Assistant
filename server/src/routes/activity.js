@@ -11,11 +11,15 @@ const ACTOR_LABELS = {
   calendly_sync: 'Calendly',
   calendly_map: 'Calendly mapping',
   aria_call: 'Aria',
+  docusign: 'DocuSign',
+  stripe: 'Stripe',
+  contracts: 'Monitoring contracts',
   system: 'System',
 };
 
 // Unified activity feed: MessageLog (email / SMS / calendly / call) merged with
-// LotEvent (status changes), newest first, paginated.
+// LotEvent (status changes, lot closings, contract milestones), newest first,
+// paginated.
 //
 // Pagination across two collections without loading everything: the top
 // page*pageSize of the merged set is guaranteed to be within the top
@@ -97,7 +101,9 @@ router.get('/', async (req, res) => {
     _id: `e-${e._id}`,
     kind: 'event',
     createdAt: e.createdAt,
-    type: 'status_change',
+    // status_change | closing | contract (older rows predate the field's enum
+    // growing and are all status changes).
+    type: e.type || 'status_change',
     project: e.project,
     lot: e.lot,
     fromStatus: e.fromStatus,

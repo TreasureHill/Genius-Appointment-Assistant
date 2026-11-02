@@ -1,0 +1,9 @@
+{
+  "sub": "user-0000",
+  "name": "Genius Admin",
+  "email": "admin@example.com",
+  "accounts": [
+    { "account_id": "acc-other", "is_default": false, "account_name": "Other Co", "base_uri": "https://na3.docusign.net" },
+    { "account_id": "acc-0000", "is_default": true, "account_name": "Genius Smart Home", "base_uri": "https://ca.docusign.net/" }
+  ]
+}

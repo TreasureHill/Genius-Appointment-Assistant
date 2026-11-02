@@ -1,0 +1,33 @@
+{
+  "id": "in_basil_paid",
+  "object": "invoice",
+  "customer": "cus_test_1",
+  "number": "GENIUS-0001",
+  "status": "paid",
+  "billing_reason": "subscription_create",
+  "collection_method": "charge_automatically",
+  "attempted": true,
+  "attempt_count": 1,
+  "next_payment_attempt": null,
+  "currency": "cad",
+  "subtotal": 3299,
+  "total": 3728,
+  "total_taxes": [{ "amount": 429, "tax_behavior": "exclusive", "tax_rate_details": { "tax_rate": "txr_hst" }, "taxability_reason": "standard_rated", "taxable_amount": 3299, "type": "tax_rate_details" }],
+  "amount_due": 3728,
+  "amount_paid": 3728,
+  "amount_remaining": 0,
+  "created": 1793000000,
+  "period_start": 1793000000,
+  "period_end": 1793000000,
+  "parent": {
+    "type": "subscription_details",
+    "quote_details": null,
+    "subscription_details": { "subscription": "sub_basil_1", "metadata": { "contractId": "CONTRACT_ID", "package": "smart" } }
+  },
+  "lines": { "object": "list", "data": [{ "id": "il_1", "amount": 3299, "period": { "start": 1793000000, "end": 1795592000 } }] },
+  "status_transitions": { "finalized_at": 1793000001, "paid_at": 1793000060 },
+  "hosted_invoice_url": "https://invoice.stripe.com/i/acct_x/test_basil",
+  "invoice_pdf": "https://pay.stripe.com/invoice/acct_x/test_basil/pdf",
+  "last_finalization_error": null,
+  "livemode": false
+}

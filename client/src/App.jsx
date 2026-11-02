@@ -16,6 +16,10 @@ import Settings from './pages/Settings.jsx';
 import CalendlyEvents from './pages/CalendlyEvents.jsx';
 import Reports from './pages/Reports.jsx';
 import Reviews from './pages/Reviews.jsx';
+import Contracts from './pages/Contracts.jsx';
+import ContractDetail from './pages/ContractDetail.jsx';
+import ContractSigningReturn from './pages/ContractSigningReturn.jsx';
+import PortalApp from './portal/PortalApp.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 function Protected({ children }) {
@@ -31,6 +35,22 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Homeowner portal: its own login and session, so it sits outside the
+          admin Protected layout (whose catch-all would bounce it to /login). */}
+      <Route path="/portal/*" element={<PortalApp />} />
+      {/* In-person signing return: the PURCHASER is holding the device here,
+          so it gets a bare page (no admin navigation) even though the staff
+          session is what lets it talk to the API. */}
+      <Route
+        path="/contracts/:id/signing-return"
+        element={
+          <Protected>
+            <main className="main kiosk">
+              <ContractSigningReturn />
+            </main>
+          </Protected>
+        }
+      />
       <Route
         element={
           <Protected>
@@ -54,6 +74,8 @@ export default function App() {
         <Route path="/calendly" element={<CalendlyEvents />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/reviews" element={<Reviews />} />
+        <Route path="/contracts" element={<Contracts />} />
+        <Route path="/contracts/:id" element={<ContractDetail />} />
         <Route path="/settings" element={<Settings />} />
         {/* Unknown paths get a real 404 inside the app shell instead of a
             silent redirect to the dashboard. */}

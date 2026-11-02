@@ -118,6 +118,42 @@ function Health({ name, h }) {
   );
 }
 
+// Stripe / DocuSign cells: same look as Health, plus "not set up" when the
+// integration has no keys yet (that is not an outage).
+function IntegrationHealth({ name, h, extra }) {
+  if (!h) return null;
+  if (!h.configured) {
+    return (
+      <div className="health-cell">
+        <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+          {name}
+        </div>
+        <span className="badge pending">not set up</span>
+        <div className="muted" style={{ fontSize: 11, marginTop: 2, maxWidth: 240 }}>
+          <Link to="/settings#monitoring-billing">configure in Settings</Link>
+        </div>
+      </div>
+    );
+  }
+  const untested = !h.checkedAt;
+  return (
+    <div className="health-cell">
+      <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+        {name}
+        {extra}
+      </div>
+      <span className={`badge ${untested ? 'pending' : h.ok ? 'ok' : 'err'}`}>{untested ? 'not tested' : h.ok ? 'connected' : 'disconnected'}</span>
+      {h.message && (
+        <div className="muted" style={{ fontSize: 11, marginTop: 2, maxWidth: 240 }}>
+          {h.message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const cad = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' });
+
 export default function Dashboard() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
@@ -167,6 +203,8 @@ export default function Dashboard() {
           <Health name="SMS (Twilio)" h={d.health.twilio} />
           <Health name="Aria calls" h={d.health.aria} />
           <Health name="Calendly" h={d.health.calendly} />
+          <IntegrationHealth name="Payments (Stripe)" h={d.health.stripe} extra={d.health.stripe?.mode === 'test' ? ' · test mode' : ''} />
+          <IntegrationHealth name="DocuSign" h={d.health.docusign} />
           <div className="health-cell">
             <div className="muted" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4 }}>
               Sending
@@ -198,6 +236,29 @@ export default function Dashboard() {
           />
         ))}
       </div>
+
+      {d.alarm && (
+        <>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            Monitoring
+            <Link to="/contracts" style={{ fontSize: 13, fontWeight: 400 }}>
+              contracts →
+            </Link>
+          </h2>
+          <div className="tiles">
+            <Tile label="Active subscriptions" value={d.alarm.active || 0} accent={d.alarm.active ? 'ok' : ''} to="/contracts?status=active" title="Active monitoring contracts" />
+            <Tile label="MRR (before HST)" value={cad.format((d.alarm.mrrCents || 0) / 100)} to="/contracts" title="Monthly recurring monitoring revenue" />
+            <Tile
+              label="Past due"
+              value={d.alarm.pastDue || 0}
+              accent={d.alarm.pastDue ? 'err' : ''}
+              to="/contracts?status=past_due%2Cunpaid"
+              title="Contracts with a failed payment"
+              hint={d.alarm.pastDue ? 'click to follow up' : undefined}
+            />
+          </div>
+        </>
+      )}
 
       <h2>Waiting to go out</h2>
       <div className="tiles">

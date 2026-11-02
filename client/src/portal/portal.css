@@ -1,0 +1,384 @@
+/* Homeowner portal styles (portal-* prefix), owned by the portal track.
+   The portal reuses .login-page / .login-card for its auth pages and .card,
+   .card.alert-*, .tiles/.tile, .badge.*, .btn-link elsewhere. Layout:
+   .portal-top (brand bar) and main.main.portal-main (max-width 860px,
+   centred). Everything here must work at phone width: homeowners mostly
+   arrive from an email on their phone. */
+
+.portal-root {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Brand bar */
+.portal-top {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 24px;
+  background: linear-gradient(180deg, #312e81 0%, #1e1b4b 100%);
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+.portal-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.2px;
+  min-width: 0;
+}
+.portal-brand:hover {
+  color: #fff;
+}
+.portal-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #818cf8 0%, var(--primary) 100%);
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+.portal-top-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.portal-user.muted {
+  color: #c7d2fe;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.portal-main {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  flex: 1 0 auto;
+  overflow-x: visible;
+}
+
+.portal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.portal-head h1 {
+  margin-bottom: 0;
+}
+.portal-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.portal-select select {
+  max-width: 100%;
+}
+.portal-back {
+  font-size: 13px;
+}
+.portal-property {
+  font-size: 13px;
+  margin: 4px 0 16px;
+}
+.portal-loading {
+  padding: 24px 0;
+}
+
+/* Status banner (a .card.alert-* with a heading and one action) */
+.portal-banner h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+}
+.portal-banner p {
+  margin: 0 0 12px;
+}
+.portal-banner p:last-child {
+  margin-bottom: 0;
+}
+.portal-cta {
+  margin-top: 2px;
+}
+
+/* Tiles: four across on a laptop, two on a phone */
+.portal-tiles {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.portal-tile-text {
+  font-size: 16px;
+  line-height: 1.3;
+  word-break: break-word;
+}
+.portal-tile-sub {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.portal-card-title {
+  margin: 0 0 12px;
+}
+.portal-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.portal-fine {
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+.portal-split + .portal-fine {
+  margin-top: 12px;
+}
+
+/* Payments table */
+.portal-table-wrap {
+  overflow-x: auto;
+  margin: 0 -18px -18px;
+}
+.portal-table {
+  min-width: 460px;
+}
+.portal-table th {
+  position: static;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.portal-table td .portal-fine {
+  margin: 2px 0 0;
+}
+.portal-table tr:last-child td {
+  border-bottom: 0;
+}
+.portal-links a + a {
+  margin-left: 12px;
+}
+
+/* Documents */
+.portal-docs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.portal-docs li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.portal-docs li:first-child {
+  padding-top: 0;
+}
+.portal-docs li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.portal-docs .portal-fine {
+  margin: 2px 0 0;
+}
+
+/* Preferences */
+.portal-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+.portal-saved {
+  color: var(--ok);
+  font-weight: 500;
+}
+.portal-save-err {
+  color: var(--danger);
+}
+
+/* Help */
+.portal-contacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
+/* Pay page */
+.portal-pay {
+  max-width: 520px;
+}
+.portal-pay-pkg {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+}
+.portal-pay-prop {
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+.portal-pay-lines {
+  margin: 0 0 12px;
+}
+.portal-pay-lines > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.portal-pay-lines dt {
+  color: var(--text-soft);
+}
+.portal-pay-lines dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+.portal-pay-total {
+  border-bottom: 0 !important;
+  font-weight: 700;
+  font-size: 16px;
+}
+.portal-pay-total dt {
+  color: var(--text);
+}
+.portal-pay-then {
+  margin: 0 0 16px;
+  color: var(--text-soft);
+}
+.portal-pay-btn {
+  padding: 12px 15px;
+  font-size: 15px;
+}
+
+/* Indeterminate bar while the checkout result is confirmed */
+.portal-progress {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.portal-progress span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: portal-slide 1.2s ease-in-out infinite;
+}
+@keyframes portal-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .portal-progress span {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}
+
+/* Auth pages (inside .login-card) */
+.portal-auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  color: var(--text-soft);
+  margin-bottom: 18px;
+}
+.portal-wide {
+  width: 100%;
+  margin-top: 16px;
+}
+.portal-wide-link {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  margin-top: 6px;
+}
+.portal-auth-links {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 13px;
+}
+.portal-auth-foot {
+  font-size: 12px;
+  margin: 14px 0 0;
+}
+.portal-hint {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+@media (max-width: 700px) {
+  .portal-top {
+    padding: 10px 16px;
+  }
+  .portal-user.muted {
+    display: none;
+  }
+  .portal-main {
+    padding: 20px 16px 40px;
+  }
+  .portal-main h1 {
+    font-size: 21px;
+  }
+  .portal-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .portal-tiles .tile {
+    padding: 12px 14px;
+  }
+  .portal-select {
+    width: 100%;
+  }
+  .portal-select select {
+    flex: 1;
+  }
+  .portal-pay {
+    max-width: none;
+  }
+  /* Comfortable tap targets */
+  .portal-main button,
+  .portal-main .btn-link {
+    min-height: 40px;
+  }
+  .login-page .portal-auth-card {
+    padding: 28px 22px;
+  }
+  /* 16px stops iOS zooming into the field on focus */
+  .portal-auth-card input,
+  .portal-main select {
+    font-size: 16px;
+  }
+}

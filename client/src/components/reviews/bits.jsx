@@ -1,5 +1,3 @@
-import { api } from '../../api';
-
 // Small pieces shared by the Reviews tab.
 
 export function Stars({ rating, title }) {
@@ -42,30 +40,8 @@ export function fmtReviewDate(d, tz) {
   }
 }
 
-// Fetch a file through the API (cookie auth) and trigger a browser download.
-export async function downloadFile(url, fallbackName) {
-  const res = await api.raw(url);
-  if (!res.ok) {
-    let msg = res.statusText;
-    try {
-      const data = await res.json();
-      msg = data.error || data.message || msg;
-    } catch {
-      /* not json */
-    }
-    throw new Error(msg || 'Download failed');
-  }
-  const disposition = res.headers.get('content-disposition') || '';
-  const m = /filename="?([^";]+)"?/i.exec(disposition);
-  const blob = await res.blob();
-  const href = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = href;
-  a.download = (m && m[1]) || fallbackName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(href), 1000);
-}
+// Moved to src/download.js (shared with the contracts pages); re-exported so
+// existing imports keep working.
+export { downloadFile } from '../../download.js';
 
 export const idOf = (x) => (x && typeof x === 'object' ? String(x._id) : String(x));

@@ -1,0 +1,215 @@
+/* Staff screens for monitoring contracts (lot card, send dialog, Contracts
+   page, contract detail, Settings cards). Sibling of contracts.css, imported
+   by those components. Builds on .card / .tiles / .badge / .rv-chart. */
+
+/* Card heading with a small stroke icon and badges on one line. */
+.ct-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.ct-head h2,
+.ct-head h3 {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ct-head svg {
+  flex: none;
+  color: var(--primary);
+}
+
+/* Label / value grid (like .cal-grid, denser). */
+.ct-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px 18px;
+  margin: 10px 0;
+}
+.ct-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 2px;
+}
+.ct-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 10px;
+}
+.ct-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* One row per signer / portal user. */
+.ct-signer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13.5px;
+}
+.ct-signer:last-child {
+  border-bottom: none;
+}
+.ct-signer .ct-step {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+  flex: none;
+}
+
+/* Small tiles inside a card. */
+.ct-mini.tiles {
+  margin: 10px 0;
+}
+.ct-mini .tile {
+  padding: 10px 12px;
+}
+.ct-mini .tile .value {
+  font-size: 19px;
+}
+
+/* Red strip for past due / declined details. */
+.ct-strip {
+  border-left: 3px solid var(--danger);
+  background: var(--danger-soft);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.ct-strip.warn {
+  border-left-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+/* Last few events (compact .timeline-item list). */
+.ct-events .timeline-item {
+  padding: 7px 0;
+}
+.ct-events .ct-event-msg {
+  font-size: 13px;
+}
+.ct-events .ct-event-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ct-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.ct-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  margin: 6px 0;
+}
+.ct-check input {
+  width: auto;
+}
+.ct-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 8px;
+}
+.ct-radio-group label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ct-radio-group input {
+  width: auto;
+  margin-top: 3px;
+}
+
+/* Horizontal bars: package mix, per-project. */
+.ct-bar-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 2fr) auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  padding: 5px 0;
+}
+.ct-bar-row .rv-bar {
+  margin-top: 0;
+}
+
+/* Paid vs failed chart (layout from .rv-chart). */
+.ct-chart .seg-paid {
+  fill: var(--ct-paid);
+}
+.ct-chart .seg-failed {
+  fill: var(--ct-failed);
+}
+
+.ct-table-wrap {
+  overflow-x: auto;
+}
+.ct-table-wrap .compact-table {
+  min-width: 1100px;
+}
+
+.ct-test-mode {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border: 1px solid rgba(180, 83, 9, 0.35);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  padding: 2px 8px;
+}
+
+.ct-lot-pick {
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.ct-lot-pick button {
+  display: flex;
+  width: 100%;
+  text-align: left;
+  gap: 10px;
+  align-items: center;
+  background: #fff;
+  color: var(--text);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  padding: 9px 12px;
+  font-weight: 400;
+}
+.ct-lot-pick button:hover:not(:disabled) {
+  background: var(--primary-softer);
+}
+.ct-lot-pick button:disabled {
+  color: var(--muted);
+  cursor: default;
+}

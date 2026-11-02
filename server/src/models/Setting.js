@@ -95,6 +95,42 @@ const SettingSchema = new mongoose.Schema(
       checkedAt: { type: Date, default: null },
       message: { type: String, default: '' },
     },
+    stripeHealth: {
+      ok: { type: Boolean, default: false },
+      checkedAt: { type: Date, default: null },
+      message: { type: String, default: '' },
+    },
+    docusignHealth: {
+      ok: { type: Boolean, default: false },
+      checkedAt: { type: Date, default: null },
+      message: { type: String, default: '' },
+    },
+    // Alarm monitoring contracts. Prices are fixed in code
+    // (services/contracts/pricing.js) and verified against Stripe, so they are
+    // deliberately not editable here. Secrets (Stripe / DocuSign keys) live in
+    // .env only.
+    alarm: {
+      // Global switch for the "upcoming payment" and "card expiring" emails.
+      // A contract's own reminders.enabled must also be on.
+      paymentRemindersEnabled: { type: Boolean, default: true },
+      // How many days before each charge the upcoming-payment email goes out.
+      reminderDaysBefore: { type: Number, default: 3, min: 1, max: 14 },
+      // Receipt email for every paid invoice (contract invoiceEmails must also be on).
+      autoSendInvoices: { type: Boolean, default: true },
+      sendFailedPaymentEmails: { type: Boolean, default: true },
+      // Internal copy: DocuSign carbon copy, BCC on every contract email, and
+      // the inbox for internal alerts (falls back to owner.email when blank).
+      contractsCcEmail: { type: String, default: '', trim: true, lowercase: true },
+      defaultSigningMode: { type: String, enum: ['remote', 'in_person', 'paper'], default: 'remote' },
+      // Printed on the agreement and stored on each contract. Bump when legal
+      // changes the TERMS text in services/contracts/agreementPdf.js.
+      termsVersion: { type: String, default: '2026-11' },
+      // Contract number counter (GA-2026-00042). Only ever $inc'd, see
+      // AlarmContract.allocateNumber().
+      contractSeq: { type: Number, default: 0 },
+      lastDocusignPollAt: { type: Date, default: null },
+      lastStripeReconcileAt: { type: Date, default: null },
+    },
     // Aria — the ElevenLabs voice agent that calls homeowners. Agent id /
     // phone-number id / API key live in .env (secrets); everything editable
     // in the UI lives here.

@@ -1,0 +1,24 @@
+{
+  "signers": [
+    {
+      "recipientId": "1",
+      "routingOrder": "1",
+      "name": "Esmat Shafiee",
+      "email": "esmat@example.com",
+      "status": "completed",
+      "signedDateTime": "2026-11-02T09:41:00.0000000Z",
+      "tabs": {
+        "radioGroupTabs": [
+          {
+            "groupName": "monitoringPackage",
+            "radios": [
+              { "value": "basic", "selected": "false" },
+              { "value": "smart", "selected": "false" }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "carbonCopies": []
+}

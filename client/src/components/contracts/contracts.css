@@ -1,0 +1,11 @@
+/* Alarm monitoring contracts — shared admin styles (ct-* prefix). Loaded by
+   components/contracts/bits.jsx, so any screen importing bits gets it.
+   Screens with their own styles add a sibling file (e.g.
+   LotContractCard.css) imported by that component, instead of editing this
+   file or styles.css, so parallel work never collides. Reuse the existing
+   .card, .tiles/.tile(-ok|-err|-warn), .badge.*, .btn-link, .toolbar,
+   .compact-table, .timeline-item, .alert-* classes first. */
+:root {
+  --ct-paid: var(--ok);
+  --ct-failed: var(--danger);
+}

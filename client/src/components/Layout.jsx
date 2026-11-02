@@ -62,6 +62,7 @@ function Icon({ name }) {
         <rect x="16" y="13" width="3" height="5" rx="0.5" />
       </>
     ),
+    shield: <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />,
     star: <path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9z" />,
     settings: (
       <>
@@ -92,6 +93,7 @@ function Icon({ name }) {
 const links = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
   { to: '/board', label: 'Board', icon: 'board' },
+  { to: '/contracts', label: 'Contracts', icon: 'shield' },
   { to: '/queue', label: 'Queue', icon: 'queue' },
   { to: '/activity', label: 'Activity', icon: 'activity' },
   { to: '/projects', label: 'Projects', icon: 'projects' },

@@ -45,7 +45,12 @@ async function senderName() {
 // purple), each send carries a hidden token so Gmail never folds the
 // signature away as "repeated content", and the plain-text part is built from
 // the HTML unless the template has its own.
-async function sendEmail({ to, cc, subject, html, text, highImportance }) {
+//
+// `bcc` (string or list) and `attachments` (nodemailer attachment objects,
+// e.g. { filename, content: Buffer, contentType }) pass straight through —
+// the alarm monitoring emails BCC the internal contracts inbox and attach the
+// signed agreement.
+async function sendEmail({ to, cc, bcc, subject, html, text, highImportance, attachments }) {
   const t = getTransporter();
   if (!t) throw new Error('SMTP not configured');
   const message = {
@@ -56,6 +61,8 @@ async function sendEmail({ to, cc, subject, html, text, highImportance }) {
     text: text || htmlToText(html || ''),
   };
   if (cc) message.cc = cc;
+  if (bcc && (!Array.isArray(bcc) || bcc.length)) message.bcc = bcc;
+  if (Array.isArray(attachments) && attachments.length) message.attachments = attachments;
   if (highImportance) {
     message.priority = 'high';
     message.headers = {
